@@ -19,7 +19,8 @@ def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
     resolution = 600
     BINCOUNT = 25
 
-    fig = plt.figure( figsize=(int(resolution/100), int(resolution/100)) )
+    #fig = plt.figure( figsize=(int(resolution/100), int(resolution/100)) )
+    fig = plt.figure(figsize=(10, 6))
     gs = fig.add_gridspec( 2, 2,
                             left=0.11, right=0.99, bottom=0.05, top=0.95,
                             wspace=0.25, hspace=0.25 )

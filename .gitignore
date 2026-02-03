@@ -23,6 +23,8 @@ pybdsf_catalogs*/
 dr2_cutouts*/
 pybdsf*/
 !src/pybdsf_analysis/
+hardcastle_catalogue/*.fits
+hardcastle_catalogue/final_database/
 
 # Local file parameters
 src/utils/parameters_local_override.py

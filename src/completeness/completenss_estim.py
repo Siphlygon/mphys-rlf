@@ -1,4 +1,5 @@
 from astropy.io import fits
+from scipy.optimize import curve_fit
 import numpy as np
 import pybdsf_analysis.pybdsf_run_analysis
 import scipy.stats
@@ -119,7 +120,7 @@ def get_completeness_estim():
     plt.figure(figsize = (8, 5))
     N_NOISE_PATCHES = 5
     for subdir in [ utils.paths.GENERATED_SUBDIR ]:
-        images, resid_images, model_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
+        images, resid_images, m_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
 
         mock_fluxes = np.empty( (images.shape[ 0 ]*N_NOISE_PATCHES), dtype=float )
         detectable = np.empty( (images.shape[ 0 ]*N_NOISE_PATCHES), dtype=bool )
@@ -188,6 +189,39 @@ def get_completeness_estim():
     plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
     plt.plot( dejong_data[ 0 ], dejong_data[ 1 ], marker='s', color='m', label='de jong et al. 2023 data (approximate)' )
 
+    # Fit a curve (claude code)
+    # Fit sigmoid to completeness curve
+    def sigmoid(x, x0, k, a, b):
+        """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
+        return a / (1 + np.exp(-k * (x - x0))) + b
+    
+    # Use log of flux for fitting since we're on a log scale
+    log_bin_centers = np.log10(bin_centers)
+    
+    # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
+    initial_guess = [0.5, 2.0, 1.0, 0.0]
+    
+    try:
+        # Fit the sigmoid
+        popt, pcov = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
+        
+        # Generate smooth curve for plotting
+        log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+        completeness_fit = sigmoid(log_flux_smooth, *popt)
+        
+        # Convert back to linear scale for plotting
+        flux_smooth = 10**log_flux_smooth
+        plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
+        
+        print(f"Sigmoid fit parameters:")
+        print(f"  x0 (log midpoint): {popt[0]:.3f} (flux: {10**popt[0]:.3f} mJy)")
+        print(f"  k (steepness): {popt[1]:.3f}")
+        print(f"  a (amplitude): {popt[2]:.3f}")
+        print(f"  b (offset): {popt[3]:.3f}")
+    except Exception as e:
+        print(f"Warning: Sigmoid fit failed: {e}")
+
+
     kondapally_markers = [ '<', '>', '^' ]
     kondapally_fields = [ 'ELAIS-N1',	'Lockman Hole',	'Boötes' ]
     for i, marker, field in zip( range( 1, kondapally_data.shape[ 0 ] ), kondapally_markers, kondapally_fields ):
@@ -209,7 +243,7 @@ def get_completeness_estim():
 
 
 if __name__ == "__main__":
-    pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
+    #pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
 
     du = DistributedUtils()
     du.single_task_only_last( 'get_completeness_estim', get_completeness_estim, 0 )

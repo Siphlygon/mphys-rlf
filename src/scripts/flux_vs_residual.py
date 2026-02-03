@@ -42,14 +42,14 @@ def plot_flux_vs_residuals():
     plt.yscale( 'log' )
     plt.title( 'Summed positive residuals vs transformed peak flux' )
     plt.grid( True )
+    plt.legend( markerscale=100 )
     plt.savefig( 'scatter.png' )
     plt.show()
-    plt.legend( markerscale=100 )
     logger.info( 'Saved figure to scatter.png' )
 
 
 if __name__ == '__main__':
-    pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
+    #pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
 
     du = DistributedUtils()
     du.single_task_only_last( 'plot_flux_vs_residuals', plot_flux_vs_residuals, 0 )
