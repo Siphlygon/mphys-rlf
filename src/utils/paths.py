@@ -17,6 +17,8 @@ PYBDSF_PARENT = STORAGE_PARENT / "pybdsf"
 NP_ARRAY_PARENT = STORAGE_PARENT / "nparrays"
 DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
 
+MAXVALS = NP_ARRAY_PARENT / "maxvals.npy"
+
 # Model configuration presets
 CONFIG_PARENT = BASE_PARENT / "src/model/configs"
 MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.json")})
