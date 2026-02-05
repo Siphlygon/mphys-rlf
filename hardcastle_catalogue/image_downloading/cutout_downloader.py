@@ -6,6 +6,9 @@ from astropy.io import fits
 import utils.paths as paths
 from tqdm import tqdm
 from utils.distributed import distribute
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tenacity import retry, wait_exponential, stop_after_attempt
+import time
 
 
 class CutoutDownloader:
@@ -14,11 +17,29 @@ class CutoutDownloader:
     storing them in appropriately binned folders.
     """
 
+    # Requests params - note, do not overload the server - please be polite to LOFAR!
+    MAX_WORKERS = 64  # polite concurrency
+    RATE_DELAY = 0.03 # ~10 requests/sec max
+    RETRIES = 6
+
     def __init__(self):
         # Set up logging
         self.logger = utils.logging.get_logger("cutout downloader", logging.DEBUG)
+
+        # Subdir params
         self.subdir_size = 10000  # Number of images per subdirectory
 
+        # Reusable session with connection pooling
+        self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=self.MAX_WORKERS,
+            pool_maxsize=self.MAX_WORKERS
+        )
+        self.session.mount("https://", adapter)
+        self.recent_errors = 0
+        self.last_request = 0
+
+    # ---------- SET UP ----------
     def read_positions(self, file_path=paths.DATASET_PARENT/"image_downloading/resolved_positions.txt"):
         """
         Reads the RA and DEC positions from a text file.
@@ -38,33 +59,6 @@ class CutoutDownloader:
             self.logger.error(f"Error reading positions from text file: {e}.")
             return []
 
-    # This method comes from the LOFAR API, with changes made to use the logger file.
-    # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
-    def get_cutout(self, outfile, pos, size=2, low=False, dr3=False, auth=None):
-        '''Get a cutout at position pos with size size arcmin. If low is
-        True, get the 20-arcsec cutout, else get the 6-arcsec one. If dr3
-        is true, try to access the DR3 data instead. Save to outfile.
-
-        '''
-        base = 'dr3' if dr3 else 'dr2'
-        url = 'https://lofar-surveys.org/'
-        if low:
-            page = base + '-low-cutout.fits'
-        else:
-            page = base + '-cutout.fits'
-
-        self.logger.debug(f'Trying {url + page}?pos={pos}&size={size}')
-        r = requests.get(url + page, params={'pos': pos, 'size': size}, auth=auth, stream=True)
-        self.logger.debug(f'received response code {r.status_code} and content type {r.headers["content-type"]}')
-        if r.status_code != 200:
-            raise RuntimeError('Status code %i returned' % r.status_code)
-        if r.headers['content-type'] != 'application/fits':
-            raise RuntimeError('Server did not return FITS file, probably no coverage of this area')
-
-        with open(outfile, 'wb') as o:
-            o.write(r.content)
-            r.close()
-
     def make_subdir(self, subdir_num):
         """
         It can be hard and take a long time to view 300k image files in a single directory. We have made the design choice
@@ -80,6 +74,74 @@ class CutoutDownloader:
             self.logger.info(f'Creating directory {subdir_path}...')
             os.makedirs(subdir_path)
         return subdir_path
+
+    # ---------- NETWORK LAYER ----------
+
+    # def _rate_limit(self):
+    #     """Simple client-side pacing."""
+    #     dt = time.time() - self.last_request
+    #     if dt < self.RATE_DELAY:
+    #         time.sleep(self.RATE_DELAY - dt)
+    #     self.last_request = time.time()
+
+    def _rate_limit(self):
+        # If we start getting slow responses, back off automatically
+        if getattr(self, "recent_errors", 0) > 3:
+            time.sleep(0.5)
+        elif getattr(self, "recent_errors", 0) > 0:
+            time.sleep(0.15)
+
+    # This method was comes from the LOFAR API, with major changes made to optimise it for large-batch requests.
+    # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
+    @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(RETRIES))
+    def get_cutout(self, outfile, pos, size=2, low=False, dr3=False, auth=None):
+        """
+        Get a cutout at position pos with size size arcmin. If low is True, get the 20-arcsec cutout, else get the
+        6-arcsec one. If dr3 is true, try to access the DR3 data instead. Save to outfile
+        """
+        base = 'dr3' if dr3 else 'dr2'
+        url = 'https://lofar-surveys.org/'
+        page = base + ('-low-cutout.fits' if low else '-cutout.fits')
+
+        self._rate_limit()
+
+        r = self.session.get(
+            url + page,
+            params={'pos': pos, 'size': size},
+            auth=auth,
+            stream=True,
+            timeout=60
+        )
+
+        if r.status_code != 200:
+            raise RuntimeError(f'Status {r.status_code}')
+
+        if r.headers.get('content-type') != 'application/fits':
+            raise RuntimeError('No FITS returned – probably no coverage')
+
+        # Stream write (memory safe)
+        with open(outfile, 'wb') as o:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    o.write(chunk)
+
+        r.close()
+
+    # ---------- PARALLEL ORCHESTRATION ----------
+
+    def _download_one(self, args):
+        i, ra, dec, path = args
+
+        if os.path.exists(path):
+            return i, "exists"
+
+        try:
+            self.get_cutout(path, f"{ra} {dec}")
+            self.recent_errors = max(0, self.recent_errors - 1)
+            return i, None
+        except Exception as e:
+            self.recent_errors += 1
+            return i, str(e)
 
     def download_all_cutouts(self):
         """
@@ -112,9 +174,10 @@ class CutoutDownloader:
         subdir_index = image_nums[0] // self.subdir_size
         target_directory = target_directory / self.make_subdir(subdir_index)
 
-        self.logger.info('Starting download of cutouts for images %i to %i...', image_nums[0], image_nums[-1])
-        for i in tqdm(image_nums, desc="Downloading cutouts"):
-            # get the RA and DEC for this image number
+        self.logger.info('Building task list for downloading... ')
+        # Build task list for concurrent download
+        tasks = []
+        for i in tqdm(image_nums, desc="Building task list..."):
             ra, dec = hdc_positions[i]
 
             # get the path for this cutout file depending on its index
@@ -125,19 +188,19 @@ class CutoutDownloader:
                 target_directory = self.make_subdir(subdir_index)
             cutout_path = target_directory / f"cutout{i}.fits"
 
-            # check if file exists and don't download if so
-            if os.path.exists(cutout_path):
-                self.logger.info(f'Skipping cutout for existing image {i}...')
-                continue
-            print(f'Downloading image {i} for RA={ra}, DEC={dec} degrees')
+            tasks.append((i, ra, dec, cutout_path))
 
-            try:
-                self.logger.info(f'Downloading image {i}...')
-                self.get_cutout(cutout_path, f"{ra} {dec}")
-            except Exception as e:
-                self.logger.error(f"Error downloading cutout for image {i} (RA={ra}, DEC={dec}): {e}")
-                with open(paths.DATASET_PARENT / "download_errors.log", "a") as log_file:
-                    log_file.write(f"Image {i}: RA={ra}, DEC={dec}, Error: {e}\n")
+
+        self.logger.info('Starting download of cutouts for images %i to %i...', image_nums[0], image_nums[-1])
+        with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as ex:
+            futures = {ex.submit(self._download_one, t): t[0] for t in tasks}
+
+            for f in tqdm(as_completed(futures), total=len(futures)):
+                i, err = f.result()
+
+                if err and err != "exists":
+                    with open(paths.DATASET_PARENT / "download_errors.log", "a") as log:
+                        log.write(f"{i}: {err}\n")
 
 if __name__ == "__main__":
     downloader = CutoutDownloader()
