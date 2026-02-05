@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=3-splun
+#SBATCH --job-name=splun
 #SBATCH --constraint=A100
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out

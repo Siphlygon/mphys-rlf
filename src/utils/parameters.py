@@ -21,6 +21,7 @@ FITS_SAMPLING_ARGS = {
     "n_samples": 50000,
     "timesteps": 25,
     "bin_size": 10000,
+    "use_cpu": False
 }
 FITS_SAMPLING_ARGS = getattr( utils.parameters_local_override, 'FITS_SAMPLING_ARGS', FITS_SAMPLING_ARGS ) if local_overrides else FITS_SAMPLING_ARGS
 
