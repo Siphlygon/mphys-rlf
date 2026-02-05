@@ -1,19 +1,16 @@
 """
 This script downloads 314,769 files from the LOFAR cut-out server if they do not already exist. These files are needed
 in the construction of a catalogue that matches the pre-processed LOFAR data given with their actual headers provided
-by the Hardcastle et al 2023 paper.
+by the Hardcastle et al. 2023 paper.
 """
 
 import os
-from pathlib import Path
 import requests
 import logging
 import utils.logging
-import sys
 from astropy.io import fits
+import utils.paths as paths
 from tqdm import tqdm
-import asyncio
-from utils.distributed import distribute
 
 
 class HardcastleCatalogueDownloader:
@@ -27,7 +24,7 @@ class HardcastleCatalogueDownloader:
         # Set up logging
         self.logger = utils.logging.get_logger("hardcastle catalogue downloader", logging.DEBUG)
 
-    def download_hardcastle_catalogue(self, save_path="hardcastle_catalogue/combined-release-v1.2-LM_opt_mass.fits"):
+    def download_hardcastle_catalogue(self, save_path=paths.DATASET_PARENT/"combined-release-v1.2-LM_opt_mass.fits"):
         """
         Downloads the Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -49,11 +46,10 @@ class HardcastleCatalogueDownloader:
         else:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
-    def load_hardcastle_catalogue(self, file_path="hardcastle_catalogue/combined-release-v1.2-LM_opt_mass.fits"):
+    def load_hardcastle_catalogue(self, file_path=paths.DATASET_PARENT/"combined-release-v1.2-LM_opt_mass.fits"):
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
-        LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel values that is what this
-        whole script is for.
+        LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
 
         :param file_path: The path to the Hardcastle catalogue FITS file.
         :return: A list of resolved items from the catalogue.
@@ -62,8 +58,14 @@ class HardcastleCatalogueDownloader:
             with fits.open(file_path) as hdul:
                 catalogue_data = hdul[1].data
         except Exception as e:
-            print(f"Error loading FITS file: {e}")
-            return []
+            self.logger.error(f"Error loading Catalogue file: {e}.")
+            self.logger.debug(f"Deleting the possibly corrupted file at {file_path} and trying again.")
+            try:
+                os.remove(file_path)
+                self.logger.info(f"Deleted corrupted file at {file_path}.")
+                self.download_hardcastle_catalogue()
+            except Exception as del_e:
+                self.logger.error(f"Error deleting corrupted file at {file_path}: {del_e}")
 
         # Get the headers of resolved sources
         resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
@@ -78,90 +80,45 @@ class HardcastleCatalogueDownloader:
         :return: A list of tuples containing (RA, DEC) for each resolved item.
         """
         positions = []
-        for item in hardcastle_catalogue:
+        for item in tqdm(hardcastle_catalogue, desc="Extracting positions..."):
             ra = item['RA']
             dec = item['DEC']
             positions.append((ra, dec))
         return positions
 
-    # NOTE-THIS COMES FROM THE LOFAR API
-    def get_cutout(self, outfile, pos, size=2, low=False, dr3=False, auth=None):
-        '''Get a cutout at position pos with size size arcmin. If low is
-        True, get the 20-arcsec cutout, else get the 6-arcsec one. If dr3
-        is true, try to access the DR3 data instead. Save to outfile.
-
-        '''
-        base = 'dr3' if dr3 else 'dr2'
-        url = 'https://lofar-surveys.org/'
-        if low:
-            page = base + '-low-cutout.fits'
-        else:
-            page = base + '-cutout.fits'
-
-        self.logger.debug(f'Trying {url + page}?pos={pos}&size={size}')
-        r = requests.get(url + page, params={'pos': pos, 'size': size}, auth=auth, stream=True)
-        self.logger.debug(f'received response code {r.status_code} and content type {r.headers["content-type"]}')
-        if r.status_code != 200:
-            raise RuntimeError('Status code %i returned' % r.status_code)
-        if r.headers['content-type'] != 'application/fits':
-            raise RuntimeError('Server did not return FITS file, probably no coverage of this area')
-
-        with open(outfile, 'wb') as o:
-            o.write(r.content)
-            r.close()
-
-    def download_all_cutouts(self):
+    def write_positions_to_file(self, positions, file_path=paths.DATASET_PARENT/"image_downloading/resolved_positions.txt"):
         """
-        Downloads all cutouts from the LOFAR cutout server based on the Hardcastle catalogue positions.
+        Writes the list of positions (RA, DEC) to a text file for future use.
+
+        :param positions: A list of tuples containing (RA, DEC) for each resolved item.
+        :param file_path: The path to save the positions text file.
         """
-        # Confirm the Hardcastle catalogue is downloaded
-        self.logger.info('Ensuring Hardcastle catalogue is downloaded...')
+        try:
+            with open(file_path, 'w') as f:
+                for ra, dec in positions:
+                    f.write(f"{ra} {dec}\n")
+            self.logger.info(f'Positions written to {file_path}.')
+        except Exception as e:
+            self.logger.error(f"Error writing positions to file: {e}")
+
+    def main(self):
+        # Download the Hardcastle catalogue if it doesn't exist, and load it
+        self.logger.info('Downloading Hardcastle catalogue...')
         self.download_hardcastle_catalogue()
 
+        # Load the Hardcastle catalogue and filter for resolved items
+        self.logger.info('Loading Hardcastle catalogue...')
         hardcastle_catalogue = self.load_hardcastle_catalogue()
         self.logger.info(f'Loaded Hardcastle catalogue with {len(hardcastle_catalogue)} resolved items.')
 
-        self.logger.info(f'Extracting positions...')
+        self.logger.info(f'Extracting RA/DEC positions...')
         hdc_positions = self.get_positions_from_hardcastle(hardcastle_catalogue)
 
-        # Check if target directory exists, create if not
-        target_directory = "hardcastle_catalogue/dr2_cutouts_download"
-        if not os.path.exists(target_directory):
-            self.logger.info(f'Creating directory {target_directory}...')
-            os.makedirs(target_directory)
-
-        # Create a list of image numbers corresponding to the positions
-        image_nums = list(range(len(hdc_positions)))
-
-        # self.logger.info('Starting download of cutouts for images %i to %i...', bin_start, bin_end)
-        for i in tqdm(distribute(image_nums), desc="Downloading cutouts"):
-            # get the RA and DEC for this image number
-            ra, dec = hdc_positions[i]
-
-            # check if file exists and don't download if so
-            if os.path.exists(f"hardcastle_catalogue/dr2_cutouts_download/cutout{i}.fits"):
-                self.logger.info(f'Skipping cutout for existing image {i}...')
-                continue
-            print(f'Downloading image {i} for RA={ra}, DEC={dec} degrees')
-
-            try:
-                self.logger.info(f'Downloading image {i}...')
-                self.get_cutout(f"hardcastle_catalogue/dr2_cutouts_download/cutout{i}.fits", f"{ra} {dec}")
-            except Exception as e:
-                self.logger.error(f"Error downloading cutout for image {i} (RA={ra}, DEC={dec}): {e}")
-                with open("hardcastle_catalogue/download_errors.log", "a") as log_file:
-                    log_file.write(f"Image {i}: RA={ra}, DEC={dec}, Error: {e}\n")
+        self.logger.info(f"Writing positions to file...")
+        self.write_positions_to_file(positions=hdc_positions)
 
 
 if __name__ == "__main__":
-    # Prepare for distributed processing on galahad
-    # Get a list of positions from the Hardcastle catalogue
-    # Running into a possible problem where galahad nodes don't want to read the same file will force a single node
-    # to perform this, and then copy the results to all nodes.
-
-    # file_path = Path("hardcastle_catalogue/combined-release-v1.2-LM_opt_mass.fits")
-    # du.copy_file_for_multiple_nodes(file_path)
-    # du.single_task_only_first('load_optical_catalogue', load_optical_catalogue, 0)
     downloader = HardcastleCatalogueDownloader()
-    downloader.download_all_cutouts()
+    downloader.main()
 
