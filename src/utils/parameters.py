@@ -8,18 +8,20 @@ try:
 except ImportError:
     local_overrides = False
 
+DATASET_FITS_SUBDIR = "dataset"
+DATASET_FITS_SUBDIR = getattr( utils.parameters_local_override, 'DATASET_FITS_SUBDIR', DATASET_FITS_SUBDIR ) if local_overrides else DATASET_FITS_SUBDIR
+
 # Default bins sizes to sort data from the dataset into when converting h5 to fits
 BINS_ARRAY = [ 10000 ]
 BINS_ARRAY = getattr( utils.parameters_local_override, 'BINS_ARRAY', BINS_ARRAY ) if local_overrides else BINS_ARRAY
 
 # Default parameters for fits file generation are placed here for ease of maintenance
-FITS_SAMPLING_ARGS = [
-    "--batch-size", "100",
-    "--n-samples", "50000",
-    "--timesteps", "25",
-    "--bin-size", "10000",
-#    "--use-cpu"
-]
+FITS_SAMPLING_ARGS = {
+    "batch_size": 100,
+    "n_samples": 50000,
+    "timesteps": 25,
+    "bin_size": 10000,
+}
 FITS_SAMPLING_ARGS = getattr( utils.parameters_local_override, 'FITS_SAMPLING_ARGS', FITS_SAMPLING_ARGS ) if local_overrides else FITS_SAMPLING_ARGS
 
 # Default number of fits images to convert, None converts all

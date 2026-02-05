@@ -1,15 +1,14 @@
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer
-from pybdsf_analysis.log_analyzer import LogAnalyzer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from analysis.log_analyzer import LogAnalyzer
 import numpy as np
-import pybdsf_analysis.recursive_file_analyzer as rfa
-import pybdsf_analysis.log_analyzer as la
+import analysis.recursive_file_analyzer as rfa
+import analysis.log_analyzer as la
 import utils.paths as pth
 from utils.distributed import DistributedUtils
-from pybdsf_analysis.power_transform import PeakFluxPowerTransformer
+from analysis.power_transform import PeakFluxPowerTransformer
 from utils.logging import get_logger
 from functools import reduce
 import utils.paths
-from files.paths import single_node_prepare_folders
 
 
 class ImageDataArrays:
@@ -148,7 +147,7 @@ class ImageDataArrays:
 
 
 if __name__ == "__main__":
-    single_node_prepare_folders()
-    ImageDataArrays( utils.paths.DATASET_SUBDIR )
-    ImageDataArrays( utils.paths.GENERATED_SUBDIR )
+    # constructing the object saves the numpy arrays if they don't exist
+    for subdir in utils.paths.SUBDIRS:
+        ImageDataArrays( subdir )
     print( "done" )

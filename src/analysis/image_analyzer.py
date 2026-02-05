@@ -19,10 +19,9 @@ import multiprocessing.pool
 import utils.paths
 from utils.paths import cast_to_Path
 import utils.logging
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
 import logging
 from tqdm import tqdm
-import files.paths
 from utils.distributed import DistributedUtils
 
 #Neccesary pool extention - PyBDSF uses daemon processes but only sometimes, and we want to batch the files themselves
@@ -355,7 +354,7 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
             Whether or not to overwrite the file if it already exists
         """
         # HACK - add some random noise to the image so pybdsf doesn't fail
-        z = np.random.normal( 0, scale=min( image.max(), 1 ), size=image.shape )
+        z = np.random.normal( 0, scale=1e-5, size=image.shape )
         image += z
 
 

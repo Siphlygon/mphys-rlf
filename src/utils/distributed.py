@@ -7,7 +7,6 @@ import shutil
 import numpy as np
 import utils.logging
 import logging
-from utils.paths import FLAGS_PARENT as FP
 
 # Source - https://stackoverflow.com/a/2785908
 # Posted by Alex Martelli, modified by community. See post 'Timeline' for change history
@@ -36,9 +35,8 @@ class DistributedUtils:
     """
     Utility functions for running on a distributed system (SLURM in particular)
     """
-    def __init__( self ):
-        FP.mkdir( exist_ok=True ) #Would ideally run files.paths on a single node but that requires the FP directory be made
-        self.logger = utils.logging.get_logger( __name__, logging.DEBUG )
+    def __init__( self, log_level: int = logging.INFO ):
+        self.logger = utils.logging.get_logger( __name__, log_level )
 
     def is_distributed( self ) -> bool:
         return self.get_task_count() != 1
@@ -60,169 +58,3 @@ class DistributedUtils:
         Function to take a total number n and get the corresponding start of the bin that this node should be dealing with
         """
         return ( n * self.get_task_id() ) // self.get_task_count()
-
-    def is_in_single_task_function( self ):
-        return ( os.environ.get( 'SINGLE_TASK_ONLY_FIRST', -1 ) != -1 ) or ( os.environ.get( 'SINGLE_TASK_ONLY_LAST', -1 ) != -1 )
-
-    def single_task_only_first( self, taskname: str, function, do_on_array_id: int, *args, **kwargs ):
-        """
-        A method to execute a function only once when run on a job array, and force all OTHER tasks to wait on THIS one to complete.
-
-        Wrapping everything you want to do in a single single_task_only_* is sufficient to ensure the tasks
-        are performed on only one array element. It is advisable NOT to wrap single_task_only_* calls inside
-        other single_task_only_* calls as it will only produce unneccesary overhead, and in the worst case of
-        mixing the two could result in the program hanging indefinitely
-
-        Paramters
-        ---------
-        taskname : str
-            The name of the task - should be unique and be a valid str to include in a path name
-        function
-            The function to call only once.
-        do_on_array_id : int
-            The array id on which to call the function. All other array ids must wait for this function
- 
-        *args, **kwargs
-            arguments to pass to the function call
-        """
-        if do_on_array_id >= self.get_task_count():
-            raise ValueError( f'Array id {do_on_array_id} out of range for array of length {self.get_task_count()}' )
-
-        # Use environment variables to determine if we are in a single_task_only_* block for this task to prevent infinite hangs due to recursion
-        stof_block = os.environ.get( 'SINGLE_TASK_ONLY_FIRST' )
-        stol_block = os.environ.get( 'SINGLE_TASK_ONLY_LAST' )
-        if stol_block is not None and ( int( stol_block ) == do_on_array_id ):
-            raise RecursionError( f'Cannot call single_task_only_first for array {do_on_array_id} when running single_task_only_last for array {stol_block} - must not be the same task id' )
-        if ( stof_block is not None ) and ( int( stof_block ) != do_on_array_id ):
-            raise RecursionError( f'Cannot call single_task_only_first for array {do_on_array_id} when running single_task_only_first for array {stof_block} - must be the same task id' )
-        
-        os.environ[ 'SINGLE_TASK_ONLY_FIRST' ] = str( do_on_array_id )
-        
-    
-        taskname = taskname.replace( '/', '_' ).replace( '-', '_' ).upper()
-
-        if not self.is_distributed():
-            # Doing this separately from if we have multiple array elements allows us to ignore flag file
-            # deletion when this array id == do_on_array_id - hereafter we can assume if self.get_task_id() == do_on_array_id
-            # that it is the first array to attempt the problem
-            function( *args, **kwargs )
-        else:
-            if self.get_task_id() == do_on_array_id:
-                function( *args, **kwargs )
-                ( FP / f'TASK_{taskname}_COMPLETED' ).touch()
-            else:
-                # Truth value tells us whether or not wait_until timed out
-                def __is_completed_lambda( taskname ):
-                    return ( FP / f'TASK_{taskname}_COMPLETED' ).exists()
-                if not wait_until( __is_completed_lambda, None, self.logger, do_on_array_id, taskname, 1, taskname ):
-                    raise RuntimeError( f'ERROR - wait_until timed out on array {self.get_task_id()} waiting for {taskname} on array {do_on_array_id}' )
-
-                ( FP / f'TASK_{taskname}_ARRAY_{self.get_task_id()}_PASS_COMPLETE' ).touch()
-
-                # If we're the last array to pass this function, delete the environment variables behind us
-                # also we don't need to check for the completed variable since it must exist to get here
-                last_array = True
-                for i in range( 0, self.get_task_count() ):
-                    if i == do_on_array_id:
-                        continue
-                    elif not ( FP / f'TASK_{taskname}_ARRAY_{i}_PASS_COMPLETE' ).exists():
-                        last_array = False
-                if last_array:
-                    try:
-                        ( FP / f'TASK_{taskname}_COMPLETED' ).unlink()
-                    except FileNotFoundError:
-                        self.logger.warning( f'Tried to delete TASK_{taskname}_ARRAY simultaneously with another node. This is probably harmless.' )
-                    for i in range( 0, self.get_task_count() ):
-                        if i == do_on_array_id:
-                            continue
-                        else: 
-                            try:
-                                ( FP / f'TASK_{taskname}_ARRAY_{i}_PASS_COMPLETE' ).unlink()
-                            except FileNotFoundError:
-                                self.logger.warning( f'Tried to delete TASK_{taskname}_ARRAY_{i}_PASS_COMPLETE simultaneously with another node. This is probably harmless.' )
-        os.environ.pop( 'SINGLE_TASK_ONLY_FIRST' )
-    
-    def single_task_only_last( self, taskname: str, function, do_on_array_id: int, *args, **kwargs ):
-        """
-        A method to execute a function only once when run on a job array, and force THIS task to wait on OTHERS to complete.
-
-        Wrapping everything you want to do in a single single_task_only_* is sufficient to ensure the tasks
-        are performed on only one array element. It is advisable NOT to wrap single_task_only_* calls inside
-        other single_task_only_* calls as it will only produce unneccesary overhead, and in the worst case of
-        mixing the two could result in the program hanging indefinitely
-
-        Paramters
-        ---------
-        taskname : str
-            The name of the task - should be unique and be a valid str to include in a path name
-        function
-            The function to call only once.
-        do_on_array_id : int
-            The array id on which to call the function. All other array ids must execute before this function
- 
-        *args, **kwargs
-            arguments to pass to the function call
-        """
-        if do_on_array_id >= self.get_task_count():
-            raise ValueError( f'Array id {do_on_array_id} out of range for array of length {self.get_task_count()}' )
-
-        # Use environment variables to determine if we are in a single_task_only_* block for this task to prevent infinite hangs due to recursion
-        stof_block = os.environ.get( 'SINGLE_TASK_ONLY_FIRST' )
-        stol_block = os.environ.get( 'SINGLE_TASK_ONLY_LAST' )
-        if stol_block is not None and ( int( stol_block ) == do_on_array_id ):
-            raise RecursionError( f'Cannot call single_task_only_last for array {do_on_array_id} when running single_task_only_last for array {stol_block} - must be the same task id' )
-        if ( stof_block is not None ):
-            raise RecursionError( f'Cannot call single_task_only_last for array {do_on_array_id} when running single_task_only_first for array {stof_block} - fundamental recursion error' )
-        
-        os.environ[ 'SINGLE_TASK_ONLY_LAST' ] = str( do_on_array_id )
-    
-        taskname = taskname.replace( '/', '_' ).replace( '-', '_' ).upper()
-
-        if not self.is_distributed():
-            function( *args, **kwargs )
-        else:
-            if self.get_task_id() != do_on_array_id:
-                ( FP / f'ARRAY_{self.get_task_id()}_TASK_{taskname}_PASS' ).touch()
-            else:
-                # Truth value tells us whether or not wait_until timed out
-                def __other_arrays_passed_lambda( taskname, task_count, task_id ):
-                    other_arrays_passed = True
-                    for i in range( 0, task_count ):
-                        if i == task_id:
-                            continue
-                        elif not ( FP / f'ARRAY_{i}_TASK_{taskname}_PASS' ).exists():
-                            other_arrays_passed = False
-                    return other_arrays_passed
-
-                if not wait_until( __other_arrays_passed_lambda, None, self.logger, do_on_array_id, taskname, 1, taskname, self.get_task_count(), self.get_task_id() ):
-                    raise RuntimeError( f'ERROR - wait_until timed out on array {self.get_task_id()} waiting for {taskname} on array {do_on_array_id}' )
-
-                function( *args, **kwargs )
-                for i in range( 0, self.get_task_count() ):
-                    if i == do_on_array_id:
-                        continue
-                    else: 
-                        ( FP / f'ARRAY_{i}_TASK_{taskname}_PASS' ).unlink()
-        os.environ.pop( 'SINGLE_TASK_ONLY_LAST' )
-    
-
-    def copy_file_for_multiple_nodes( self, file: Path ):
-        """
-        Uses a single node (array id 0) to create a copy of a file for each array element,
-        with the copy files having a naming scheme according to "[filename]_[id][suffix]" in the same directory.
-
-        For example, on an array of 2 nodes, copying test/test.file would give:
-            test/test_0.file
-            test/test_1.file
-        """
-        # Running as a lambda doesn't work for some reason, so just define a function here
-        def __copy_file_lambda():
-            for i in range( self.get_task_count() ):
-                shutil.copyfile( str(file), f'{str(file.parent)}/{file.stem}_{i}{file.suffix}' )
-        self.single_task_only_first( f'copy_file_{str(file)}', __copy_file_lambda, 0 )
-
-
-
-
-
-

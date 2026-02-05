@@ -1,8 +1,8 @@
-<h1>Namespace pybdsf_analysis</h1>
+<h1>Namespace analysis</h1>
 
 <hr>
 
-The namespace pybdsf_analysis is used for defining classes that can be used in scripts meant to run PyBDSF analysis on a folder of fits files.
+The namespace analysis is used for defining classes that can be used in scripts meant to run PyBDSF analysis on a folder of fits files.
 
 This namespace defines four classes:
  - RecursiveFileAnalyzer
@@ -18,6 +18,6 @@ This namespace also defines three primary entrypoints, neccesary for data genera
  - dataset_h5_to_fits.single_node_validate_LOFAR_fits_images()
     - This function calls validate_LOFAR_fits_images() on a single node, which will either clean the <b>FITS_PARENT/DATASET_SUBDIR</b> (as defined in utils.paths) directory or will skip if its already created depending on the parameter <b>CLEAN_LOFAR_FITS_IMAGES</b> in utils.parameters. The underlying function calls files.dataset.download_dataset() and then converts the downloaded h5 into many FITS images, which it stores in <b>FITS_PARENT/DATASET_SUBDIR</b>. The amount of images converted can be capped by <b>LOFAR_FITS_COUNT_CUTOFF</b> in utils.parameters. It should be noted that this function will always create the FITS images with the naming scheme ".*?image(\d+).fits$" where the digits are the index of the image in the h5 dataset file.
  - generate_fits_files.sample()
-    - This function is a distributed function that can run on an array of nodes, with each node sampling images according to its bin. It calls fits.sampling.single_node_prepare_for_sampling() which  ensures the model and its config are downloaded and in the correct directories. The file generate_fits_files.py can act as a standalone model sampler, but when used as a prerequisite in pybdsf_run_analysis its parameters can be controlled by <b>FITS_SAMPLING_ARGS</b> in utils.parameters.
- - pybdsf_run_analysis.analyze_everything()
+    - This function is a distributed function that can run on an array of nodes, with each node sampling images according to its bin. It calls fits.sampling.single_node_prepare_for_sampling() which  ensures the model and its config are downloaded and in the correct directories. The file generate_fits_files.py can act as a standalone model sampler, but when used as a prerequisite in analysis its parameters can be controlled by <b>FITS_SAMPLING_ARGS</b> in utils.parameters.
+ - analysis.analyze_everything()
     - This function calls both of the above functions, creates two instances of the ImageAnalyzer class, and uses those instances to run PyBDSF analysis on all dataset and generated files. This is the main entrypoint that should be called to ensure all PyBDSF analysis has taken place in any scripts which require it - for example, any script which implements LogAnalyzer.

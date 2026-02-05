@@ -1,6 +1,6 @@
 from pathlib import Path, PurePath
 import re
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
 import logging
 import utils.paths
 import logging

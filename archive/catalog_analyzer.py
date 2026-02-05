@@ -3,10 +3,9 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import utils.paths
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer, HistogramErrorDrawer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer, HistogramErrorDrawer
 import argparse
 import logging
-import pybdsf_analysis.pybdsf_run_analysis
 
 def FluxCounter( path: Path ):
     """
@@ -33,8 +32,6 @@ def FluxCounter( path: Path ):
 
 
 if __name__ == "__main__":
-    pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
-
     parser = argparse.ArgumentParser()
     parser.add_argument( "-v", "--verbose", help="Print a message to the console every time a file is read or a directory is entered", action='store_true' )
     args = parser.parse_args()
@@ -42,10 +39,10 @@ if __name__ == "__main__":
 
     log_level = logging.DEBUG if verbose else logging.INFO
 
-    dataset_catalog_analyzer = RecursiveFileAnalyzer( utils.paths.PYBDSF_ANALYSIS_PARENT / utils.paths.DATASET_SUBDIR, log_level )
-    generated_catalog_analyzer = RecursiveFileAnalyzer( utils.paths.PYBDSF_ANALYSIS_PARENT / utils.paths.GENERATED_SUBDIR, log_level )
-    dataset_fluxes = np.array( dataset_catalog_analyzer.for_each( FluxCounter, r'.*?\.fits$' ) ) #both fluxes and flux errors, (N,2)
-    generated_fluxes = np.array( generated_catalog_analyzer.for_each( FluxCounter, r'.*?\.fits$' ) ) #both fluxes and flux errors, (N,2)
+    fluxes = dict()
+    for subdir in utils.paths.SUBDIRS:
+        catalog_analyzer = RecursiveFileAnalyzer( utils.paths.ANALYSIS_PARENT / subdir, log_level )
+        fluxes[ subdir ] = np.array( catalog_analyzer.for_each( FluxCounter, r'.*?\.fits$' ) ) #both fluxes and flux errors, (N,2)
 
     resolution = 1000
     fig = plt.figure( figsize=(int(resolution*1/100), int(resolution/100)) )
@@ -56,8 +53,8 @@ if __name__ == "__main__":
 
     BINCOUNT = 10
     hist = HistogramErrorDrawer()
-    hist.draw( dataset_fluxes[ :, 0 ], ax=ax_flux, bins=BINCOUNT, range=(0,30), label="dataset", color="b", density=True, log=True )
-    hist.draw( generated_fluxes[ :, 0 ], ax=ax_flux, bins=BINCOUNT, range=(0,30), label="generated", color="g", density=True, log=True )
+    for subdir, c in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
+        hist.draw( fluxes[ subdir ][ :, 0 ], ax=ax_flux, bins=BINCOUNT, range=(0,30), label=subdir, color=c, density=True, log=True )
 
     ax_flux.legend()
     ax_flux.set_title( "Model Fluxes" )

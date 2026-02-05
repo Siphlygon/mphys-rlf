@@ -15,34 +15,30 @@ IMG_DATA_PARENT = STORAGE_PARENT / "image_data"
 FITS_PARENT = STORAGE_PARENT / "fits_images"
 PYBDSF_PARENT = STORAGE_PARENT / "pybdsf"
 NP_ARRAY_PARENT = STORAGE_PARENT / "nparrays"
-FLAGS_PARENT = STORAGE_PARENT / "flagfiles"
 DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
 
 # Model configuration presets
 CONFIG_PARENT = BASE_PARENT / "src/model/configs"
 MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.json")})
 
-# Folders for different kinds of image data
-LOFAR_DATA_PARENT = IMG_DATA_PARENT / "LOFAR"
-FIRST_DATA_PARENT = IMG_DATA_PARENT / "FIRST"
+# Model Names
+NAMES = [ "LOFAR", "FIRST" ]
 
 # Folders for different kinds of fits image data
-DATASET_SUBDIR = "dataset"
-GENERATED_SUBDIR = "generated"
+SUBDIRS = [ "dataset", "generated_datadist", "generated_loguniform" ]
+COLOURS = [ 'b', 'g', 'm' ]
 PYBDSF_EXPORT_IMAGE_PARENT = PYBDSF_PARENT / "images"
 PYBDSF_LOG_PARENT = PYBDSF_PARENT / "logs"
 PYBDSF_CATALOG_PARENT = PYBDSF_PARENT / "catalogs"
 
 
 # Pretrained models
-LOFAR_MODEL_NAME = "LOFAR_model"
 PRETRAINED_PARENT = MODEL_PARENT / "pretrained"
-LOFAR_MODEL_PARENT = MODEL_PARENT / LOFAR_MODEL_NAME
 
 # Train data subsets
 LOFAR_SUBSETS = IndexedOrderedDict(
     {
-        k: LOFAR_DATA_PARENT / v
+        k: IMG_DATA_PARENT / "LOFAR" / v
         for k, v in {
             "0-clip": "0-clip.hdf5",
         }.items()
@@ -50,9 +46,10 @@ LOFAR_SUBSETS = IndexedOrderedDict(
 )
 
 # Paths for training data processing
-MOSAIC_DIR = LOFAR_DATA_PARENT / "mosaics"
-CUTOUTS_DIR = LOFAR_DATA_PARENT / "cutouts"
-LOFAR_RES_CAT = LOFAR_DATA_PARENT / "6-LoTSS_DR2-public-resolved_sources.csv"
+LOFAR_DATA_PATH = IMG_DATA_PARENT / "LOFAR" / "LOFAR_Dataset.h5"
+MOSAIC_DIR = IMG_DATA_PARENT / "LOFAR" / "mosaics"
+CUTOUTS_DIR = IMG_DATA_PARENT / "LOFAR" / "cutouts"
+LOFAR_RES_CAT = IMG_DATA_PARENT / "LOFAR" / "6-LoTSS_DR2-public-resolved_sources.csv"
 
 
 def cast_to_Path(path):
@@ -122,8 +119,8 @@ if __name__ == "__main__":
     print(f"\tIMG_DATA_PARENT: {IMG_DATA_PARENT}")
 
     print("\nFolders for different kinds of image data")
-    print(f"\tLOFAR_DATA_PARENT: {LOFAR_DATA_PARENT}")
-    print(f"\tFIRST_DATA_PARENT: {FIRST_DATA_PARENT}")
+    print(f"\tLOFAR_DATA_PARENT: {IMG_DATA_PARENT}/LOFAR")
+    print(f"\tFIRST_DATA_PARENT: {IMG_DATA_PARENT}/FIRST")
 
     print("\nTrain data subsets")
     for k, v in LOFAR_SUBSETS.items():

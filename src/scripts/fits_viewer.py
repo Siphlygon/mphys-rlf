@@ -4,11 +4,8 @@ import numpy as np
 from pathlib import Path
 import math
 import argparse
-import pybdsf_analysis.recursive_file_analyzer as rfa
-import utils.paths
-import pybdsf_analysis.generate_fits_files as gff
-import files.dataset as dataset
-from pybdsf_analysis.power_transform import PeakFluxPowerTransformer
+import analysis.recursive_file_analyzer as rfa
+from analysis.power_transform import PeakFluxPowerTransformer
 
 class FitsViewer:
     """

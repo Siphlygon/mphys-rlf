@@ -1,19 +1,17 @@
 import matplotlib.pyplot as plt
-from pybdsf_analysis.recursive_file_analyzer import HistogramErrorDrawer
-from pybdsf_analysis.image_analyzer import ImageAnalyzer
+from analysis.recursive_file_analyzer import HistogramErrorDrawer
+from analysis.image_analyzer import ImageAnalyzer
 import argparse
 import logging
-import pybdsf_analysis.pybdsf_run_analysis
 import utils.paths
 from utils.distributed import DistributedUtils
 import logging
-from pybdsf_analysis.log_analyzer import LogAnalyzer
-import pybdsf_analysis.log_analyzer as la
-import pybdsf_analysis.recursive_file_analyzer as rfa
+from analysis.log_analyzer import LogAnalyzer
+import analysis.log_analyzer as la
+import analysis.recursive_file_analyzer as rfa
 import numpy as np
 from completeness.img_data_arrays import ImageDataArrays
 import h5py
-from files.dataset import LOFAR_DATA_PATH
 
 def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
     resolution = 600
@@ -38,7 +36,7 @@ def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
     
 
     hist = HistogramErrorDrawer()
-    for subdir in [ utils.paths.DATASET_SUBDIR, utils.paths.GENERATED_SUBDIR ]:
+    for subdir, c in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
         fluxes_path = utils.paths.NP_ARRAY_PARENT / subdir / 'integrated_fluxes_normalized.npy'
         if fluxes_path.exists():
             normalized_model_fluxes = np.load( fluxes_path )
@@ -52,13 +50,8 @@ def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
         if data_path.exists():
             data = np.load( data_path )
         else:
-            if subdir == utils.paths.GENERATED_SUBDIR:
-                rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
-                data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
-            else:
-                with h5py.File( LOFAR_DATA_PATH, 'r' ) as h5:
-                    data = h5[ 'images' ][ : ]
-                    data = data / np.max( data, axis=(1,2) )
+            rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
+            data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
             np.save( data_path, data )
         means = np.mean( data, axis=(1,2) )
         rmsds = np.std( data, axis=(1,2) )
@@ -71,7 +64,7 @@ def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
                        bins=BINCOUNT,
                        range=range,
                        label=subdir, 
-                       color="b" if subdir == utils.paths.DATASET_SUBDIR else "g",
+                       color=c,
                        density=False,
                        relative=True )
                        
@@ -87,13 +80,10 @@ def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
 
 
 if __name__ == "__main__":
-    pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
-
     parser = argparse.ArgumentParser()
     parser.add_argument( "-v", "--verbose", help="Print a message to the console every time a file is read or a directory is entered", action='store_true' )
     args = parser.parse_args()
     verbose = args.verbose
     log_level = logging.DEBUG if verbose else logging.INFO
 
-    du = DistributedUtils()
-    du.single_task_only_last( 'plot_graphs_with_pybdsf_data', plot_graphs_with_pybdsf_data, 0, log_level )
+    plot_graphs_with_pybdsf_data( log_level )

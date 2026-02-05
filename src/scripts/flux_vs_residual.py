@@ -1,20 +1,19 @@
-import pybdsf_analysis.pybdsf_run_analysis
 import utils.paths
-from pybdsf_analysis.image_analyzer import ImageAnalyzer
+from analysis.image_analyzer import ImageAnalyzer
 import numpy as np
 from pathlib import PurePath
 import matplotlib.pyplot as plt
 from utils.distributed import DistributedUtils
-import pybdsf_analysis.recursive_file_analyzer as rfa
+import analysis.recursive_file_analyzer as rfa
 from utils.logging import get_logger
-from pybdsf_analysis.power_transform import PeakFluxPowerTransformer
+from analysis.power_transform import PeakFluxPowerTransformer
 from completeness.img_data_arrays import ImageDataArrays
 
 logger = get_logger( __name__ )
 
 def plot_flux_vs_residuals():
     pt = PeakFluxPowerTransformer()
-    for subdir in [ utils.paths.DATASET_SUBDIR, utils.paths.GENERATED_SUBDIR ]:
+    for subdir, color in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
         data_arrays = ImageDataArrays( subdir )
 
         #Select for peak flux >0.5 mJy
@@ -34,7 +33,7 @@ def plot_flux_vs_residuals():
         scaled_flux = transformed_peak_fluxes
 
         plt.scatter( scaled_flux, delta, label=subdir, 
-                    color='g' if subdir == utils.paths.GENERATED_SUBDIR else 'b',
+                    color=color,
                     s=0.01 )
 
     plt.xlabel( 'Transformed peak flux, arbitrary units' )
@@ -49,8 +48,5 @@ def plot_flux_vs_residuals():
 
 
 if __name__ == '__main__':
-    #pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
-
-    du = DistributedUtils()
-    du.single_task_only_last( 'plot_flux_vs_residuals', plot_flux_vs_residuals, 0 )
+    plot_flux_vs_residuals()
 

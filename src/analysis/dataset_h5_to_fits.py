@@ -15,15 +15,12 @@ import math
 from pathlib import Path, PurePath
 import shutil
 import utils.parameters
-import utils.paths
+import utils.paths as pth
 from tqdm import tqdm
-import files.dataset
-from files.dataset import LOFAR_DATA_PATH
-from utils.distributed import DistributedUtils
 from sklearn.preprocessing import PowerTransformer
-from pybdsf_analysis.image_analyzer import ImageAnalyzer
+from analysis.image_analyzer import ImageAnalyzer
 
-def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, fits_output_dir: Path, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[ int ] | None = None ):
+def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, subdir: str, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[ int ] | None = None ):
     """
     A method to convert the LOFAR h5 dataset used in this project into fits files. Outputs fits files to 
     fits_output_dir, and groups the images into directories by descending sizes.
@@ -32,8 +29,8 @@ def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, fits_output_dir: Path, cutoff
     ----------
     lofar_data_h5: Path
         The directory to read the LOFAR data from
-    fits_output_dir: Path
-        The directory to output the FITS files to
+    subdir: str
+        The subdirectory to output the FITS files to
     cutoff : int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF
         The number of images to convert and export. Default behaviour in utils.parameters.LOFAR_FITS_COUNT_CUTOFF
     bin_sizes : list[ int ] | None = None
@@ -41,18 +38,16 @@ def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, fits_output_dir: Path, cutoff
 
         For example: bin_sizes array of [10000, 1000, 3000] would be sorted to [10000, 3000, 1000] and files would be stored as
 
-        00010 -> fits_output_dir/0-9999/0-2999/0-999/image10.fits
+        00010 -> subdir/0-9999/0-2999/0-999/image10.fits
 
-        09150 -> fits_output_dir/0-9999/9000-9999/9100-9199/image9150.fits
+        09150 -> subdir/0-9999/9000-9999/9100-9199/image9150.fits
 
-        12120 -> fits_output_dir/10000-19999/12000-14999/12100-12199/image12120.fits
+        12120 -> subdir/10000-19999/12000-14999/12100-12199/image12120.fits
 
         As can be seen with 9150, bins are funneled such that the upper bound of an inner bin is always less than or equal to the upper bound of all
         its outer bins, and the opposite with the lower bound of an inner bin.
     """
-    files.dataset.download_dataset()
-
-    dataset_analyzer = ImageAnalyzer( utils.paths.DATASET_SUBDIR )
+    dataset_analyzer = ImageAnalyzer( subdir )
 
     if bin_sizes is None:
         bin_sizes = utils.parameters.BINS_ARRAY
@@ -107,11 +102,7 @@ def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, fits_output_dir: Path, cutoff
 
             dataset_analyzer.save_image_to_FITS( image, postfix, flux_scaled )
 
-def single_node_convert_LOFAR_h5_to_fits( lofar_data_h5: Path, fits_output_dir: Path, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[int] | None = None ):
-    du = DistributedUtils()
-    du.single_task_only_first( 'convert_LOFAR_h5_to_fits', convert_LOFAR_h5_to_fits, 0, lofar_data_h5, fits_output_dir, cutoff, bin_sizes )
-
-def validate_LOFAR_fits_images( clean_directory: bool, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[ int ] | None = None ):
+def validate_LOFAR_fits_images( subdir: str, clean_directory: bool = False, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[ int ] | None = None ):
     """
     Ensure FITS images from LOFAR exist in accordance with paths laid out in utils.paths
 
@@ -119,6 +110,8 @@ def validate_LOFAR_fits_images( clean_directory: bool, cutoff: int | None = util
     ----------
     clean_directory : bool
         Whether or not to clean out the fits images directory to ensure bin compliance
+    subdir : str
+        The subdirectory of the dataset
     cutoff : int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF
         The optional value to cut off conversion at, in terms of number of images converted
 
@@ -137,26 +130,28 @@ def validate_LOFAR_fits_images( clean_directory: bool, cutoff: int | None = util
         As can be seen with 9150, bins are funneled such that the upper bound of an inner bin is always less than or equal to the upper bound of all
         its outer bins, and the opposite with the lower bound of an inner bin.
     """
-    fits_dataset_folder = utils.paths.FITS_PARENT / utils.paths.DATASET_SUBDIR
+    fits_dataset_folder = pth.FITS_PARENT / subdir
     if fits_dataset_folder.exists():
         if clean_directory:
             shutil.rmtree( fits_dataset_folder )
         else:
-            return
+            # If we don't want to clean the directory, check if we are at the conversion cutoff
+            # and if we aren't, continue on to conversion
+            num_files = sum( 1 for _ in fits_dataset_folder.rglob( "*.fits" ) )
+            print( f'found {num_files}, cutoff {cutoff}' )
+            if num_files >= cutoff:
+                return
 
-    convert_LOFAR_h5_to_fits( LOFAR_DATA_PATH, fits_dataset_folder, cutoff, bin_sizes )
-
-def single_node_validate_LOFAR_fits_images( clean_directory: bool, cutoff: int | None = utils.parameters.LOFAR_FITS_COUNT_CUTOFF, bin_sizes: list[ int ] | None = None ):
-    du = DistributedUtils()
-    du.single_task_only_first( 'validate_LOFAR_fits_images', validate_LOFAR_fits_images, 0, clean_directory, cutoff, bin_sizes )
+    convert_LOFAR_h5_to_fits( pth.LOFAR_DATA_PATH, fits_dataset_folder, cutoff, bin_sizes )
 
 
 
 if __name__ == "__main__":
-    # If this file is run directly, do a cleanup of the fits dataset dir and remake it according to args
+    # allow for bin sizes to be specified manually as command-line arguments, or use config if nothing specified
     bin_sizes = []
     for arg in sys.argv[ 1: ]:
         bin_sizes.append( int( arg ) )
     if len( bin_sizes ) == 0:
         bin_sizes = utils.parameters.BINS_ARRAY
-    single_node_validate_LOFAR_fits_images( True, bin_sizes=bin_sizes )
+
+    validate_LOFAR_fits_images( utils.parameters.DATASET_FITS_SUBDIR, bin_sizes=bin_sizes )

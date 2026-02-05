@@ -1,22 +1,20 @@
 from astropy.io import fits
 import numpy as np
-import pybdsf_analysis.pybdsf_run_analysis
 import scipy.stats
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
 import utils.paths
 from utils.distributed import DistributedUtils
 import random
-from pybdsf_analysis.log_analyzer import LogAnalyzer
-import pybdsf_analysis.log_analyzer as la
-import pybdsf_analysis.recursive_file_analyzer as rfa
+from analysis.log_analyzer import LogAnalyzer
+import analysis.log_analyzer as la
+import analysis.recursive_file_analyzer as rfa
 from tqdm import tqdm
 import astropy.stats
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from pybdsf_analysis.image_analyzer import ImageAnalyzer
+from analysis.image_analyzer import ImageAnalyzer
 import h5py
-from files.dataset import LOFAR_DATA_PATH
 from sklearn.preprocessing import PowerTransformer
 from completeness.img_data_arrays import ImageDataArrays
 
@@ -63,7 +61,7 @@ def create_noise_LOFAR(shape=(80,80), rms=rms_LOFAR):
 
 def get_completeness_estim():
     plt.figure(figsize = (8, 5))
-    for subdir in [ utils.paths.GENERATED_SUBDIR ]:
+    for subdir in [ "generated_loguniform" ]:
         images, resid_images, model_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
 
         detectable = np.empty( (images.shape[ 0 ]), dtype=bool )
@@ -97,7 +95,7 @@ def get_completeness_estim():
 
         #plt.errorbar( bin_centers, completeness, yerr, fmt='.', color='b' if subdir is utils.paths.DATASET_SUBDIR else 'g' )
 
-        plt.plot(bin_centers, samples_per_bin, marker='.', label = f'{subdir} counts', color='b' if subdir is utils.paths.DATASET_SUBDIR else 'g' )
+        plt.plot(bin_centers, samples_per_bin, marker='.', label = f'{subdir} counts', color='g' )
 
     plt.xscale('log')
     plt.xlabel("Integrated Flux Density (mJy)")
@@ -110,8 +108,5 @@ def get_completeness_estim():
 
 
 if __name__ == "__main__":
-    pybdsf_analysis.pybdsf_run_analysis.analyze_everything()
-
-    du = DistributedUtils()
-    du.single_task_only_last( 'get_completeness_estim', get_completeness_estim, 0 )
+    get_completeness_estim()
 

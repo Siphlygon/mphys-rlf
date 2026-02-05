@@ -1,5 +1,5 @@
 import utils.paths
-from pybdsf_analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
 import h5py
 import utils.logging
 import requests
