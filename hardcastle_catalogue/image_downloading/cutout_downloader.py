@@ -119,11 +119,16 @@ class CutoutDownloader:
         if r.headers.get('content-type') != 'application/fits':
             raise RuntimeError('No FITS returned – probably no coverage')
 
-        # Stream write (memory safe)
+        # # Stream write (memory safe)
+        # with open(outfile, 'wb') as o:
+        #     for chunk in r.iter_content(chunk_size=1024 * 1024):
+        #         if chunk:
+        #             o.write(chunk)
+
+        # FITS files are ~54KB, so we can afford to load them into memory before writing to disk,
+        # which is faster than streaming for small files
         with open(outfile, 'wb') as o:
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    o.write(chunk)
+            o.write(r.content)
 
         r.close()
 

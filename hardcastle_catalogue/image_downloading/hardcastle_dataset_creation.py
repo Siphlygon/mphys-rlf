@@ -1,10 +1,7 @@
 """
 As a step of pre-processing before dataset creation, this script creates the Hardcastle catalogue by combining the header
 information from the FITS file with the pixel values from the cutout files downloaded separately. This is then saved to
-a new file for later use in matching to the LOFAR dataset.
-
-For the full dataset (>300k) images, this can take ~10 minutes to the time saved by creating this file once and reading
-it into many nodes on galahad is significant.
+a new file, with possible aims to have this be downloadable and avoid the many hours of cutout downloading.
 """
 
 """
