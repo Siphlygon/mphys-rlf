@@ -16,6 +16,7 @@ FITS_PARENT = STORAGE_PARENT / "fits_images"
 PYBDSF_PARENT = STORAGE_PARENT / "pybdsf"
 NP_ARRAY_PARENT = STORAGE_PARENT / "nparrays"
 FLAGS_PARENT = STORAGE_PARENT / "flagfiles"
+DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
 
 # Model configuration presets
 CONFIG_PARENT = BASE_PARENT / "src/model/configs"
