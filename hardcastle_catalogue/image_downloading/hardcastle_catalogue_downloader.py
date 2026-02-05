@@ -16,12 +16,6 @@ import asyncio
 from utils.distributed import distribute
 
 
-# This is copied from stack overflow, for fast downloads using asyncio
-def background(f):
-    def wrapped(*args, **kwargs):
-        return asyncio.get_event_loop().run_in_executor(None, f, *args, **kwargs)
-    return wrapped
-
 class HardcastleCatalogueDownloader:
     """
     This is a class to handle downloading cutouts from the LOFAR cutout server based on the Hardcastle catalogue. This is
@@ -91,7 +85,6 @@ class HardcastleCatalogueDownloader:
         return positions
 
     # NOTE-THIS COMES FROM THE LOFAR API
-    # @background
     def get_cutout(self, outfile, pos, size=2, low=False, dr3=False, auth=None):
         '''Get a cutout at position pos with size size arcmin. If low is
         True, get the 20-arcsec cutout, else get the 6-arcsec one. If dr3
