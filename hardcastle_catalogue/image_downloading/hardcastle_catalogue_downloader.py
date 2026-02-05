@@ -24,7 +24,7 @@ class HardcastleCatalogueDownloader:
         # Set up logging
         self.logger = utils.logging.get_logger("hardcastle catalogue downloader", logging.DEBUG)
 
-    def download_hardcastle_catalogue(self, save_path=paths.DATASET_PARENT/"combined-release-v1.2-LM_opt_mass.fits"):
+    def download_hardcastle_catalogue(self, save_path=paths.DATASET_PARENT/"image_downloading/combined-release-v1.2-LM_opt_mass.fits"):
         """
         Downloads the Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -35,7 +35,7 @@ class HardcastleCatalogueDownloader:
             return
 
         url = "https://lofar-surveys.org/public/DR2/catalogues/combined-release-v1.2-LM_opt_mass.fits"
-        self.logger.info(f'Downloading Hardcastle catalogue from {url}...')
+        self.logger.info(f'Downloading Hardcastle catalogue from {url}. This will take a while...')
         response = requests.get(url, stream=True)
 
         if response.status_code == 200:
@@ -46,7 +46,7 @@ class HardcastleCatalogueDownloader:
         else:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
-    def load_hardcastle_catalogue(self, file_path=paths.DATASET_PARENT/"combined-release-v1.2-LM_opt_mass.fits"):
+    def load_hardcastle_catalogue(self, file_path=paths.DATASET_PARENT/"image_downloading/combined-release-v1.2-LM_opt_mass.fits"):
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
         LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
