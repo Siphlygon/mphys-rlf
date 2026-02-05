@@ -134,7 +134,7 @@ def validate_LOFAR_fits_images( subdir: str, clean_directory: bool = False, cuto
     if fits_dataset_folder.exists():
         if clean_directory:
             shutil.rmtree( fits_dataset_folder )
-        else:
+        elif cutoff is not None:
             # If we don't want to clean the directory, check if we are at the conversion cutoff
             # and if we aren't, continue on to conversion
             num_files = sum( 1 for _ in fits_dataset_folder.rglob( "*.fits" ) )

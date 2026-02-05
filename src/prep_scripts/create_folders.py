@@ -9,8 +9,7 @@ def make_folders():
               pth.IMG_DATA_PARENT, 
               pth.FITS_PARENT, 
               pth.PYBDSF_PARENT, 
-              pth.NP_ARRAY_PARENT, 
-              pth.FLAGS_PARENT]:
+              pth.NP_ARRAY_PARENT]:
         # Make folder if it doesn't exist
         if not p.exists():
             p.mkdir()
