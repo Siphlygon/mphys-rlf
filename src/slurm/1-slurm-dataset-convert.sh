@@ -1,11 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name=splun
+#SBATCH --job-name=dbconv
 #SBATCH --constraint=A100
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
 #SBATCH --no-requeue
-#SBATCH --array=0-20
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --cpus-per-task=16
 #SBATCH --exclude=compute-0-9,compute-0-1,compute-0-2
@@ -18,4 +17,4 @@ echo ">>>activating venv"
 source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/analysis/run_analysis.py
+python /share/nas2_3/lgreen/mphys-rlf/src/analysis/dataset_h5_to_fits.py --config DEFAULT

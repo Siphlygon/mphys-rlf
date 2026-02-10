@@ -25,7 +25,7 @@ def make_folders():
                 ), f"Broken folder structure: Symlink {symlink} points to {symlink.resolve()}."
 
     # per-model folders
-    for name in pth.NAMES:
+    for name in pth.MODEL_NAMES:
         for f in [pth.IMG_DATA_PARENT]:
             if not (f/name).exists():
                 (f/name).mkdir()

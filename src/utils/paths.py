@@ -26,8 +26,11 @@ IMAGE_DOWNLOADING = DATASET_PARENT / "image_downloading"
 CONFIG_PARENT = BASE_PARENT / "src/model/configs"
 MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.json")})
 
+# Config file
+PROGRAM_CONFIG = BASE_PARENT / "src/program.config"
+
 # Model Names
-NAMES = [ "LOFAR", "FIRST" ]
+MODEL_NAMES = [ "LOFAR", "FIRST" ]
 
 # Folders for different kinds of fits image data
 SUBDIRS = [ "dataset", "generated_datadist", "generated_loguniform" ]

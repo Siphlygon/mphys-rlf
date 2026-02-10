@@ -10,7 +10,6 @@ from analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
 import utils.paths
 import utils.logging
 import torch
-import utils.parameters
 import sys
 from utils.distributed import DistributedUtils
 import utils.paths as pth
@@ -18,6 +17,7 @@ import logging
 from pathlib import PurePath
 import scipy.stats
 from analysis.power_transform import PeakFluxPowerTransformer
+import configparser
 
 
 def get_path_from_index( index: int, subdir: str, bin_size: int ):
@@ -27,22 +27,9 @@ def get_path_from_index( index: int, subdir: str, bin_size: int ):
     full_image_path = ( utils.paths.FITS_PARENT / subdir ) / postfix
     return full_image_path, postfix
 
-def sample( parameter_args ):
+def sample( args ):
     logger = utils.logging.get_logger( __name__, logging.DEBUG )
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument( "-s", "--subdir", help="The subdirectory to store the sampled files under", type=str )
-    parser.add_argument( "-a", "--name", help="The name of the model to sample, e.g. LOFAR or FIRST", type=str, default="LOFAR" )
-    parser.add_argument( "-b", "--batch-size", help="The number of batches to be sampled at a time", type=int, default=utils.parameters.FITS_SAMPLING_ARGS[ 'batch_size' ] )
-    parser.add_argument( "-n", "--n-samples", help="The number of samples to generate", type=int, default=utils.parameters.FITS_SAMPLING_ARGS[ 'n_samples'] )
-    parser.add_argument( "-t", "--timesteps", help="The number of timesteps in sampling", type=int, default=utils.parameters.FITS_SAMPLING_ARGS[ 'timesteps' ] )
-    parser.add_argument( "-c", "--use-cpu", help="Whether or not to use CPU and RAM for sampling, as opposed to using avaliable GPUs", action='store_true' if not utils.parameters.FITS_SAMPLING_ARGS[ 'use_cpu' ] else 'store_false' )
-    parser.add_argument( "--distribution", help="Distribution type: uniform, loguniform, or dataset. For uniform and loguniform specify upper and lower bounds with --upper and --lower", default='dataset' )
-    parser.add_argument( "--upper", help="Distribution upper bound", type=float, default=0 )
-    parser.add_argument( "--lower", help="Distribution lower bound", type=float, default=0 )
-    parser.add_argument( "-p", "--preserve-values", help="Whether or not to preserve unscaled image values. By default images are scaled 0-1", action='store_true' )
-    parser.add_argument( "-sz", "--bin-size", help="How large the bins the generated images are sorted into are", type=int, default=utils.parameters.FITS_SAMPLING_ARGS[ 'bin_size' ] )
-    args = parser.parse_args( parameter_args ) #will automatically read from the command line if passed, else use defaults
 
     #Do a sampling loop of batch_size samples and save them to the disk as they're generated, until we reach n_samples
     model_sampler = model.sampler.Sampler( n_samples=args.batch_size, timesteps=args.timesteps, distribute_model=(not args.use_cpu) )
@@ -57,7 +44,7 @@ def sample( parameter_args ):
     # Figure out initial count based on number of fits files already in the directory
     logger.debug( 'Getting initial count...' )
     initial_count = 0
-    generated_images_dir = utils.paths.FITS_PARENT / args.subdir
+    generated_images_dir = utils.paths.FITS_PARENT / args.generated_subdir
     if generated_images_dir.exists():
         analyzer = RecursiveFileAnalyzer( generated_images_dir )
         initial_count = len( analyzer.get_unwrapped_list( None, r'.*?image(\d+)\.fits$', (bin_start, bin_end) ) )
@@ -74,18 +61,18 @@ def sample( parameter_args ):
     if args.distribution == 'dataset':
         fpeak_model_dist = model_sampler.get_fpeak_model_dist( None, pth.MAXVALS )
     elif args.distribution == 'uniform':
-        fpeak_model_dist = lambda n : pt.transform( scipy.stats.uniform.rvs( args.lower, args.upper, size=n ) )
+        fpeak_model_dist = lambda n : pt.transform( scipy.stats.uniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
     elif args.distribution == 'loguniform':
-        fpeak_model_dist = lambda n : pt.transform( scipy.stats.loguniform.rvs( args.lower, args.upper, size=n ) )
+        fpeak_model_dist = lambda n : pt.transform( scipy.stats.loguniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
 
     # Generate/Sample the samples
     sample_generated_count = 0
     sample_index = bin_start
-    image_analyzer = ImageAnalyzer( args.subdir )
+    image_analyzer = ImageAnalyzer( args.generated_subdir )
     while sample_generated_count < n_samples_to_generate:
         batch_size = min( args.batch_size, n_samples_to_generate - sample_generated_count ) #to not double-generate at the borders
         fpeak_model_values = fpeak_model_dist( batch_size )[ :, np.newaxis ]
-        samples = model_sampler.quick_sample( f"{args.name}_model", context=torch.from_numpy( fpeak_model_values ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
+        samples = model_sampler.quick_sample( f"{args.model_name}_model", context=torch.from_numpy( fpeak_model_values ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
         sample_generated_count += batch_size
 
         for i in range( samples.shape[ 0 ] ):
@@ -103,10 +90,10 @@ def sample( parameter_args ):
 
             fscaled = fpeak_model_values[ i, 0 ]
 
-            full_image_path, postfix = get_path_from_index( sample_index, args.subdir, args.bin_size )
+            full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.bin_size )
             while full_image_path.exists():
                 sample_index += 1
-                full_image_path, postfix = get_path_from_index( sample_index, args.subdir, args.bin_size )
+                full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.bin_size )
             image_analyzer.save_image_to_FITS( image, postfix, fscaled )
 
             if sample_index > bin_end:
@@ -115,4 +102,30 @@ def sample( parameter_args ):
                 logger.info( 'Sample index %i has reached bin end %i - generated sample count %i/%i', sample_index, bin_end, sample_generated_count, n_samples_to_generate )
 
 if __name__ == '__main__':
-    sample( sys.argv[ 1: ] )
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "--config", help=f"Which config to use for image generation, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    args = parser.parse_args()
+
+    config = configparser.ConfigParser()
+    config.read( pth.PROGRAM_CONFIG )
+    for arg in [ 'generated_subdir', 
+                 'batch_size', 
+                 'n_samples',
+                 'bin_size',
+                 'timesteps',
+                 'use_cpu',
+                 'preserve_values',
+                 'model_name',
+                 'upper_bound',
+                 'lower_bound',
+                 'distribution' ]:
+        setattr( args, arg, config.get( args.config, arg ) )
+
+    for intarg in [ 'batch_size', 'n_samples', 'bin_size', 'timesteps' ]:
+        setattr( args, intarg, int( getattr( args, intarg ) ) )
+    for floatarg in [ 'upper_bound', 'lower_bound' ]:
+        setattr( args, floatarg, float( getattr( args, floatarg ) ) )
+    for boolarg in [ 'use_cpu', 'preserve_values' ]:
+        setattr( args, boolarg, getattr( args, boolarg ) == 'True' )
+
+    sample( args )

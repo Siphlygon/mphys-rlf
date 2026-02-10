@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=splun
+#SBATCH --job-name=pybdsf
 #SBATCH --constraint=A100
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
@@ -18,4 +18,4 @@ echo ">>>activating venv"
 source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/analysis/generate_fits_files.py -s generated_loguniform -n 100000 --distribution loguniform --upper 1e1 --lower 1e-7
+python /share/nas2_3/lgreen/mphys-rlf/src/analysis/run_analysis.py
