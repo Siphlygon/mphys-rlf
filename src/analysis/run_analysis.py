@@ -2,7 +2,6 @@ import analysis.generate_fits_files
 import analysis.dataset_h5_to_fits
 import utils.paths as pth
 from analysis.image_analyzer import ImageAnalyzer
-import utils.parameters
 from utils.logging import get_logger
 
 logger = get_logger( __name__ )

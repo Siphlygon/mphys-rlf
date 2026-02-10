@@ -1,9 +1,6 @@
 # This file was created by Ashley and Luna and defines functions neccesary to convert the LOFAR h5 dataset
 # that comes with the project into FITS files needed for PyBDSF, as well as a more specific function which implements
-# the first function with the files and parameters presented in utils.paths and utils.parameters
-
-# This file also provides a main function which forces a flush of the fits images directory and remakes it according
-# to the command line arguments, or utils.parameters if none are passed
+# the first function and checks for compliance with the arguments, and a main function which uses the config file
 
 import sys
 from astropy.io import fits
