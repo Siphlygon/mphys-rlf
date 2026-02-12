@@ -1,17 +1,13 @@
 import matplotlib.pyplot as plt
-from analysis.recursive_file_analyzer import HistogramErrorDrawer
-from analysis.image_analyzer import ImageAnalyzer
+from utils.recursive_file_analyzer import HistogramErrorDrawer
 import argparse
-import logging
 import utils.paths
-from utils.distributed import DistributedUtils
 import logging
 from analysis.log_analyzer import LogAnalyzer
 import analysis.log_analyzer as la
-import analysis.recursive_file_analyzer as rfa
+import utils.recursive_file_analyzer as rfa
 import numpy as np
-from completeness.img_data_arrays import ImageDataArrays
-import h5py
+
 
 def plot_graphs_with_pybdsf_data( log_level: int = logging.INFO ):
     resolution = 600

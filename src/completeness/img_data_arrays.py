@@ -1,11 +1,11 @@
-from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 from analysis.log_analyzer import LogAnalyzer
 import numpy as np
-import analysis.recursive_file_analyzer as rfa
+import utils.recursive_file_analyzer as rfa
 import analysis.log_analyzer as la
 import utils.paths as pth
 from utils.distributed import DistributedUtils
-from analysis.power_transform import PeakFluxPowerTransformer
+from utils.power_transform import PeakFluxPowerTransformer
 from utils.logging import get_logger
 from functools import reduce
 import utils.paths

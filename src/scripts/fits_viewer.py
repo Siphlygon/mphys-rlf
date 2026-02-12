@@ -1,11 +1,10 @@
-from astropy.io import fits
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 import math
 import argparse
-import analysis.recursive_file_analyzer as rfa
-from analysis.power_transform import PeakFluxPowerTransformer
+import utils.recursive_file_analyzer as rfa
+from utils.power_transform import PeakFluxPowerTransformer
 
 class FitsViewer:
     """

@@ -10,13 +10,12 @@ from analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
 import utils.paths
 import utils.logging
 import torch
-import sys
 from utils.distributed import DistributedUtils
 import utils.paths as pth
 import logging
 from pathlib import PurePath
 import scipy.stats
-from analysis.power_transform import PeakFluxPowerTransformer
+from utils.power_transform import PeakFluxPowerTransformer
 import configparser
 
 

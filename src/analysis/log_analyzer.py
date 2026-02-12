@@ -1,10 +1,9 @@
 from pathlib import Path, PurePath
 import re
-from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
-import logging
+from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 import utils.paths
 import logging
-import numpy as np
+
 
 class LogAnalyzer( RecursiveFileAnalyzer ):
     """

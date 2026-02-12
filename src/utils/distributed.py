@@ -8,19 +8,6 @@ import numpy as np
 import utils.logging
 import logging
 
-# Source - https://stackoverflow.com/a/2785908
-# Posted by Alex Martelli, modified by community. See post 'Timeline' for change history
-# Retrieved 2025-11-12, License - CC BY-SA 3.0
-def wait_until( somepredicate, timeout: int | None, logger, waiting_on_array: int, taskname: str, period=1, *args, **kwargs ):
-    mustend = time.time() + timeout if timeout is not None else None
-    while ( mustend is None ) or ( time.time() < mustend ):
-        logger.debug( f'Waiting on array {waiting_on_array} to complete {taskname}: time={time.time()}' )
-        if somepredicate( *args, **kwargs ): 
-            logger.debug( f'Array {waiting_on_array} has completed {taskname}: time={time.time()}' )
-            return True
-        time.sleep(period)
-    return False
-
 def distribute(sliceable_array):
     du = DistributedUtils()
 

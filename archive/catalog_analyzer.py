@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import utils.paths
-from analysis.recursive_file_analyzer import RecursiveFileAnalyzer, HistogramErrorDrawer
+from utils.recursive_file_analyzer import RecursiveFileAnalyzer, HistogramErrorDrawer
 import argparse
 import logging
 

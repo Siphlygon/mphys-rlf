@@ -1,21 +1,7 @@
-from astropy.io import fits
 import numpy as np
-import scipy.stats
-from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
-import utils.paths
-from utils.distributed import DistributedUtils
-import random
-from analysis.log_analyzer import LogAnalyzer
-import analysis.log_analyzer as la
-import analysis.recursive_file_analyzer as rfa
-from tqdm import tqdm
 import astropy.stats
-import pandas as pd
 import matplotlib.pyplot as plt
-from pathlib import Path
 from analysis.image_analyzer import ImageAnalyzer
-import h5py
-from sklearn.preprocessing import PowerTransformer
 from completeness.img_data_arrays import ImageDataArrays
 
 rms_LOFAR = 71e-6 * 1e3

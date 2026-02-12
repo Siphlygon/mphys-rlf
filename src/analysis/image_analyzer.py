@@ -14,14 +14,12 @@ from astropy.io import fits
 import bdsf.image
 import numpy as np
 from pathlib import Path, PurePath
-import multiprocessing
 import multiprocessing.pool
 import utils.paths
 from utils.paths import cast_to_Path
 import utils.logging
-from analysis.recursive_file_analyzer import RecursiveFileAnalyzer
+from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 import logging
-from tqdm import tqdm
 from utils.distributed import DistributedUtils
 
 #Neccesary pool extention - PyBDSF uses daemon processes but only sometimes, and we want to batch the files themselves
