@@ -1,5 +1,6 @@
 from pathlib import Path
 from indexed import IndexedOrderedDict
+import configparser
 
 
 # Base directories for code base & storage
@@ -28,12 +29,16 @@ MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.jso
 
 # Config file
 PROGRAM_CONFIG = BASE_PARENT / "src/program.config"
+config = configparser.ConfigParser()
+config.read( PROGRAM_CONFIG )
 
 # Model Names
 MODEL_NAMES = [ "LOFAR", "FIRST" ]
 
 # Folders for different kinds of fits image data
-SUBDIRS = [ "dataset", "generated_datadist", "generated_loguniform" ]
+SUBDIRS = [ config[ 'default' ][ 'vm_dataset_subdir' ], 
+            config[ 'dataset_distribution' ][ 'generated_subdir'],
+            config[ 'loguniform_distribution' ][ 'generated_subdir' ] ]
 COLOURS = [ 'b', 'g', 'm' ]
 PYBDSF_EXPORT_IMAGE_PARENT = PYBDSF_PARENT / "images"
 PYBDSF_LOG_PARENT = PYBDSF_PARENT / "logs"
