@@ -18,6 +18,7 @@ from analysis.image_analyzer import ImageAnalyzer
 import h5py
 from sklearn.preprocessing import PowerTransformer
 from completeness.img_data_arrays import ImageDataArrays
+import scipy.signal
 
 rms_LOFAR = 95e-6 * 1e3
 beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
@@ -112,7 +113,24 @@ def create_noise_LOFAR(shape=(80,80), rms=rms_LOFAR):
     """
     Create a 2D patch of Gaussian noise with given RMS.
     """
-    return np.random.normal(loc=0.0, scale=rms, size=shape)
+    # Add beam-correllated noise
+
+    # Source - https://stackoverflow.com/a/63868276
+    # Posted by Igor
+    # Retrieved 2026-02-12, License - CC BY-SA 4.0
+
+    # Compute filter kernel with radius correlation_scale
+    correlation_scale = 6 / 1.5 #( 6 arcsec / beam ) / ( 1.5 arcsec / pix )
+    x = np.arange(-correlation_scale, correlation_scale)
+    y = np.arange(-correlation_scale, correlation_scale)
+    X, Y = np.meshgrid(x, y)
+    dist = np.sqrt(X*X + Y*Y)
+    filter_kernel = np.exp(-dist**2/(2*correlation_scale))
+
+    noise = np.random.normal( loc=0.0, scale=rms, size=shape )
+    noise = scipy.signal.fftconvolve( noise, filter_kernel, mode='same' )
+
+    return noise
 
 def get_completeness_estim():
     plt.figure(figsize = (8, 5))
