@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=prep
+#SBATCH --job-name=program-prep
 #SBATCH --constraint=A100
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
@@ -19,7 +19,7 @@ echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 
 # Only requirement is create_folders.py is before the rest
-python /share/nas2_3/lgreen/mphys-rlf/src/prep_scripts/create_folders.py
-python /share/nas2_3/lgreen/mphys-rlf/src/prep_scripts/download_dataset.py
-python /share/nas2_3/lgreen/mphys-rlf/src/prep_scripts/download_models.py
-python /share/nas2_3/lgreen/mphys-rlf/src/prep_scripts/copy_configs.py
+python /share/nas2_3/lgreen/mphys-rlf/src/program_prep/create_folders.py
+python /share/nas2_3/lgreen/mphys-rlf/src/program_prep/download_dataset.py
+python /share/nas2_3/lgreen/mphys-rlf/src/program_prep/download_models.py
+python /share/nas2_3/lgreen/mphys-rlf/src/program_prep/copy_configs.py
