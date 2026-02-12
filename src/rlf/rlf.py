@@ -5,9 +5,7 @@ import astropy.cosmology
 import astropy.units as u
 from completeness.img_data_arrays import ImageDataArrays
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-
-hsv_cmap = mpl.colors.Colormap( 'hsv' )
+from matplotlib import colormaps
 
 if __name__ == "__main__":
     config = configparser.ConfigParser()
@@ -86,6 +84,6 @@ if __name__ == "__main__":
         #plot the resulting graph
         for i_z in range( phi_est.shape[ 0 ] ):
             specific_phi_est = phi_est[ i_z ]
-            plt.plot( l_bins, specific_phi_est, color=hsv_cmap( i_z / phi_est.shape[ 0 ] ), label=f'z={z_bins[ i_z ]}' )
+            plt.plot( l_bins, specific_phi_est, color=colormaps[ 'hsv' ]( i_z / phi_est.shape[ 0 ] ), label=f'z={z_bins[ i_z ]:.2f}' )
         plt.legend()
         plt.savefig( f'{subdir}_rlf.png' )
