@@ -50,8 +50,6 @@ class HardcastleDatasetCreator:
         return resolved_list
 
 
-    #TODO: Change so it goes through all the subdir present, should be simple to just use os to list subdirs and
-    #TODO: iterate through the said list
     def load_cutout_images(self, list_of_dicts, folder_path=paths.DATASET_PARENT/'dr2_cutouts_download/'):
         """
         Loads the cutout images from LoTSS-DR2 in the specified folder.
@@ -92,6 +90,7 @@ class HardcastleDatasetCreator:
         # present and this helps identify which ones are missing.
 
         return list_of_dicts
+
 
     def save_to_fits(self, hardcastle_catalogue,
                      file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
@@ -145,6 +144,7 @@ class HardcastleDatasetCreator:
         hdul.writeto(save_path, overwrite=True)
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
 
+
     def create_hardcastle_dataset(self,
                                     file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
                                     folder_path=paths.DATASET_PARENT/'dr2_cutouts_download/',
@@ -159,6 +159,7 @@ class HardcastleDatasetCreator:
         hardcastle_catalogue = self.load_cutout_images(hardcastle_catalogue, folder_path)
 
         self.save_to_fits(hardcastle_catalogue, file_path, save_path)
+
 
 if __name__ == "__main__":
     occ = HardcastleDatasetCreator()
