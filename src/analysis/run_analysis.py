@@ -1,5 +1,3 @@
-import analysis.generate_fits_files
-import analysis.dataset_h5_to_fits
 import utils.paths as pth
 from analysis.image_analyzer import ImageAnalyzer
 from utils.logging import get_logger
