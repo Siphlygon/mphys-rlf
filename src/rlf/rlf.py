@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib import colormaps
 
 if __name__ == "__main__":
+
     config = configparser.ConfigParser()
     config.read( pth.PROGRAM_CONFIG )
     lu_config = config[ 'loguniform_distribution' ]
