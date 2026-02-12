@@ -28,7 +28,7 @@ CONFIG_PARENT = BASE_PARENT / "src/model/configs"
 MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.json")})
 
 # Config file
-PROGRAM_CONFIG = BASE_PARENT / "src/program.config"
+PROGRAM_CONFIG = BASE_PARENT / "src/config.ini"
 config = configparser.ConfigParser()
 config.read( PROGRAM_CONFIG )
 
