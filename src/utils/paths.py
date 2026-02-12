@@ -36,7 +36,7 @@ config.read( PROGRAM_CONFIG )
 MODEL_NAMES = [ "LOFAR", "FIRST" ]
 
 # Folders for different kinds of fits image data
-SUBDIRS = [ config[ 'default' ][ 'vm_dataset_subdir' ], 
+SUBDIRS = [ config[ 'DEFAULT' ][ 'vm_dataset_subdir' ], 
             config[ 'dataset_distribution' ][ 'generated_subdir'],
             config[ 'loguniform_distribution' ][ 'generated_subdir' ] ]
 COLOURS = [ 'b', 'g', 'm' ]

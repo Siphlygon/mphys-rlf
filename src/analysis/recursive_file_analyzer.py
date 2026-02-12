@@ -52,7 +52,11 @@ class RecursiveFileAnalyzer:
         self.logger = get_logger( self.__class__.__name__ )
         self.logger.setLevel( log_level )
 
-    def get_unwrapped_list( self, path: Path | None = None, pattern: str | None = None, numeric_range: tuple[int,int] | None = None, return_nums: bool = False ):
+    def get_unwrapped_list( self,
+                            path: Path | None = None,
+                            pattern: str | None = None, 
+                            numeric_range: tuple[int,int] | None = None, 
+                            return_nums: bool = False ):
         """
         Recurse through all files in path and unwrap all files into a single list,
         useful for multiprocessing
