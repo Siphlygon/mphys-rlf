@@ -2,7 +2,7 @@ import numpy as np
 import astropy.stats
 import matplotlib.pyplot as plt
 from analysis.image_analyzer import ImageAnalyzer
-from completeness.img_data_arrays import ImageDataArrays
+from utils.img_data_arrays import ImageDataArrays
 
 rms_LOFAR = 71e-6 * 1e3
 beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]

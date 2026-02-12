@@ -3,7 +3,7 @@ import utils.paths as pth
 import numpy as np
 import astropy.cosmology
 import astropy.units as u
-from completeness.img_data_arrays import ImageDataArrays
+from utils.img_data_arrays import ImageDataArrays
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 

@@ -1,7 +1,7 @@
 import utils.paths
 import numpy as np
 import matplotlib.pyplot as plt
-from completeness.img_data_arrays import ImageDataArrays
+from utils.img_data_arrays import ImageDataArrays
 
 """
 Quick and dirty script to plot unscaled peak fluxes vs pybdsf-measured model fluxes for data verification

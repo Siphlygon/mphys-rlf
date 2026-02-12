@@ -6,7 +6,7 @@ import astropy.stats
 import pandas as pd
 import matplotlib.pyplot as plt
 from analysis.image_analyzer import ImageAnalyzer
-from completeness.img_data_arrays import ImageDataArrays
+from utils.img_data_arrays import ImageDataArrays
 import scipy.signal
 
 rms_LOFAR = 95e-6 * 1e3

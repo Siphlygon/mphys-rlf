@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils.logging import get_logger
 from utils.power_transform import PeakFluxPowerTransformer
-from completeness.img_data_arrays import ImageDataArrays
+from utils.img_data_arrays import ImageDataArrays
 
 logger = get_logger( __name__ )
 
