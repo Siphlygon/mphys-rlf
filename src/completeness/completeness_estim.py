@@ -190,6 +190,7 @@ class CompletenessEstimator:
                 print(f"Could not fit logistic function for {dataset}: {e}")
 
             # Plot completeness curve
+            plt.figure()
             plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g')
             plt.plot(bin_centers, completeness, marker='.', label=f'{dataset} completeness', color='g')
 
@@ -199,6 +200,7 @@ class CompletenessEstimator:
             plt.plot(x_fit, y_fit, label=f'{dataset} logistic fit', color='b')
 
             plt.show()
+            plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
 
 if __name__ == "__main__":
     completeness_estim = CompletenessEstimator()
