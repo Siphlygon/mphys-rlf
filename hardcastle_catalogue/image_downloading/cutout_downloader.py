@@ -148,12 +148,16 @@ class CutoutDownloader:
             self.recent_errors += 1
             return i, str(e)
 
-    def download_all_cutouts(self):
+    def download_all_cutouts(self, custom_positions=None):
         """
         Downloads all cutouts from the LOFAR cutout server based on the Hardcastle catalogue positions.
         """
-        self.logger.info(f'Loading positions...')
-        hdc_positions = self.read_positions()
+        if custom_positions is not None:
+            self.logger.info('Using custom positions provided as argument for downloading cutouts...')
+            hdc_positions = custom_positions
+        else:
+            self.logger.info(f'No positions specified - loading all positions from Hardcastle catalogue...')
+            hdc_positions = self.read_positions()
 
         # Check if target directory exists, create if not
         target_directory = paths.DATASET_PARENT / "dr2_cutouts_download"
@@ -210,3 +214,6 @@ class CutoutDownloader:
 if __name__ == "__main__":
     downloader = CutoutDownloader()
     downloader.download_all_cutouts()
+
+    #todo: you want to write this up to be able to generate over a generic list of positions because this is how you
+    #can easily tie in uh download verification functionality

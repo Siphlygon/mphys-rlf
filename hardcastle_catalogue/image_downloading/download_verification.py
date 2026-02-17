@@ -49,6 +49,10 @@ class CutoutDownloadVerifier:
         # The current system has "100000-199999" just after "10000-19999", which is not correct
         subdirs.sort(key=lambda x: int(x.split('-')[0]))
 
+        # Keep track of files for information displays
+        initial_files = 0
+        surviving_files = 0
+
         i = 0
         # iterate through subdir
         for subdir in subdirs:
@@ -64,6 +68,8 @@ class CutoutDownloadVerifier:
                     files_to_redownload.append(i)
                     i += 1
                     continue
+
+                initial_files += 1
 
                 # Check that each image can be loaded and is therefore not corrupted
                 try:
@@ -81,21 +87,29 @@ class CutoutDownloadVerifier:
                         self.logger.error(f'Error deleting corrupted file {cutout_file}: {del_e}')
                     i += 1
                     continue
+
                 i += 1
+                surviving_files += 1
+        self.logger.info(f"{initial_files-surviving_files} cutout files found corrupted and deleted.")
+        self.logger.infof(f"{surviving_files} cutout files found present and intact out of an expected {len(hdc_positions)} files.")
 
         # Redownload any files if necessary
         if files_to_redownload:
-            self.logger.info(f'Total missing cutout files: {len(files_to_redownload)}. Redownloading...')
+            self.logger.info(f'Total missing cutout files: {len(files_to_redownload)}. Finding positions...')
+            requested_positions = []
             for i in files_to_redownload:
                 ra, dec = hdc_positions[i]
-                try:
-                    self.logger.info(f'Redownloading cutout for image {i} (RA={ra}, DEC={dec})...')
-                    downloader.get_cutout(os.path.join(download_path, f"cutout{i}.fits"), f"{ra} {dec}")
-                except Exception as e:
-                    self.logger.error(f"Error redownloading cutout for image {i} (RA={ra}, DEC={dec}): {e}")
+                requested_positions.append(ra, dec)
+            self.logger.info(f'Re-downloading missing cutout files...')
+            downloader.download_all_cutouts(custom_positions=requested_positions)
+            self.logger.info("Finished re-downloading. Note that some files will always be missing.")
         else:
             self.logger.info('All cutout files are present.')
 
+        # Count the number of files present in dr2_cutouts directly
+        cpt = sum([len(files) for r, d, files in os.walk(download_path)])
+        self.logger.info(f"{cpt-surviving_files} successful downloads out of an attempted {len(files_to_redownload)}.")
+        self.logger.info(f"Total cutout files present: {cpt}, compared to {initial_files} initial files.")
 
 if __name__ == "__main__":
 
