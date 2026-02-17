@@ -34,7 +34,7 @@ class CompletenessEstimator:
         de_config = config['DEFAULT']
 
         # Get values from config
-        self.sigma_threshold = float(de_config['DETECTION_SIGMA_THRESHOLD'])
+        self.sigma_threshold = int(de_config['DETECTION_SIGMA_THRESHOLD'])
         self.num_flux_bins = int(de_config['COMPLETENESS_FLUX_BINS'])
         self.num_noise_patches = int(de_config['N_NOISE_PATCHES'])
 
