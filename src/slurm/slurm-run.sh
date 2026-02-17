@@ -22,3 +22,12 @@ echo "Queued 3-slurm-run-analysis.sh ($PID3)"
 
 PID4cpl=$(sbatch -d afterok:$PID3 "$SCRIPT_DIR/4-slurm-plot-completeness.sh" | grep -oh "\w*[0-9]\w*")
 echo "Queued 4-slurm-plot-completeness.sh ($PID4cpl)"
+
+PID4hist=$(sbatch -d afterok:$PID3 "$SCRIPT_DIR/4-slurm-plot-histograms.sh" | grep -oh "\w*[0-9]\w*")
+echo "Queued 4-slurm-plot-histograms.sh ($PID4hist)"
+
+PID4mvp=$(sbatch -d afterok:$PID3 "$SCRIPT_DIR/4-slurm-plot-model-vs-peak.sh" | grep -oh "\w*[0-9]\w*")
+echo "Queued 4-slurm-plot-mvp.sh ($PID4mvp)"
+
+PID5=$(sbatch -d afterok:$PID4cpl,afterok:$PID4hist,afterok:$PID4mvp "$SCRIPT_DIR/5-slurm-rlf.sh" | grep -oh "\w*[0-9]\w*")
+echo "Queued 5-slurm-plot-comparison.sh ($PID5)"
