@@ -76,7 +76,7 @@ class RLF:
                         # Find max value in bin by adding width to min_value
                         # Width unspecified for L bins, so we calc based on max
                         z_max = z_min + self.dz
-                        l_max = l_min + np.max(luminosities) / self.lum_bins_count
+                        l_max = l_min + ( np.max( luminosities ) - np.min( luminosities ) ) / self.lum_bins_count
 
                         # find min & max of comoving volume for redshift bin
                         v_min, v_max = cosmo.comoving_volume([z_min, z_max])
@@ -120,12 +120,13 @@ class RLF:
             for i_z in range(phi_est.shape[0]):
                 specific_phi_est = phi_est[i_z]
                 plt.plot(l_bins, specific_phi_est, color=colormaps['hsv'](i_z / phi_est.shape[0]),
+                         marker='o',
                          label=f'z={z_bins[i_z]:.2f}')
                 
             plt.xscale( 'log' )
-            plt.xlabel( 'log[ L144 * Hz / W ]')
+            plt.xlabel( 'L144 * Hz / W')
             plt.yscale( 'log' )
-            plt.ylabel( 'log[ phi / MPc^3 ]')
+            plt.ylabel( 'phi / MPc^3' )
             plt.legend()
             plt.savefig(f'{subdir}_rlf.png')
 
