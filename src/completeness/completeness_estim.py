@@ -62,6 +62,8 @@ class CompletenessEstimator:
         y = np.arange(-correlation_scale, correlation_scale)
         X, Y = np.meshgrid(x, y)
         dist = np.sqrt(X * X + Y * Y)
+        if len( shape ) == 3:
+            dist = dist[ np.newaxis, :, : ]
         filter_kernel = np.exp(-dist ** 2 / (2 * correlation_scale))
 
         noise = np.random.normal(loc=0.0, scale=self.rms_LOFAR, size=shape)
