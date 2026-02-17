@@ -7,6 +7,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from utils.img_data_arrays import ImageDataArrays
 import scipy.signal
+import configparser
+import utils.paths as pth
 
 
 class CompletenessEstimator:
@@ -16,11 +18,21 @@ class CompletenessEstimator:
     """
 
     def __init__(self):
-        # Average LOFAR beam rms
+        # Average LOFAR beam rms in mJy/beam
         self.rms_LOFAR = 95e-3
 
-        # Number of noise patches to create per image for the completeness estimation
-        self.num_noise_patches = 5
+        # Read parameters from the config.ini file
+        config = configparser.ConfigParser()
+        config.read(pth.PROGRAM_CONFIG)
+
+        # we are using sources generated in a loguniform way
+        lu_config = config['loguniform_distribution']
+
+        # Get values from config
+        self.datasets = lu_config['COMPLETENESS_DATASET_NAMES']
+        self.sigma_threshold = float(lu_config['DETECTION_SIGMA_THRESHOLD'])
+        self.num_flux_bins = int(lu_config['COMPLETENESS_FLUX_BINS'])
+        self.num_noise_patches = int(lu_config['N_NOISE_PATCHES'])
 
 
     def create_noise_LOFAR(self, shape=(80, 80)):
@@ -76,7 +88,7 @@ class CompletenessEstimator:
 
             # Determine if the mock sources are detectable based on a peak flux threshold (e.g., 5 sigma)
             peak_fluxes = np.max(sim_data, axis=(1, 2))
-            threshold = 5 * rms
+            threshold = self.sigma_threshold * rms
             detectable[i:(i + self.num_noise_patches)] = peak_fluxes >= threshold
 
         return mock_fluxes, detectable
@@ -94,10 +106,10 @@ class CompletenessEstimator:
         # Store the completeness curve data for later use in a file
         completeness_curve = []
 
-        for subdir in ["generated_loguniform"]:
+        for dataset in self.datasets:
             # Extract all the relevant arrays from the generated dataset
             images, resid_images, m_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays(
-                subdir).get_all_arrays()
+                dataset).get_all_arrays()
 
             # Get the mock fluxes and whether they are detectable for all the images in the dataset
             mock_fluxes, detectable = self.detect_sources(images, model_fluxes)
@@ -108,7 +120,7 @@ class CompletenessEstimator:
             mock_sources['detectable'] = detectable
 
             # Define flux bins
-            flux_bins = np.logspace(-2, 2, num=25)  # in Jy, adjust as needed
+            flux_bins = np.logspace(-2, 2, num=self.num_flux_bins)  # in mJy, adjust as needed
             bin_centers = 0.5 * (flux_bins[1:] + flux_bins[:-1])
 
             # Bin and count
@@ -141,6 +153,36 @@ class CompletenessEstimator:
             conf_interval /= total_counts
             conf_interval[:, zero_counts] = 0
             yerr = conf_interval[1] - conf_interval[0]
+
+            # Store in a file for later use
+            with open(f"completeness_{dataset}.txt", "w") as f:
+                f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
+                for center, comp, err in zip(bin_centers, completeness, yerr):
+                    f.write(f"{center}\t{comp}\t{err}\n")
+
+            # Fit a curve to the completeness data, e.g., using a logistic function
+            def logistic(x, L, k, x0):
+                """Logistic function: L / (1 + exp(-k*(x-x0)))"""
+                return L / (1 + np.exp(-k * (x - x0)))
+
+            # Fit the logistic function to the completeness data
+            try:
+                popt, _ = curve_fit(logistic, bin_centers, completeness, bounds=([0, 0, 0], [1, np.inf, np.inf]))
+                L_fit, k_fit, x0_fit = popt
+                print(f"Fitted logistic parameters for {dataset}: L={L_fit:.2f}, k={k_fit:.2f}, x0={x0_fit:.2f}")
+            except RuntimeError as e:
+                print(f"Could not fit logistic function for {dataset}: {e}")
+
+            # Plot completeness curve
+            plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g')
+            plt.plot(bin_centers, completeness, marker='.', label=f'{subdir} completeness', color='g')
+
+            # Plot the fitted logistic curve
+            x_fit = np.logspace(-2, 2, 100)
+            y_fit = logistic(x_fit, *popt)
+            plt.plot(x_fit, y_fit, label=f'{dataset} logistic fit', color='b')
+
+            plt.show()
 
 if __name__ == "__main__":
     completeness_estim = CompletenessEstimator()
