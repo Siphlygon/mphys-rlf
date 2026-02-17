@@ -101,7 +101,10 @@ class RLF:
 
                         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
                         # for now, placeholder, assume flux cutoff at 1 mJy
-                        bin_integral = np.sum(random_fluxes * self.get_completeness(random_fluxes)) / self.n_mc_pts
+                        bin_integral = np.sum(self.get_completeness(random_fluxes)) / self.n_mc_pts
+
+                        # divide by the redshift bin width so the result is /MPc^3
+                        bin_integral /= z_max - z_min
 
                         # now calculate the number of 'real' sources in this bin
                         redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
@@ -118,6 +121,11 @@ class RLF:
                 specific_phi_est = phi_est[i_z]
                 plt.plot(l_bins, specific_phi_est, color=colormaps['hsv'](i_z / phi_est.shape[0]),
                          label=f'z={z_bins[i_z]:.2f}')
+                
+            plt.xscale( 'log' )
+            plt.xlabel( 'log[ Luminosity / Jy / MPc^2 ]')
+            plt.yscale( 'log' )
+            plt.ylabel( 'log[ phi / MPc^3 ]')
             plt.legend()
             plt.savefig(f'{subdir}_rlf.png')
 
