@@ -117,11 +117,12 @@ class RLF:
                 np.save(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy', phi_est)
 
             # plot the resulting graph
+            plt.figure()
             for i_z in range(phi_est.shape[0]):
                 specific_phi_est = phi_est[i_z]
                 plt.plot(l_bins, specific_phi_est, color=colormaps['hsv'](i_z / phi_est.shape[0]),
                          marker='o',
-                         label=f'z={z_bins[i_z]:.2f}')
+                         label=f'{z_bins[i_z]:.2f}<z<{z_bins[i_z]+self.dz:.2f}')
                 
             plt.xscale( 'log' )
             plt.xlabel( 'L144 * Hz / W')
