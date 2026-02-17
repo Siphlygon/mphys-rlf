@@ -22,5 +22,5 @@ echo "Array Count:"
 echo $SLURM_ARRAY_TASK_COUNT
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/scripts/flux_vs_residual.py
+python /share/nas2_3/lgreen/mphys-rlf/src/rlf/rlf.py
 
