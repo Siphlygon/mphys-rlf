@@ -31,9 +31,9 @@ class RLF:
 
         # RLF parameters
         self.dz = float(lu_config['dz']) # redshift bin width
-        self.lum_bins_count = int(lu_config['lum_bins']) # number of luminosity bins between min and max luminosity
-        self.n_interp_pts = int(lu_config['n_interp_pts']) # number of points to use in interpolation approximation of
-        self.n_mc_pts = int(lu_config['n_mc_pts']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
+        self.lum_bins_count = int(lu_config['LUM_BINS']) # number of luminosity bins between min and max luminosity
+        self.n_interp_pts = int(lu_config['N_INTERP_PTS']) # number of points to use in interpolation approximation of
+        self.n_mc_pts = int(lu_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
 
 
     def get_completeness(self, integ_fluxes, completeness_path=pth.COMPLETENESS_FUNC_PARAMS):
