@@ -103,16 +103,19 @@ class RLF:
                         # for now, placeholder, assume flux cutoff at 1 mJy
                         bin_integral = np.sum(self.get_completeness(random_fluxes * 1e26)) / self.n_mc_pts
 
-                        # divide by the redshift bin width so the result is /MPc^3
-                        bin_integral /= z_max - z_min
+                        # divide by the luminosity-volume bin area so the result is /MPc^3
+                        bin_integral /= ( v_max - v_min ) * ( l_max - l_min )
 
                         # now calculate the number of 'real' sources in this bin
                         redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
                         luminosity_mask = (luminosities >= l_min) & (luminosities < l_max)
                         N = np.size(data.model_fluxes[redshift_mask & luminosity_mask])
 
+                        # divide by the number of total sources to get a density
+                        N_tot = np.size( data.model_fluxes )
+
                         # now we have phi_est as given by Page & Carrera 2000
-                        phi_est[i_z, i_l] = N / bin_integral
+                        phi_est[i_z, i_l] = N / N_tot / bin_integral
 
                 np.save(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy', phi_est)
 
