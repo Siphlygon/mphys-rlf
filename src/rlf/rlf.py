@@ -36,9 +36,9 @@ class RLF:
         self.n_mc_pts = int(lu_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
 
 
-    def get_completeness(self, integ_fluxes, completeness_path=pth.COMPLETENESS_FUNC_PARAMS):
+    def get_completeness(self, integ_fluxes, completeness_path=None):
         # Read completeness function parameters from file
-        return 1
+        return integ_fluxes > 1e-3
 
 
     def calculate_rlf(self):
@@ -52,8 +52,8 @@ class RLF:
 
             # use the redshift to calculate luminosity distance and luminosity
             cosmo = astropy.cosmology.FlatLambdaCDM(self.h * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
-            luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.Mpc).value
-            luminosities = data.model_fluxes * (4 * np.pi * luminosity_distances ** 2)
+            luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.m).value
+            luminosities = data.model_fluxes * ( 1e-26 * luminosity_distances ) * (4 * np.pi * luminosity_distances)
 
             # select a redshift-luminosity bin, use monte-carlo to populate the bin,
             # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
@@ -94,14 +94,14 @@ class RLF:
                         random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)
 
                         # then generate random luminosities -> fluxes
-                        # flux values here are in Jy, luminosities in Jy * Mpc**2
+                        # flux values here are in W/m^2/Hz, luminosities in W/Hz
                         random_luminosities = np.random.uniform(l_min, l_max, self.n_mc_pts)
-                        random_luminosity_distances = cosmo.luminosity_distance(random_redshifts).to(u.Mpc).value
+                        random_luminosity_distances = cosmo.luminosity_distance(random_redshifts).to(u.m).value
                         random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances ** 2)
 
                         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
                         # for now, placeholder, assume flux cutoff at 1 mJy
-                        bin_integral = np.sum(self.get_completeness(random_fluxes)) / self.n_mc_pts
+                        bin_integral = np.sum(self.get_completeness(random_fluxes * 1e26)) / self.n_mc_pts
 
                         # divide by the redshift bin width so the result is /MPc^3
                         bin_integral /= z_max - z_min
@@ -123,7 +123,7 @@ class RLF:
                          label=f'z={z_bins[i_z]:.2f}')
                 
             plt.xscale( 'log' )
-            plt.xlabel( 'log[ Luminosity / Jy / MPc^2 ]')
+            plt.xlabel( 'log[ L144 * Hz / W ]')
             plt.yscale( 'log' )
             plt.ylabel( 'log[ phi / MPc^3 ]')
             plt.legend()
