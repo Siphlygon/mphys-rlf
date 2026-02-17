@@ -48,7 +48,7 @@ class RLF:
         for subdir in [self.dataset_subdir, self.generated_subdir]:
             # assign each AGN a random redshift
             data = ImageDataArrays(subdir)
-            redshifts = np.random.uniform(0, 2, len(data.images))
+            redshifts = np.random.uniform(0, 0.5, len(data.images))
 
             # use the redshift to calculate luminosity distance and luminosity
             cosmo = astropy.cosmology.FlatLambdaCDM(self.h * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
@@ -58,8 +58,8 @@ class RLF:
             # select a redshift-luminosity bin, use monte-carlo to populate the bin,
             # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
             # Also calculate the number of sources in the bin while we're at it
-            z_bins = np.arange(0, 1, self.dz) # only consider sources with z < 1 for now, we can extend this later if needed
-            l_bins = np.linspace(np.min(luminosities), np.max(luminosities), self.lum_bins_count)
+            z_bins = np.arange(0, 0.5, self.dz) # only consider sources with z < 1 for now, we can extend this later if needed
+            l_bins = np.logspace(np.min(luminosities), np.max(luminosities), self.lum_bins_count)
             phi_est = np.zeros((len(z_bins), self.lum_bins_count))
 
             # Can read previously created numpy files to avoid recomputation
@@ -116,7 +116,7 @@ class RLF:
 
                         # now we have phi_est as given by Page & Carrera 2000
                         phi_est[i_z, i_l] = N / N_tot / bin_integral
-
+                    print( f'Redshift range {z_bins[i_z]:.2f}-{z_bins[i_z]+self.dz:.2f} complete' )
                 np.save(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy', phi_est)
 
             # plot the resulting graph
