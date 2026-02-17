@@ -48,7 +48,7 @@ class RLF:
         for subdir in [self.dataset_subdir, self.generated_subdir]:
             # assign each AGN a random redshift
             data = ImageDataArrays(subdir)
-            redshifts = np.random.normal(0.5, 0.3, len(data.images))
+            redshifts = np.random.uniform(0, 2, len(data.images))
 
             # use the redshift to calculate luminosity distance and luminosity
             cosmo = astropy.cosmology.FlatLambdaCDM(self.h * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
@@ -120,14 +120,14 @@ class RLF:
             plt.figure()
             for i_z in range(phi_est.shape[0]):
                 specific_phi_est = phi_est[i_z]
-                plt.plot(l_bins, specific_phi_est, color=colormaps['hsv'](i_z / phi_est.shape[0]),
+                plt.plot(l_bins, specific_phi_est, color=colormaps['cool'](i_z / phi_est.shape[0]),
                          marker='o',
                          label=f'{z_bins[i_z]:.2f}<z<{z_bins[i_z]+self.dz:.2f}')
                 
             plt.xscale( 'log' )
             plt.xlabel( 'L144 * Hz / W')
             plt.yscale( 'log' )
-            plt.ylabel( 'phi / MPc^3' )
+            plt.ylabel( 'phi * MPc^3' )
             plt.legend()
             plt.savefig(f'{subdir}_rlf.png')
 
