@@ -191,7 +191,7 @@ class CompletenessEstimator:
 
             # Plot completeness curve
             plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g')
-            plt.plot(bin_centers, completeness, marker='.', label=f'{subdir} completeness', color='g')
+            plt.plot(bin_centers, completeness, marker='.', label=f'{dataset} completeness', color='g')
 
             # Plot the fitted logistic curve
             x_fit = np.logspace(-2, 2, 100)
