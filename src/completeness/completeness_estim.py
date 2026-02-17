@@ -31,14 +31,19 @@ class CompletenessEstimator:
         config.read(pth.PROGRAM_CONFIG)
 
         # we are using sources generated in a loguniform way
-        lu_config = config['loguniform_distribution']
+        de_config = config['DEFAULT']
 
         # Get values from config
-        #todo: parse datasets input properly
-        self.datasets = lu_config['COMPLETENESS_DATASET_NAMES']
-        self.sigma_threshold = float(lu_config['DETECTION_SIGMA_THRESHOLD'])
-        self.num_flux_bins = int(lu_config['COMPLETENESS_FLUX_BINS'])
-        self.num_noise_patches = int(lu_config['N_NOISE_PATCHES'])
+        self.sigma_threshold = float(de_config['DETECTION_SIGMA_THRESHOLD'])
+        self.num_flux_bins = int(de_config['COMPLETENESS_FLUX_BINS'])
+        self.num_noise_patches = int(de_config['N_NOISE_PATCHES'])
+
+        # Parse dataset names properly
+        datasets_input = de_config['COMPLETENESS_DATASET_NAMES']
+        if "," in datasets_input:
+            self.datasets = [dataset.strip() for dataset in datasets_input.split(",")]
+        else:
+            self.datasets = [datasets_input.strip()]
 
 
     def create_noise_LOFAR(self, shape=(80, 80)):
@@ -102,9 +107,7 @@ class CompletenessEstimator:
 
     def get_completeness_estim(self):
         """
-        Estimate a completeness curve for the LOFAR
-
-        :return:
+        Estimate a completeness curve for the generated dataset
         """
         # completeness for now is designed to use loguniform, as that creates a more even distribution of samples
         # per log flux bin, which is important for an informational completeness curve.
