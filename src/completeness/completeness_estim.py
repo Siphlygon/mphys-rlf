@@ -9,6 +9,8 @@ from utils.img_data_arrays import ImageDataArrays
 import scipy.signal
 import configparser
 import utils.paths as pth
+import logging
+import utils.logging
 
 
 class CompletenessEstimator:
@@ -18,6 +20,9 @@ class CompletenessEstimator:
     """
 
     def __init__(self):
+        # Set up logging
+        self.logger = utils.logging.get_logger("completeness estimator", logging.DEBUG)
+
         # Average LOFAR beam rms in mJy/beam
         self.rms_LOFAR = 95e-3
 
@@ -29,6 +34,7 @@ class CompletenessEstimator:
         lu_config = config['loguniform_distribution']
 
         # Get values from config
+        #todo: parse datasets input properly
         self.datasets = lu_config['COMPLETENESS_DATASET_NAMES']
         self.sigma_threshold = float(lu_config['DETECTION_SIGMA_THRESHOLD'])
         self.num_flux_bins = int(lu_config['COMPLETENESS_FLUX_BINS'])
@@ -103,15 +109,15 @@ class CompletenessEstimator:
         # completeness for now is designed to use loguniform, as that creates a more even distribution of samples
         # per log flux bin, which is important for an informational completeness curve.
 
-        # Store the completeness curve data for later use in a file
-        completeness_curve = []
-
         for dataset in self.datasets:
+            self.logger.info("Estimating completeness for dataset {}".format(dataset))
             # Extract all the relevant arrays from the generated dataset
+            self.logger.info("Extracting data arrays for dataset {}".format(dataset))
             images, resid_images, m_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays(
                 dataset).get_all_arrays()
 
             # Get the mock fluxes and whether they are detectable for all the images in the dataset
+            self.logger.info("Creating mock images and running detection logic for dataset {}".format(dataset))
             mock_fluxes, detectable = self.detect_sources(images, model_fluxes)
 
             # Combine these into a dataframe for easier analysis
@@ -128,7 +134,8 @@ class CompletenessEstimator:
             total_counts = []  # optional: for diagnostics
 
             # For all bins
-            for i in range(len(flux_bins) - 1):
+            self.logger.info("Calculating completeness per flux bin for dataset {}".format(dataset))
+            for i in tqdm(range(len(flux_bins) - 1), desc='Calculating completeness per flux bin'):
                 # Select sources in this flux bin
                 in_bin = (mock_fluxes >= flux_bins[i]) & (mock_fluxes < flux_bins[i + 1])
 
@@ -137,6 +144,7 @@ class CompletenessEstimator:
                 if np.sum(in_bin) > 0:
                     frac_recovered = np.sum(n_detect['detectable']) / np.sum(in_bin)
                 else:
+                    self.logger.warning("No sources in flux bin {}-{} mJy for dataset {}, setting completeness to 0".format(flux_bins[i], flux_bins[i + 1], dataset))
                     frac_recovered = 0
 
                 completeness.append(frac_recovered)
@@ -148,6 +156,7 @@ class CompletenessEstimator:
             total_counts = np.where(zero_counts, 1e-10, total_counts)
 
             # Handle confidence interval which is the error on our completeness
+            self.logger.info("Calculating confidence intervals for completeness estimates for dataset {}".format(dataset))
             conf_interval = astropy.stats.poisson_conf_interval(np.array(completeness) * total_counts,
                                                                 interval='frequentist-confidence', sigma=1.0)
             conf_interval /= total_counts
@@ -155,6 +164,7 @@ class CompletenessEstimator:
             yerr = conf_interval[1] - conf_interval[0]
 
             # Store in a file for later use
+            self.logger.info("Saving binned completeness estimates to file for dataset {}".format(dataset))
             with open(f"completeness_{dataset}.txt", "w") as f:
                 f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
                 for center, comp, err in zip(bin_centers, completeness, yerr):
@@ -166,6 +176,7 @@ class CompletenessEstimator:
                 return L / (1 + np.exp(-k * (x - x0)))
 
             # Fit the logistic function to the completeness data
+            self.logger.info("Attempting to fit logistic function to completeness data for dataset {}".format(dataset))
             try:
                 popt, _ = curve_fit(logistic, bin_centers, completeness, bounds=([0, 0, 0], [1, np.inf, np.inf]))
                 L_fit, k_fit, x0_fit = popt
