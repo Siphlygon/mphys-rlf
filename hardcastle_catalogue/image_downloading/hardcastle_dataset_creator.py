@@ -67,7 +67,7 @@ class HardcastleDatasetCreator:
         i = 0
         # iterate through subdir
         for subdir in subdirs:
-            image_path = folder_path + subdir
+            image_path = folder_path / subdir
             self.logger.info(f"Loading LoTSS-DR2 cutout images from {image_path}")
             for _ in tqdm(range(max_files_in_subdir), desc=f"Loading cutouts from {subdir}"):
                 cutout_file = image_path / f"cutout{i}.fits"
@@ -75,8 +75,9 @@ class HardcastleDatasetCreator:
                 # We run into an issue where there are hundreds of missing files because the server doesn't seem to have
                 # cutouts for certain Hardcastle sources. We will log and skip these for now.
                 if not os.path.exists(cutout_file):
-                    self.logger.info(f"Cutout file {cutout_file} does not exist. Skipping.")
+                    self.logger.warning(f"Cutout file {cutout_file} does not exist. Skipping.")
                     list_of_dicts[i]['pixel_values'] = np.nan
+                    i += 1
                     continue
 
                 try:
