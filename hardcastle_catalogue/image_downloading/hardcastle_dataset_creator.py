@@ -78,36 +78,20 @@ class HardcastleDatasetCreator:
         # The current system has "100000-199999" just after "10000-19999", which is not correct
         folders.sort(key=lambda x: int(x.split('-')[0]))
 
-        i = 0
-        # iterate through folder
+        # iterate through folders
         for folder in tqdm(folders, desc="Iterating through folders for cutout loading"):
             image_path = folder_path / folder
-            for _ in tqdm(range(self.folder_size), desc=f"Loading cutouts from {folder}"):
-                cutout_file = image_path / f"cutout{i}.fits"
-                i += 1
 
-                # We run into an issue where there are hundreds of missing files because the server doesn't seem to have
-                # cutouts for certain Hardcastle sources. We will log and skip these for now.
-                if not os.path.exists(cutout_file):
-                    self.logger.warning(f"Cutout file {cutout_file} does not exist. Skipping.")
-                    list_of_dicts[i]['pixel_values'] = np.nan
-                    continue
+            # Get each existing file in folder
+            files = sorted(image_path.glob("cutout*.fits"),
+                           key=lambda p: int(p.stem.replace("cutout", "")))
 
-                try:
-                    with fits.open(cutout_file, memmap=False) as cutout_hdul:
-                        list_of_dicts[i]['pixel_values'] = cutout_hdul[0].data
-                except Exception as e:
-                    self.logger.error(f"Error loading cutout file {cutout_file}: {e}")
-
-                if i >= len(list_of_dicts)-1:
-                    self.logger.info("All catalogue items have been processed for cutout loading.")
-                    break
-
-            if i >= len(list_of_dicts)-1:
-                break
-
-        # note; deliberate choice not to simply iterate over all files present, as mentioned some cutouts will not be
-        # present and this helps identify which ones are missing.
+            for file in tqdm(files, desc=f"Iterating through cutout files in {folder}"):
+                # Extract numerical index from end of cutout name
+                idx = int(file.stem.replace("cutout", ""))
+                # Extract pixel values and add to the corresponding dictionary in list_of_dicts
+                with fits.open(file) as cutout_hdul:
+                    list_of_dicts[idx]['pixel_values'] = cutout_hdul[0].data
 
         return list_of_dicts
 
