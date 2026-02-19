@@ -60,13 +60,13 @@ class CutoutDownloadVerifier:
             self.logger.info(f"Checking LoTSS-DR2 cutout images from {image_path}")
             for _ in tqdm(range(max_files_in_subdir), desc=f"Loading cutouts from {subdir}"):
                 cutout_file = image_path / f"cutout{i}.fits"
+                i += 1
 
                 # We run into an issue where there are hundreds of missing files because the server doesn't seem to have
                 # cutouts for certain Hardcastle sources. We will log and skip these for now.
                 if not os.path.exists(cutout_file):
                     self.logger.warning(f'Missing cutout file: {cutout_file}.')
-                    files_to_redownload.append(i)
-                    i += 1
+                    files_to_redownload.append(i-1)
                     continue
 
                 initial_files += 1
@@ -78,28 +78,26 @@ class CutoutDownloadVerifier:
                         _ = hdul[0].data  # Attempt to read the data
                 except Exception as e:
                     self.logger.error(f'Corrupted or empty cutout file: {cutout_file}.')
-                    files_to_redownload.append(i)
+                    files_to_redownload.append(i-1)
                     # Delete the corrupted file
                     try:
                         os.remove(cutout_file)
                         self.logger.info(f'Deleted corrupted file: {cutout_file}.')
                     except Exception as del_e:
                         self.logger.error(f'Error deleting corrupted file {cutout_file}: {del_e}')
-                    i += 1
                     continue
 
-                i += 1
                 surviving_files += 1
         self.logger.info(f"{initial_files-surviving_files} cutout files found corrupted and deleted.")
-        self.logger.infof(f"{surviving_files} cutout files found present and intact out of an expected {len(hdc_positions)} files.")
+        self.logger.info(f"{surviving_files} cutout files found present and intact out of an expected {len(hdc_positions)} files.")
 
         # Redownload any files if necessary
         if files_to_redownload:
             self.logger.info(f'Total missing cutout files: {len(files_to_redownload)}. Finding positions...')
             requested_positions = []
-            for i in files_to_redownload:
-                ra, dec = hdc_positions[i]
-                requested_positions.append(ra, dec)
+            for pos_num in files_to_redownload:
+                ra, dec = hdc_positions[pos_num]
+                requested_positions.append([ra, dec])
             self.logger.info(f'Re-downloading missing cutout files...')
             downloader.download_all_cutouts(custom_positions=requested_positions)
             self.logger.info("Finished re-downloading. Note that some files will always be missing.")
