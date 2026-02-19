@@ -175,30 +175,83 @@ class CompletenessEstimator:
                 for center, comp, err in zip(bin_centers, completeness, yerr):
                     f.write(f"{center}\t{comp}\t{err}\n")
 
-            # Fit a curve to the completeness data, e.g., using a logistic function
-            def logistic(x, L, k, x0):
-                """Logistic function: L / (1 + exp(-k*(x-x0)))"""
-                return L / (1 + np.exp(-k * (x - x0)))
+            # Fit sigmoid to completeness curve
+            def sigmoid(x, x0, k, a, b):
+                """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
+                return a / (1 + np.exp(-k * (x - x0))) + b
 
-            # Fit the logistic function to the completeness data
-            self.logger.info("Attempting to fit logistic function to completeness data for dataset {}".format(dataset))
+            # Try just some polynomial
+            def polynomial(x, a, b, c, d, e):
+                """Quadratic polynomial: ax^2 + bx + c"""
+                return a * x**4 + b * x**3 + c * x**2 + d * x + e
+
+            # Use log of flux for fitting since we're on a log scale
+            log_bin_centers = np.log10(bin_centers)
+
+            # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
+            initial_guess = [0.5, 2.0, 1.0, 0.0]
+
             try:
-                popt, _ = curve_fit(logistic, bin_centers, completeness, bounds=([0, 0, 0], [1, np.inf, np.inf]))
-                L_fit, k_fit, x0_fit = popt
-                print(f"Fitted logistic parameters for {dataset}: L={L_fit:.2f}, k={k_fit:.2f}, x0={x0_fit:.2f}")
-            except RuntimeError as e:
-                print(f"Could not fit logistic function for {dataset}: {e}")
+                # Fit the sigmoid
+                popt, pcov = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
+
+                # Generate smooth curve for plotting
+                log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+                completeness_fit = sigmoid(log_flux_smooth, *popt)
+
+                # Convert back to linear scale for plotting
+                flux_smooth = 10 ** log_flux_smooth
+                plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
+
+                # Show parameters and errors
+                print(f"Sigmoid fit parameters:")
+                print(f"  x0 (log midpoint): {popt[0]:.3f +- {pcov}} (flux: {10 ** popt[0]:.3f} mJy)")
+                print(f"  k (steepness): {popt[1]:.3f}")
+                print(f"  a (amplitude): {popt[2]:.3f}")
+                print(f"  b (offset): {popt[3]:.3f}")
+            except Exception as e:
+                print(f"Warning: Sigmoid fit failed: {e}")
+
+            try:
+                # Fit the polynomial
+                popt, pcov = curve_fit(polynomial, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
+
+                # Generate smooth curve for plotting
+                log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+                completeness_fit = polynomial(log_flux_smooth, *popt)
+
+                # Convert back to linear scale for plotting
+                flux_smooth = 10 ** log_flux_smooth
+                plt.plot(flux_smooth, completeness_fit, 'b--', linewidth=2, label=f'Polynomial fit', alpha=0.7)
+
+                # Show parameters and errors
+                print(f"Polynomial fit parameters:")
+                print(f"  a (x^4): {popt[0]:.3e}")
+                print(f"  b (x^3): {popt[1]:.3e}")
+                print(f"  c (x^2): {popt[2]:.3e}")
+                print(f"  d (x): {popt[3]:.3e}")
+                print(f"  e (constant): {popt[4]:.3e}")
+            except Exception as e:
+                print(f"Warning: Sigmoid fit failed: {e}")
+
 
             # Plot completeness curve
             plt.figure()
             plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g')
             plt.plot(bin_centers, completeness, marker='.', label=f'{dataset} completeness', color='g')
 
-            # Plot the fitted logistic curve
+            # Plot the fitted sigmoid curve
             x_fit = np.logspace(-2, 2, 100)
-            y_fit = logistic(x_fit, *popt)
-            plt.plot(x_fit, y_fit, label=f'{dataset} logistic fit', color='b')
+            y_fit = sigmoid(x_fit, *popt)
+            plt.plot(x_fit, y_fit, label=f'{dataset} sigmoid fit', color='b')
 
+            # And the polynomial fit
+            y_fit_poly = polynomial(np.log10(x_fit), *popt)
+            plt.plot(x_fit, y_fit_poly, label=f'{dataset} polynomial fit', color='r')
+
+            plt.xscale('log')
+            plt.xlabel("Integrated Flux Density (mJy/beam)")
+            plt.ylabel("Completeness")
             plt.show()
             plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
 
