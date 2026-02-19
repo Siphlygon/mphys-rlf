@@ -71,12 +71,16 @@ class HardcastleDatasetCreator:
         """
         # Get a list of folders in the folder path
         folders = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
-        self.logger.info(f"Found {len(folders)} subdirectories in {folder_path}.")
-        self.logger.info(f"Each subdirectory should contain up to {self.folder_size} cutout files.")
+        self.logger.info(f"Found {len(folders)} folders in {folder_path}.")
+        self.logger.info(f"Each folder should contain up to {self.folder_size} cutout files.")
+
+        # Folders need to be sorted to ensure we check the right files in the right order, as the file names are based on their index in the catalogue
+        # The current system has "100000-199999" just after "10000-19999", which is not correct
+        folders.sort(key=lambda x: int(x.split('-')[0]))
 
         i = 0
-        # iterate through subdir
-        for folder in tqdm(folders, desc="Iterating through subdirectories for cutout loading"):
+        # iterate through folder
+        for folder in tqdm(folders, desc="Iterating through folders for cutout loading"):
             image_path = folder_path / folder
             for _ in tqdm(range(self.folder_size), desc=f"Loading cutouts from {folder}"):
                 cutout_file = image_path / f"cutout{i}.fits"
@@ -95,11 +99,11 @@ class HardcastleDatasetCreator:
                 except Exception as e:
                     self.logger.error(f"Error loading cutout file {cutout_file}: {e}")
 
-                if i >= len(list_of_dicts):
+                if i >= len(list_of_dicts)-1:
                     self.logger.info("All catalogue items have been processed for cutout loading.")
                     break
 
-            if i >= len(list_of_dicts):
+            if i >= len(list_of_dicts)-1:
                 break
 
         # note; deliberate choice not to simply iterate over all files present, as mentioned some cutouts will not be
