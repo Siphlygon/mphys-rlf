@@ -10,10 +10,7 @@ import utils.logging
 from tqdm import tqdm
 import utils.paths as pths
 
-from hardcastle_catalogue_downloader import HardcastleCatalogueDownloader
 from cutout_downloader import CutoutDownloader
-from utils.distributed import DistributedUtils
-from utils.distributed import distribute
 
 
 class CutoutDownloadVerifier:
@@ -31,12 +28,14 @@ class CutoutDownloadVerifier:
         """
         Verifies that all cutout files have been downloaded.
 
-        :param catalogue: The Hardcastle catalogue for the downloaded images.
+        :param max_files_in_subdir: Maximum number of files expected in each subdirectory (used for iteration bounds).
         :param download_path: The path where the cutout images are stored.
         """
         self.logger.info('Starting verification of downloaded cutouts...')
         downloader = CutoutDownloader()
         hdc_positions = downloader.read_positions()
+        # Number of expected positions (used to avoid iterating past the catalogue)
+        pos_count = len(hdc_positions)
         files_to_redownload = []
 
         # Check for missing images
@@ -55,10 +54,13 @@ class CutoutDownloadVerifier:
 
         i = 0
         # iterate through subdir
-        for subdir in subdirs:
+        for subdir in tqdm(subdirs, desc="Iterating through subdirectories for verification"):
             image_path = download_path / subdir
-            self.logger.info(f"Checking LoTSS-DR2 cutout images from {image_path}")
             for _ in tqdm(range(max_files_in_subdir), desc=f"Loading cutouts from {subdir}"):
+                # If we've already processed all catalogue positions, stop iterating
+                if i >= pos_count-1:
+                    break
+
                 cutout_file = image_path / f"cutout{i}.fits"
                 i += 1
 
@@ -88,6 +90,11 @@ class CutoutDownloadVerifier:
                     continue
 
                 surviving_files += 1
+
+            # If we've reached the end of the catalogue, stop checking further subdirectories
+            if i >= pos_count-1:
+                break
+
         self.logger.info(f"{initial_files-surviving_files} cutout files found corrupted and deleted.")
         self.logger.info(f"{surviving_files} cutout files found present and intact out of an expected {len(hdc_positions)} files.")
 
@@ -108,6 +115,7 @@ class CutoutDownloadVerifier:
         cpt = sum([len(files) for r, d, files in os.walk(download_path)])
         self.logger.info(f"{cpt-surviving_files} successful downloads out of an attempted {len(files_to_redownload)}.")
         self.logger.info(f"Total cutout files present: {cpt}, compared to {initial_files} initial files.")
+
 
 if __name__ == "__main__":
 
