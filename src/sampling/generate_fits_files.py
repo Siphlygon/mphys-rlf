@@ -1,5 +1,5 @@
 # This file was created by Ashley and Luna. It provides a complete application that can be used to sample
-# images according to the LOFAR model with certian parameters, and it provides a function that can be used
+# images according to the LOFAR model with certain parameters, and it provides a function that can be used
 # to access that application through other files. This application can be distributed across multiple nodes.
 
 import numpy as np
@@ -89,10 +89,10 @@ def sample( args ):
 
             fscaled = fpeak_model_values[ i, 0 ]
 
-            full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.bin_size )
+            full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
             while full_image_path.exists():
                 sample_index += 1
-                full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.bin_size )
+                full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
             image_analyzer.save_image_to_FITS( image, postfix, fscaled )
 
             if sample_index > bin_end:
@@ -110,7 +110,7 @@ if __name__ == '__main__':
     for arg in [ 'generated_subdir', 
                  'batch_size', 
                  'n_samples',
-                 'bin_size',
+                 'folder_size',
                  'timesteps',
                  'use_cpu',
                  'preserve_values',
@@ -120,7 +120,7 @@ if __name__ == '__main__':
                  'distribution' ]:
         setattr( args, arg, config.get( args.config, arg ) )
 
-    for intarg in [ 'batch_size', 'n_samples', 'bin_size', 'timesteps' ]:
+    for intarg in [ 'batch_size', 'n_samples', 'folder_size', 'timesteps' ]:
         setattr( args, intarg, int( getattr( args, intarg ) ) )
     for floatarg in [ 'upper_bound', 'lower_bound' ]:
         setattr( args, floatarg, float( getattr( args, floatarg ) ) )

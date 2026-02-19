@@ -128,7 +128,7 @@ if __name__ == "__main__":
     specific_config = config[ args.config ]
 
     cutoff = int( specific_config[ 'VM_FITS_COUNT_CUTOFF' ] )
-    bin_size = int( specific_config[ 'BIN_SIZE' ] )
+    bin_size = int( specific_config[ 'FOLDER_SIZE' ] )
     vm_dataset_subdir = specific_config[ 'VM_DATASET_SUBDIR' ]
 
     validate_LOFAR_fits_images( vm_dataset_subdir, cutoff, bin_size )
