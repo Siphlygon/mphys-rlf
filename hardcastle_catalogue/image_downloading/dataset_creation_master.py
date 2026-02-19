@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # Step 3: Run verification once on downloaded cutouts
     logger.info("Starting download verification of cutouts.")
-    download_verification.CutoutDownloadVerifier().verify_downloads(max_files_in_subdir=10000)
+    download_verification.CutoutDownloadVerifier().verify_downloads()
     logger.info("Finished download verification of cutouts.")
 
     # Step 4: Create the dataset from the downloaded cutouts
