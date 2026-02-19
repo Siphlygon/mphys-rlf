@@ -11,7 +11,7 @@ from tqdm import tqdm
 import utils.paths as pths
 
 from cutout_downloader import CutoutDownloader
-
+import configparser
 
 class CutoutDownloadVerifier:
     """
@@ -23,12 +23,21 @@ class CutoutDownloadVerifier:
     def __init__(self):
         self.logger = utils.logging.get_logger("cutout download verifier", logging.DEBUG)
 
+        # Read parameters from the config.ini file
+        config = configparser.ConfigParser()
+        config.read(pths.PROGRAM_CONFIG)
 
-    def verify_downloads(self, max_files_in_subdir, download_path=pths.DATASET_PARENT/"dr2_cutouts_download"):
+        # we are using sources generated in a loguniform way
+        de_config = config['DEFAULT']
+
+        # Get values from config
+        self.folder_size = int(de_config['FOLDER_SIZE'])
+
+
+    def verify_downloads(self, download_path=pths.DATASET_PARENT/"dr2_cutouts_download"):
         """
         Verifies that all cutout files have been downloaded.
 
-        :param max_files_in_subdir: Maximum number of files expected in each subdirectory (used for iteration bounds).
         :param download_path: The path where the cutout images are stored.
         """
         self.logger.info('Starting verification of downloaded cutouts...')
@@ -39,24 +48,24 @@ class CutoutDownloadVerifier:
         files_to_redownload = []
 
         # Check for missing images
-        # Get a list of subdirs in the folder path
-        subdirs = [d for d in os.listdir(download_path) if os.path.isdir(os.path.join(download_path, d))]
-        self.logger.info(f"Found {len(subdirs)} subdirectories in {download_path}.")
-        self.logger.info(f"Each subdirectory should contain up to {max_files_in_subdir} cutout files.")
+        # Get a list of folders in the folder path
+        folders = [d for d in os.listdir(download_path) if os.path.isdir(os.path.join(download_path, d))]
+        self.logger.info(f"Found {len(folders)} folders in {download_path}.")
+        self.logger.info(f"Each folder should contain up to {self.folder_size} cutout files.")
 
-        # Subdirs need to be sorted to ensure we check the right files in the right order, as the file names are based on their index in the catalogue
+        # Folders need to be sorted to ensure we check the right files in the right order, as the file names are based on their index in the catalogue
         # The current system has "100000-199999" just after "10000-19999", which is not correct
-        subdirs.sort(key=lambda x: int(x.split('-')[0]))
+        folders.sort(key=lambda x: int(x.split('-')[0]))
 
         # Keep track of files for information displays
         initial_files = 0
         surviving_files = 0
 
         i = 0
-        # iterate through subdir
-        for subdir in tqdm(subdirs, desc="Iterating through subdirectories for verification"):
-            image_path = download_path / subdir
-            for _ in tqdm(range(max_files_in_subdir), desc=f"Loading cutouts from {subdir}"):
+        # iterate through folder
+        for folder in tqdm(folders, desc="Iterating through folders for verification"):
+            image_path = download_path / folder
+            for _ in tqdm(range(self.folder_size), desc=f"Loading cutouts from {folder}"):
                 # If we've already processed all catalogue positions, stop iterating
                 if i >= pos_count-1:
                     break
@@ -91,7 +100,7 @@ class CutoutDownloadVerifier:
 
                 surviving_files += 1
 
-            # If we've reached the end of the catalogue, stop checking further subdirectories
+            # If we've reached the end of the catalogue, stop checking further folders
             if i >= pos_count-1:
                 break
 
@@ -120,4 +129,4 @@ class CutoutDownloadVerifier:
 if __name__ == "__main__":
 
     download_verifying = CutoutDownloadVerifier()
-    download_verifying.verify_downloads(max_files_in_subdir=10000)
+    download_verifying.verify_downloads()

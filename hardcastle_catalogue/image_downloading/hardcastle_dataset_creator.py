@@ -20,6 +20,7 @@ from tqdm import tqdm
 import utils.logging
 import logging
 import utils.paths as paths
+import configparser
 
 
 class HardcastleDatasetCreator:
@@ -28,8 +29,18 @@ class HardcastleDatasetCreator:
     pixel values from downloaded cutout files.
     """
 
-    def __init__(self):
+    def __init__(self, max_files_in_subdir=10000):
         self.logger = utils.logging.get_logger("hardcastle dataset creator", logging.DEBUG)
+
+        # Read parameters from the config.ini file
+        config = configparser.ConfigParser()
+        config.read(paths.PROGRAM_CONFIG)
+
+        # we are using sources generated in a loguniform way
+        de_config = config['DEFAULT']
+
+        # Get values from config
+        self.folder_size = int(de_config['FOLDER_SIZE'])
 
     def load_hardcastle_header(self, file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
         """
@@ -58,26 +69,24 @@ class HardcastleDatasetCreator:
         :param folder_path: The path to the folder containing the cutout FITS files.
         :return: A list of radio images.
         """
-        # Get a list of subdirs in the folder path
-        subdirs = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
-        self.logger.info(f"Found {len(subdirs)} subdirectories in {folder_path}.")
-        max_files_in_subdir = len(list_of_dicts) // len(subdirs) + 1
-        self.logger.info(f"Each subdirectory should contain up to {max_files_in_subdir} cutout files.")
+        # Get a list of folders in the folder path
+        folders = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
+        self.logger.info(f"Found {len(folders)} subdirectories in {folder_path}.")
+        self.logger.info(f"Each subdirectory should contain up to {self.folder_size} cutout files.")
 
         i = 0
         # iterate through subdir
-        for subdir in subdirs:
-            image_path = folder_path / subdir
-            self.logger.info(f"Loading LoTSS-DR2 cutout images from {image_path}")
-            for _ in tqdm(range(max_files_in_subdir), desc=f"Loading cutouts from {subdir}"):
+        for folder in tqdm(folders, desc="Iterating through subdirectories for cutout loading"):
+            image_path = folder_path / folder
+            for _ in tqdm(range(self.folder_size), desc=f"Loading cutouts from {folder}"):
                 cutout_file = image_path / f"cutout{i}.fits"
+                i += 1
 
                 # We run into an issue where there are hundreds of missing files because the server doesn't seem to have
                 # cutouts for certain Hardcastle sources. We will log and skip these for now.
                 if not os.path.exists(cutout_file):
                     self.logger.warning(f"Cutout file {cutout_file} does not exist. Skipping.")
                     list_of_dicts[i]['pixel_values'] = np.nan
-                    i += 1
                     continue
 
                 try:
@@ -85,7 +94,13 @@ class HardcastleDatasetCreator:
                         list_of_dicts[i]['pixel_values'] = cutout_hdul[0].data
                 except Exception as e:
                     self.logger.error(f"Error loading cutout file {cutout_file}: {e}")
-                i += 1
+
+                if i >= len(list_of_dicts):
+                    self.logger.info("All catalogue items have been processed for cutout loading.")
+                    break
+
+            if i >= len(list_of_dicts):
+                break
 
         # note; deliberate choice not to simply iterate over all files present, as mentioned some cutouts will not be
         # present and this helps identify which ones are missing.

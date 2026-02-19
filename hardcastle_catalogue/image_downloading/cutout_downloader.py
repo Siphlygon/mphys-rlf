@@ -2,13 +2,13 @@ import os
 import requests
 import logging
 import utils.logging
-from astropy.io import fits
 import utils.paths as paths
 from tqdm import tqdm
 from utils.distributed import distribute
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tenacity import retry, wait_exponential, stop_after_attempt
 import time
+import configparser
 
 
 class CutoutDownloader:
@@ -26,8 +26,15 @@ class CutoutDownloader:
         # Set up logging
         self.logger = utils.logging.get_logger("cutout downloader", logging.DEBUG)
 
-        # Subdir params
-        self.subdir_size = 10000  # Number of images per subdirectory
+        # Read parameters from the config.ini file
+        config = configparser.ConfigParser()
+        config.read(paths.PROGRAM_CONFIG)
+
+        # we are using sources generated in a loguniform way
+        de_config = config['DEFAULT']
+
+        # Get values from config
+        self.folder_size = int(de_config['FOLDER_SIZE'])
 
         # Reusable session with connection pooling
         self.session = requests.Session()
@@ -59,21 +66,21 @@ class CutoutDownloader:
             self.logger.error(f"Error reading positions from text file: {e}.")
             return []
 
-    def make_subdir(self, subdir_num):
+    def make_folder(self, folder_num):
         """
         It can be hard and take a long time to view 300k image files in a single directory. We have made the design choice
-        to store images in individual subdirectories containing up to 10k images each. This file decides which subdir
+        to store images in individual folders containing up to 10k images each. This file decides which folder
         to store an image in based on its index number.
 
-        :param subdir_num: The index number of the image
-        :return: The path to the subdirectory to store the image in
+        :param folder_num: The index number of the image
+        :return: The path to the folder to store the image in
         """
-        subdir_name = f"{subdir_num*self.subdir_size}-{(subdir_num+1)*self.subdir_size-1}"
-        subdir_path = paths.DATASET_PARENT / "dr2_cutouts_download" / subdir_name
-        if not os.path.exists(subdir_path):
-            self.logger.info(f'Creating directory {subdir_path}...')
-            os.makedirs(subdir_path)
-        return subdir_path
+        folder_name = f"{folder_num*self.folder_size}-{(folder_num+1)*self.folder_size-1}"
+        folder_path = paths.DATASET_PARENT / "dr2_cutouts_download" / folder_name
+        if not os.path.exists(folder_path):
+            self.logger.info(f'Creating directory {folder_path}...')
+            os.makedirs(folder_path)
+        return folder_path
 
     # ---------- NETWORK LAYER ----------
 
@@ -173,15 +180,15 @@ class CutoutDownloader:
 
         # Create a list of image numbers corresponding to the number of positions, which will be used for naming the cutout files and logging
         # e.g., 0 to 314699
-        # On a slurm cluster, this list will be sliced accrding to the number of nodes, and distributed accordingly
+        # On a slurm cluster, this list will be sliced according to the number of nodes, and distributed accordingly
         image_nums = distribute(list(range(len(hdc_positions))))
 
-        # Cutout images will be stored in subdir of 10k size, by image index
-        # Rather than checking that the right subdirs exist every single cutout creation, we will check they exist
-        # whenever a new subdir is needed i.e., index has crossed a 10k boundary
+        # Cutout images will be stored in folders of configurable size, by image index
+        # Rather than checking that the right folders exist every single cutout creation, we will check they exist
+        # whenever a new folder is needed e.g., index has crossed a 10k boundary
         # this means, by default, 30 os checks will happen, rather than 300k
-        subdir_index = image_nums[0] // self.subdir_size
-        target_directory = target_directory / self.make_subdir(subdir_index)
+        folder_index = image_nums[0] // self.folder_size
+        target_directory = target_directory / self.make_folder(folder_index)
 
         self.logger.info('Building task list for downloading... ')
         # Build task list for concurrent download
@@ -190,11 +197,11 @@ class CutoutDownloader:
             ra, dec = hdc_positions[i]
 
             # get the path for this cutout file depending on its index
-            new_index = i // self.subdir_size
-            if new_index != subdir_index:
-                # if we've crossed a subdir boundary, check the new subdir exists and update the current subdir index
-                subdir_index = new_index
-                target_directory = self.make_subdir(subdir_index)
+            new_index = i // self.folder_size
+            if new_index != folder_index:
+                # if we've crossed a folder boundary, check the new folder exists and update the current folder index
+                folder_index = new_index
+                target_directory = self.make_folder(folder_index)
             cutout_path = target_directory / f"cutout{i}.fits"
 
             tasks.append((i, ra, dec, cutout_path))
@@ -214,6 +221,3 @@ class CutoutDownloader:
 if __name__ == "__main__":
     downloader = CutoutDownloader()
     downloader.download_all_cutouts()
-
-    #todo: you want to write this up to be able to generate over a generic list of positions because this is how you
-    #can easily tie in uh download verification functionality
