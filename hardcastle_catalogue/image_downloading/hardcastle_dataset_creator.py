@@ -31,7 +31,7 @@ class HardcastleDatasetCreator:
     pixel values from downloaded cutout files.
     """
 
-    def __init__(self, max_files_in_subdir=10000):
+    def __init__(self):
         self.logger = utils.logging.get_logger("hardcastle dataset creator", logging.DEBUG)
 
         # Read parameters from the config.ini file
@@ -43,6 +43,7 @@ class HardcastleDatasetCreator:
 
         # Get values from config
         self.folder_size = int(de_config['FOLDER_SIZE'])
+
 
     def load_hardcastle_header(self, file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
         """
@@ -73,7 +74,7 @@ class HardcastleDatasetCreator:
         # Extract numerical index from end of cutout name
         idx = int(file.stem.replace("cutout", ""))
         try:
-            with fits.open(file, memmap=True) as hdul:
+            with fits.open(file, memmap=False) as hdul:
                 return idx, hdul[0].data
         except Exception as e:
             self.logger.error(f"Error loading cutout file {file}: {e}. Returning NaN for this item.")
