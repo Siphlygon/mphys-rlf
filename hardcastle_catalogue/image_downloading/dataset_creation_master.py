@@ -1,5 +1,6 @@
 import hardcastle_catalogue_downloader
 import cutout_downloader
+import download_verification
 import hardcastle_dataset_creator
 import logging
 import utils.logging
@@ -19,7 +20,12 @@ if __name__ == "__main__":
     cutout_downloader.CutoutDownloader().download_all_cutouts()
     logger.info("Finished download of cutouts.")
 
-    # Step 3: Create the dataset from the downloaded cutouts
+    # Step 3: Run verification once on downloaded cutouts
+    logger.info("Starting download verification of cutouts.")
+    download_verification.CutoutDownloadVerifier().verify_downloads(max_files_in_subdir=10000)
+    logger.info("Finished download verification of cutouts.")
+
+    # Step 4: Create the dataset from the downloaded cutouts
     logger.info("Starting creation of dataset from downloaded cutouts.")
     hardcastle_dataset_creator.HardcastleDatasetCreator().create_hardcastle_dataset()
     logger.info("Finished creation of dataset.")
