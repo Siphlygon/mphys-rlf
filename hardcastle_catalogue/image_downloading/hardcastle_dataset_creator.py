@@ -16,11 +16,13 @@ import os
 import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 import utils.logging
 import logging
 import utils.paths as paths
 import configparser
+
 
 
 class HardcastleDatasetCreator:
@@ -61,6 +63,23 @@ class HardcastleDatasetCreator:
         return resolved_list
 
 
+    def load_single_cutout(self, file):
+        """
+        Loads a single cutout image from a FITS file.
+
+        :param file: The FITS file.
+        :return: The pixel values of the cutout image.
+        """
+        # Extract numerical index from end of cutout name
+        idx = int(file.stem.replace("cutout", ""))
+        try:
+            with fits.open(file, memmap=True) as hdul:
+                return idx, hdul[0].data
+        except Exception as e:
+            self.logger.error(f"Error loading cutout file {file}: {e}. Returning NaN for this item.")
+            return idx, np.nan
+
+
     def load_cutout_images(self, list_of_dicts, folder_path=paths.DATASET_PARENT/'dr2_cutouts_download/'):
         """
         Loads the cutout images from LoTSS-DR2 in the specified folder.
@@ -86,12 +105,10 @@ class HardcastleDatasetCreator:
             files = sorted(image_path.glob("cutout*.fits"),
                            key=lambda p: int(p.stem.replace("cutout", "")))
 
-            for file in tqdm(files, desc=f"Iterating through cutout files in {folder}"):
-                # Extract numerical index from end of cutout name
-                idx = int(file.stem.replace("cutout", ""))
-                # Extract pixel values and add to the corresponding dictionary in list_of_dicts
-                with fits.open(file) as cutout_hdul:
-                    list_of_dicts[idx]['pixel_values'] = cutout_hdul[0].data
+            # Load cutouts in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                for idx, data in tqdm(executor.map(self.load_single_cutout, files), desc=f"Loading cutouts from {folder}", total=len(files)):
+                    list_of_dicts[idx]['pixel_values'] = data
 
         return list_of_dicts
 
@@ -128,9 +145,11 @@ class HardcastleDatasetCreator:
         # Create extension HDUs as ImageHDUs for each cutout image
         self.logger.info("Creating ImageHDUs for each cutout image...")
         for idx, item in enumerate(tqdm(hardcastle_catalogue, desc="Creating ImageHDUs")):
-            if isinstance(item['pixel_values'], float) and np.isnan(item['pixel_values']):
-                continue  # Skip items with missing pixel values
-            hdu = fits.ImageHDU(data=item['pixel_values'], name=f"CUTOUT_IMAGE{idx}")
+            try:
+                hdu = fits.ImageHDU(data=item['pixel_values'], name=f"CUTOUT_IMAGE{idx}")
+            except KeyError as e:
+                self.logger.error(f"Missing pixel values for item {idx}: {e}. Not saving this to file.")
+                continue
 
             # Add WCS information to the header for pyBDSF
             hdu.header["CTYPE1"] = "RA---SIN"
@@ -145,6 +164,7 @@ class HardcastleDatasetCreator:
             hdu_list.append(hdu)
 
         hdul = fits.HDUList(hdu_list)
+        self.logger.info(f"Writing HDUList to {save_path}...")
         hdul.writeto(save_path, overwrite=True)
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
 
