@@ -369,7 +369,7 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
         outfile.parent.mkdir( parents=True, exist_ok=True )
         hdul.writeto( str( outfile ), overwrite=overwrite )
 
-    def AnalyzeImage( self, image: np.ndarray, postfix: str ):
+    def analyze_image( self, image: np.ndarray, fscaled: float, postfix: str ):
         """
         Save a numpy 2d array to a fits file under "[fits_input_dir]/[subdir]/" and analyze it, storing
         the output in "[catalog_dir]/[subdir]/[postfix]" or "[img_dir]/[subdir]/[img_type]/[postfix]" depending
@@ -379,10 +379,13 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
         ----------
         image : np.ndarray (2D)
             the pixel values that represent the image (should be 80x80)
+        
+        fscaled : float
+            box-cox transformed peak flux of the image
 
         postfix : str
             postfix for the fits file. Can either be the name of the fits file (e.g. "example.fits") or the name
             and location under "[fits_input_dir]/[subdir]/" to store it in (e.g. "example_bin/example.fits")
         """
-        self.save_image_to_FITS( image, postfix )
+        self.save_image_to_FITS( image, postfix, fscaled )
         self.analyze_FITS_at_path( self.fits_input_dir / self.subdir / postfix )
