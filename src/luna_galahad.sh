@@ -8,7 +8,7 @@
 #SBATCH --array=0-0
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --cpus-per-task=16
-#SBATCH --exclude=compute-0-9,compute-0-1
+#SBATCH --exclude=compute-0-9,compute-0-1,compute-0-11,compute-0-14,compute-0-15,compute-0-17
 
 set -e
 

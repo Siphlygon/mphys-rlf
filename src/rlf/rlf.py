@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from scipy.stats import loguniform
 
-spectral_index = -0.7
-
 class RLF:
     """
     A class to calculate the radio luminosity function (RLF) of a sample of AGN using the method of Page & Carrera
@@ -36,14 +34,14 @@ class RLF:
         self.dz = float(lu_config['dz']) # redshift bin width
         self.lum_bins_count = int(lu_config['LUM_BINS']) # number of luminosity bins between min and max luminosity
         self.n_interp_pts = int(lu_config['N_INTERP_PTS']) # number of points to use in interpolation approximation of
-        self.n_mc_pts = 100000#int(lu_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
+        self.n_mc_pts = int(lu_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
+        self.spectral_index = float(lu_config['SPECTRAL_INDEX'])
 
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # Read completeness function parameters from file
-        print( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
+        #print( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
         return np.where( integ_fluxes > 1e-3, 1, 0 )
-
 
     def calculate_rlf(self):
         """
@@ -59,7 +57,7 @@ class RLF:
             # use the redshift to calculate luminosity distance and luminosity
             cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
             luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.m).value
-            luminosities = data.model_fluxes * ( 1e-26 * luminosity_distances ) * (4 * np.pi * luminosity_distances) / ( 1 + redshifts )**(1+spectral_index) # W/Hz
+            luminosities = data.model_fluxes * ( 1e-26 * luminosity_distances ) * (4 * np.pi * luminosity_distances) / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
 
             # clip luminosity values to those above 0 for log plotting
             redshifts = redshifts[ luminosities > 0 ]
@@ -114,14 +112,14 @@ class RLF:
                     # flux values here are in Jy, luminosities in W/Hz
                     random_luminosities = np.random.uniform(l_min, l_max, self.n_mc_pts)
                     random_luminosity_distances = cosmo.luminosity_distance(random_redshifts).to(u.m).value
-                    random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+spectral_index)
+                    random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+self.spectral_index)
 
                     # weight each point by Completeness[ flux ] and add to total monte-carlo integral
                     # for now, placeholder, assume flux cutoff at 1 mJy
                     bin_integral = np.sum(self.get_completeness(random_fluxes)) / self.n_mc_pts
 
                     # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-                    bin_integral *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( l_max - l_min )
+                    bin_integral *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_max ) - np.log10( l_min ) )
 
                     # now calculate the number of 'real' sources in this bin
                     redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
@@ -154,9 +152,9 @@ class RLF:
             plt.xscale( 'log' )
             plt.xlabel( 'L144 * Hz / W')
             plt.yscale( 'log' )
-            plt.ylabel( 'phi * MPc^3' )
+            plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
             plt.legend()
-            plt.savefig(f'{subdir}_rlf(1).png')
+            plt.savefig(f'{subdir}_rlf.png')
             print( "saved figure" )
 
 
