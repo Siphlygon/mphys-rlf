@@ -48,12 +48,17 @@ class CompletenessEstimator:
             self.datasets = [datasets_input.strip()]
 
     def create_noise_LOFAR(self,
+                           filter_kernel: np.ndarray,
                            rms : float | np.ndarray = 95e-3,
-                           filter_kernel: np.ndarray = None,
                            shape: tuple[int, int, int] = (5, 80, 80),
                            ) -> np.ndarray:
         """
         Create a 2D patch of Gaussian noise with given RMS.
+
+        :param filter_kernel: A 2D kernel to convolve the noise with, simulating the beam-correlated noise in LOFAR images.
+        :param rms: The RMS of the noise to be generated. Can be a single float or an array of floats for multiple patches.
+        :param shape: The shape of the noise array to be generated. Default is (5, 80, 80) for 5 noise patches of size 80x80 pixels.
+        :return: A numpy array of shape `shape` containing the generated noise patches.
         """
         # Add beam-correlated noise
 
@@ -62,12 +67,11 @@ class CompletenessEstimator:
         # Retrieved 2026-02-12, License - CC BY-SA 4.0
         noise = np.random.normal(loc=0.0, scale=rms, size=shape)
         noise = scipy.signal.fftconvolve(noise, filter_kernel, mode='same')
-
         return noise
 
-    def detect_sources(self,
-                       images: np.ndarray,
-                       model_fluxes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def detect_mock_sources(self,
+                            images: np.ndarray,
+                            model_fluxes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         For a given set of input images and the model fluxes of those images from PyBDSF, creates mock images by adding
         noise patches to the input images, and checks if the mock sources are detectable based on a peak-flux threshold.
@@ -76,7 +80,6 @@ class CompletenessEstimator:
         :param model_fluxes: The fluxes of the sources in the input images
         :return: mock_fluxes, detectable - arrays of the fluxes of the mock sources and whether they are detectable
         """
-        # Set up LOFAR noise creation
         # Precompute correlation / blur parameters used to create beam-correlated noise.
         # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
         correlation_scale = 6 / 1.5
@@ -113,7 +116,19 @@ class CompletenessEstimator:
 
         return mock_fluxes, detectable
 
-    def fit_function(self, bin_centers, completeness, yerr, dataset):
+    def fit_function(self,
+                     bin_centers : np.ndarray,
+                     completeness : np.ndarray,
+                     yerr : np.ndarray,
+                     dataset : str):
+        """
+        Fit a function to the completeness curve and plot the results.
+
+        :param bin_centers: The centers of the flux bins used for calculating completeness.
+        :param completeness: The completeness values calculated for each flux bin.
+        :param yerr:  The error on the completeness values, typically calculated from confidence intervals.
+        :param dataset: The name of the dataset being analyzed, used for labeling the plot and fit results.
+        """
         # Fit sigmoid to completeness curve
         def sigmoid(x, x0, k, a, b):
             """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
@@ -209,7 +224,12 @@ class CompletenessEstimator:
 
     def get_completeness_estim(self):
         """
-        Estimate a completeness curve for the generated dataset
+        Estimate a completeness curve for datasets specified in the config file.
+
+        It does this by creating mock images, which are the original sources with added noise patches that are convolved
+        with a kernel to simulate the beam-correlated noise in LOFAR images. These mock sources are then checked for
+        detectability based on a peak flux threshold (e.g., 5 sigma). The completeness is calculated as the fraction of
+        detectable sources in bins of flux, and confidence intervals are calculated using Poisson statistics.
         """
         # completeness for now is designed to use loguniform, as that creates a more even distribution of samples
         # per log flux bin, which is important for an informational completeness curve.
@@ -223,36 +243,36 @@ class CompletenessEstimator:
 
             # Get the mock fluxes and whether they are detectable for all the images in the dataset
             self.logger.info("Creating mock images and running detection logic for dataset {}".format(dataset))
-            mock_fluxes, detectable = self.detect_sources(images, model_fluxes)
+            mock_fluxes, detectable = self.detect_mock_sources(images, model_fluxes)
 
             # Combine these into a dataframe for easier analysis
             mock_sources = pd.DataFrame()
             mock_sources['mock_flux'] = mock_fluxes
             mock_sources['detectable'] = detectable
 
-            # Define flux bins
-            flux_bins = np.logspace(-2, 2, num=self.num_flux_bins)  # in mJy, adjust as needed
-            bin_centers = 0.5 * (flux_bins[1:] + flux_bins[:-1])
+            # Define integrated flux bins
+            int_flux_bins = np.logspace(-2, 2, num=self.num_flux_bins)  # in mJy, adjust as needed
+            bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
 
-            # Bin and count
+            # Count detected sources in each bin and calculate completeness
             completeness = []  # to store completeness per bin
             total_counts = []  # optional: for diagnostics
 
             # For all bins
             self.logger.info("Calculating completeness per flux bin for dataset {}".format(dataset))
-            for i in tqdm(range(len(flux_bins) - 1), desc='Calculating completeness per flux bin'):
+            for i in tqdm(range(len(int_flux_bins) - 1), desc='Calculating completeness per flux bin'):
                 # Select sources in this flux bin
-                in_bin = (mock_fluxes >= flux_bins[i]) & (mock_fluxes < flux_bins[i + 1])
+                in_bin = (mock_fluxes >= int_flux_bins[i]) & (mock_fluxes < int_flux_bins[i + 1])
 
-                # Calculuate the fraction of detectable sources in this bin
+                # Calculate the fraction of detectable sources in this bin
                 n_detect = mock_sources[
-                    (mock_sources['mock_flux'] >= flux_bins[i]) & (mock_sources['mock_flux'] < flux_bins[i + 1])]
+                    (mock_sources['mock_flux'] >= int_flux_bins[i]) & (mock_sources['mock_flux'] < int_flux_bins[i + 1])]
                 if np.sum(in_bin) > 0:
                     frac_recovered = np.sum(n_detect['detectable']) / np.sum(in_bin)
                 else:
                     self.logger.warning(
                         "No sources in flux bin {}-{} mJy for dataset {}, setting completeness to 0".format(
-                            flux_bins[i], flux_bins[i + 1], dataset))
+                            int_flux_bins[i], int_flux_bins[i + 1], dataset))
                     frac_recovered = 0
 
                 completeness.append(frac_recovered)
