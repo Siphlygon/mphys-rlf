@@ -98,43 +98,46 @@ class RLF:
                 volume_grid = cosmo.comoving_volume(redshift_grid)
                 random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)
 
-                for i_l in range(self.lum_bins_count-1):
-                    # Bins are defined by their minimum value
-                    l_min = l_bins[i_l]
+                # get luminosity bins from offset indices
+                # and make them (1,n_lum_bins) arrays for broadcasting with (n_sources,1)
+                # luminosity bins are defined by their minimum value
+                n_lum_bins = len( l_bins ) - 1
+                l_mins = l_bins[ :-1 ][ np.newaxis, : ]
+                l_maxs = l_bins[ 1: ][ np.newaxis, : ]
 
-                    # Find max value in bin by adding width to min_value
-                    # Width unspecified for L bins, so we calc based on max
-                    l_max = l_bins[i_l+1]
+                # now calculate the number of 'real' sources in each bin
+                # if N=0 we can ignore bin to save resources
+                # masks have shape:
+                #   redshift_mask: (n_sources, 1)
+                #   luminosity_mask: (n_sources, n_lum_bins)
+                redshift_mask = (redshifts[ :, np.newaxis ] >= z_min) & (redshifts[ :, np.newaxis ] < z_max)
+                luminosity_mask = (luminosities[ :, np.newaxis ] >= l_mins) & (luminosities[ :, np.newaxis ] < l_maxs)
 
-                    print( f"luminosity range {l_min} - {l_max}" )
+                # shape (n_lum_bins)
+                n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
 
-                    # then generate random luminosities -> fluxes
-                    # flux values here are in Jy, luminosities in W/Hz
-                    random_luminosities = np.random.uniform(l_min, l_max, self.n_mc_pts)
-                    random_luminosity_distances = cosmo.luminosity_distance(random_redshifts).to(u.m).value
-                    random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+self.spectral_index)
+                # then generate random luminosities -> fluxes
+                # flux values here are in Jy, luminosities in W/Hz
+                # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
+                random_luminosities = np.random.uniform(l_mins, l_maxs, (self.n_mc_pts, n_lum_bins))
+                random_luminosity_distances = (cosmo.luminosity_distance(random_redshifts).to(u.m).value)[ self.n_mc_pts, np.newaxis ]
+                random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+self.spectral_index)
 
-                    # weight each point by Completeness[ flux ] and add to total monte-carlo integral
-                    # for now, placeholder, assume flux cutoff at 1 mJy
-                    bin_integral = np.sum(self.get_completeness(random_fluxes)) / self.n_mc_pts
+                # weight each point by Completeness[ flux ] and add to total monte-carlo integral
+                # for now, placeholder, assume flux cutoff at 1 mJy
+                bin_integrals = np.sum(self.get_completeness(random_fluxes), axis=0) / self.n_mc_pts
 
-                    # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-                    bin_integral *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_max ) - np.log10( l_min ) )
+                # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
+                bin_integrals *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_maxs ) - np.log10( l_mins ) )
 
-                    # now calculate the number of 'real' sources in this bin
-                    redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
-                    luminosity_mask = (luminosities >= l_min) & (luminosities < l_max)
-                    N = np.sum( redshift_mask & luminosity_mask )
+                # if we have a 0 bin integral but N > 0 it must be a monte carlo failure
+                if np.any( bin_integrals == 0 ):
+                    print( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
+                           {np.sum( bin_integrals == 0 )}/{bin_integrals.shape[ 0 ]} bins" )
 
-                    # divide by the number of total sources to get a density
-                    #N_tot = np.size( data.model_fluxes )
+                # now we have phi_est as given by Page & Carrera 2000
+                phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
 
-                    # now we have phi_est as given by Page & Carrera 2000
-                    #phi_est[i_z, i_l] = N / N_tot / bin_integral.value
-                    if N == 0 or bin_integral == 0:
-                        phi_est[i_z, i_l] = 0
-                    else:
-                        phi_est[i_z, i_l] = N / bin_integral
                 print( f'Redshift range {z_bins[i_z]:.2f}-{z_bins[i_z]+self.dz:.2f} complete' )
 
             #np.save(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy', phi_est)
