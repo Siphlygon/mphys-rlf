@@ -45,8 +45,10 @@ class CompletenessEstimator:
         else:
             self.datasets = [datasets_input.strip()]
 
-
-    def create_noise_LOFAR(self, shape=(80, 80)):
+    def create_noise_LOFAR(self,
+                           filter_kernel: np.ndarray = None,
+                           shape: tuple[int, int, int] = (5, 80, 80),
+                           ) -> np.ndarray:
         """
         Create a 2D patch of Gaussian noise with given RMS.
         """
@@ -55,24 +57,14 @@ class CompletenessEstimator:
         # Source - https://stackoverflow.com/a/63868276
         # Posted by Igor
         # Retrieved 2026-02-12, License - CC BY-SA 4.0
-
-        # Compute filter kernel with radius correlation_scale
-        correlation_scale = 6 / 1.5  # ( 6 arcsec / beam ) / ( 1.5 arcsec / pix )
-        x = np.arange(-correlation_scale, correlation_scale)
-        y = np.arange(-correlation_scale, correlation_scale)
-        X, Y = np.meshgrid(x, y)
-        dist = np.sqrt(X * X + Y * Y)
-        if len( shape ) == 3:
-            dist = dist[ np.newaxis, :, : ]
-        filter_kernel = np.exp(-dist ** 2 / (2 * correlation_scale))
-
         noise = np.random.normal(loc=0.0, scale=self.rms_LOFAR, size=shape)
         noise = scipy.signal.fftconvolve(noise, filter_kernel, mode='same')
 
         return noise
 
-
-    def detect_sources(self, images, model_fluxes):
+    def detect_sources(self,
+                       images: np.ndarray,
+                       model_fluxes: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         For a given set of input images and the model fluxes of those images from PyBDSF, creates mock images by adding
         noise patches to the input images, and checks if the mock sources are detectable based on a peak-flux threshold.
@@ -81,31 +73,135 @@ class CompletenessEstimator:
         :param model_fluxes: The fluxes of the sources in the input images
         :return: mock_fluxes, detectable - arrays of the fluxes of the mock sources and whether they are detectable
         """
+        # Set up LOFAR noise creation
+        # Precompute correlation / blur parameters used to create beam-correlated noise.
+        # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
+        correlation_scale = 6 / 1.5
+        # Use the same value for gaussian_filter sigma (pixels). Keep a precomputed 2D kernel as fallback.
+        _gaussian_sigma = correlation_scale
+        x = np.arange(-correlation_scale, correlation_scale)
+        y = np.arange(-correlation_scale, correlation_scale)
+        X, Y = np.meshgrid(x, y)
+        dist = np.sqrt(X * X + Y * Y)
+        _filter_kernel_2d = np.exp(-dist ** 2 / (2 * correlation_scale))
+
         # Initialise empty arrays to store the mock fluxes (real images w/ noise) and whether they are detectable
         mock_fluxes = np.empty((images.shape[0] * self.num_noise_patches), dtype=float)
         detectable = np.empty((images.shape[0] * self.num_noise_patches), dtype=bool)
 
         for i in tqdm(range(images.shape[0]), desc='Creating mock images and running detection...'):
-            # rms = image_rmss_actual[ random_image ]
-            # noise_patch = resid_images[ random_image ]
-            # Using rms=image_rmss_actual[ random_image ] is technically correct yet utterly useless because the
-            # majority of the noise is from the artificial 1% noise added for pybdsf
+            # Use start/end indices so each image occupies a contiguous block of the arrays.
+            start = i * self.num_noise_patches
+            end = start + self.num_noise_patches
 
-            # TODO: Use raw LOFAR data so we can get rms locally based on strength of source, potential code commented above
+            # TODO: use proper rms scaling
             rms = self.rms_LOFAR
 
             # Create and apply noise patches for every input image
-            mock_fluxes[i:(i + self.num_noise_patches)] = model_fluxes[i][np.newaxis]
-            noise_patches = self.create_noise_LOFAR(shape=(self.num_noise_patches, 80, 80))
+            mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
+            noise_patches = self.create_noise_LOFAR(_filter_kernel_2d, shape=(self.num_noise_patches, 80, 80))
             sim_data = noise_patches + images[i][np.newaxis, :, :]
 
             # Determine if the mock sources are detectable based on a peak flux threshold (e.g., 5 sigma)
             peak_fluxes = np.max(sim_data, axis=(1, 2))
             threshold = self.sigma_threshold * rms
-            detectable[i:(i + self.num_noise_patches)] = peak_fluxes >= threshold
+            detectable[start:end] = peak_fluxes >= threshold
 
         return mock_fluxes, detectable
 
+    def fit_function(self, bin_centers, completeness, yerr, dataset):
+        # Fit sigmoid to completeness curve
+        def sigmoid(x, x0, k, a, b):
+            """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
+            return a / (1 + np.exp(-k * (x - x0))) + b
+
+        # Try just some polynomial
+        def polynomial(x, a, b, c, d, e):
+            """Quadratic polynomial: ax^2 + bx + c"""
+            return a * x ** 4 + b * x ** 3 + c * x ** 2 + d * x + e
+
+        # Use log of flux for fitting since we're on a log scale
+        log_bin_centers = np.log10(bin_centers)
+
+        # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
+        initial_guess = [0.5, 2.0, 1.0, 0.0]
+
+        popt_sigmoid = None
+        pcov_sigmoid = None
+        popt_poly = None
+        pcov_poly = None
+
+        # Start plotting the measured completeness first
+        plt.figure()
+        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'{dataset} data')
+        plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
+
+        try:
+            self.logger.info(f"Fitting sigmoid function to completeness curve for dataset {dataset}")
+            # Fit the sigmoid
+            popt_sigmoid, pcov_sigmoid = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
+
+            # Generate smooth curve for plotting on log scale
+            log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+            completeness_fit = sigmoid(log_flux_smooth, *popt_sigmoid)
+
+            # Convert back to linear scale for plotting
+            flux_smooth = 10 ** log_flux_smooth
+            plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
+
+            # Show parameters and errors
+            print("Sigmoid fit parameters:")
+            print(f"  x0 (log midpoint): {popt_sigmoid[0]:.3f} (flux: {10 ** popt_sigmoid[0]:.3f} mJy)")
+            print(f"  k (steepness): {popt_sigmoid[1]:.3f}")
+            print(f"  a (amplitude): {popt_sigmoid[2]:.3f}")
+            print(f"  b (offset): {popt_sigmoid[3]:.3f}")
+            if pcov_sigmoid is not None:
+                print(f"  covariance (diag): {np.sqrt(np.diag(pcov_sigmoid))}")
+        except Exception as e:
+            print(f"Warning: Sigmoid fit failed: {e}")
+
+        try:
+            self.logger.info(f"Fitting polynomial function to completeness curve for dataset {dataset}")
+            # Fit the polynomial (on the log flux)
+            popt_poly, pcov_poly = curve_fit(polynomial, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
+
+            # Generate smooth curve for plotting
+            log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+            completeness_fit_poly = polynomial(log_flux_smooth, *popt_poly)
+
+            # Convert back to linear scale for plotting
+            flux_smooth = 10 ** log_flux_smooth
+            plt.plot(flux_smooth, completeness_fit_poly, 'b--', linewidth=2, label=f'Polynomial fit', alpha=0.7)
+
+            # Show parameters and errors
+            print("Polynomial fit parameters:")
+            print(f"  a (x^4): {popt_poly[0]:.3e}")
+            print(f"  b (x^3): {popt_poly[1]:.3e}")
+            print(f"  c (x^2): {popt_poly[2]:.3e}")
+            print(f"  d (x): {popt_poly[3]:.3e}")
+            print(f"  e (constant): {popt_poly[4]:.3e}")
+            if pcov_poly is not None:
+                print(f"  covariance (diag): {np.sqrt(np.diag(pcov_poly))}")
+        except Exception as e:
+            print(f"Warning: Polynomial fit failed: {e}")
+
+        # Now add fit curves in a consistent way if they exist
+        x_fit = np.logspace(-2, 2, 100)
+        if popt_sigmoid is not None:
+            # sigmoid was fit in log space, so evaluate at log10(x_fit)
+            y_fit_sig = sigmoid(np.log10(x_fit), *popt_sigmoid)
+            plt.plot(x_fit, y_fit_sig, label=f'{dataset} sigmoid fit', color='r')
+
+        if popt_poly is not None:
+            y_fit_poly = polynomial(np.log10(x_fit), *popt_poly)
+            plt.plot(x_fit, y_fit_poly, label=f'{dataset} polynomial fit', color='b')
+
+        plt.xscale('log')
+        plt.xlabel("Integrated Flux Density (mJy/beam)")
+        plt.ylabel("Completeness")
+        plt.legend()
+        plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
+        plt.show()
 
     def get_completeness_estim(self):
         """
@@ -145,11 +241,14 @@ class CompletenessEstimator:
                 in_bin = (mock_fluxes >= flux_bins[i]) & (mock_fluxes < flux_bins[i + 1])
 
                 # Calculuate the fraction of detectable sources in this bin
-                n_detect = mock_sources[(mock_sources['mock_flux'] >= flux_bins[i]) & (mock_sources['mock_flux'] < flux_bins[i + 1])]
+                n_detect = mock_sources[
+                    (mock_sources['mock_flux'] >= flux_bins[i]) & (mock_sources['mock_flux'] < flux_bins[i + 1])]
                 if np.sum(in_bin) > 0:
                     frac_recovered = np.sum(n_detect['detectable']) / np.sum(in_bin)
                 else:
-                    self.logger.warning("No sources in flux bin {}-{} mJy for dataset {}, setting completeness to 0".format(flux_bins[i], flux_bins[i + 1], dataset))
+                    self.logger.warning(
+                        "No sources in flux bin {}-{} mJy for dataset {}, setting completeness to 0".format(
+                            flux_bins[i], flux_bins[i + 1], dataset))
                     frac_recovered = 0
 
                 completeness.append(frac_recovered)
@@ -161,7 +260,8 @@ class CompletenessEstimator:
             total_counts = np.where(zero_counts, 1e-10, total_counts)
 
             # Handle confidence interval which is the error on our completeness
-            self.logger.info("Calculating confidence intervals for completeness estimates for dataset {}".format(dataset))
+            self.logger.info(
+                "Calculating confidence intervals for completeness estimates for dataset {}".format(dataset))
             conf_interval = astropy.stats.poisson_conf_interval(np.array(completeness) * total_counts,
                                                                 interval='frequentist-confidence', sigma=1.0)
             conf_interval /= total_counts
@@ -175,87 +275,10 @@ class CompletenessEstimator:
                 for center, comp, err in zip(bin_centers, completeness, yerr):
                     f.write(f"{center}\t{comp}\t{err}\n")
 
-            # Fit sigmoid to completeness curve
-            def sigmoid(x, x0, k, a, b):
-                """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
-                return a / (1 + np.exp(-k * (x - x0))) + b
+            # Fit a sigmoid function to the completeness curve and plot
+            self.fit_function(bin_centers, completeness, yerr, dataset)
 
-            # Try just some polynomial
-            def polynomial(x, a, b, c, d, e):
-                """Quadratic polynomial: ax^2 + bx + c"""
-                return a * x**4 + b * x**3 + c * x**2 + d * x + e
-
-            # Use log of flux for fitting since we're on a log scale
-            log_bin_centers = np.log10(bin_centers)
-
-            # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
-            initial_guess = [0.5, 2.0, 1.0, 0.0]
-
-            try:
-                # Fit the sigmoid
-                popt, pcov = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
-
-                # Generate smooth curve for plotting
-                log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-                completeness_fit = sigmoid(log_flux_smooth, *popt)
-
-                # Convert back to linear scale for plotting
-                flux_smooth = 10 ** log_flux_smooth
-                plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
-
-                # Show parameters and errors
-                print(f"Sigmoid fit parameters:")
-                print(f"  x0 (log midpoint): {popt[0]:.3f +- {pcov}} (flux: {10 ** popt[0]:.3f} mJy)")
-                print(f"  k (steepness): {popt[1]:.3f}")
-                print(f"  a (amplitude): {popt[2]:.3f}")
-                print(f"  b (offset): {popt[3]:.3f}")
-            except Exception as e:
-                print(f"Warning: Sigmoid fit failed: {e}")
-
-            try:
-                # Fit the polynomial
-                popt, pcov = curve_fit(polynomial, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
-
-                # Generate smooth curve for plotting
-                log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-                completeness_fit = polynomial(log_flux_smooth, *popt)
-
-                # Convert back to linear scale for plotting
-                flux_smooth = 10 ** log_flux_smooth
-                plt.plot(flux_smooth, completeness_fit, 'b--', linewidth=2, label=f'Polynomial fit', alpha=0.7)
-
-                # Show parameters and errors
-                print(f"Polynomial fit parameters:")
-                print(f"  a (x^4): {popt[0]:.3e}")
-                print(f"  b (x^3): {popt[1]:.3e}")
-                print(f"  c (x^2): {popt[2]:.3e}")
-                print(f"  d (x): {popt[3]:.3e}")
-                print(f"  e (constant): {popt[4]:.3e}")
-            except Exception as e:
-                print(f"Warning: Sigmoid fit failed: {e}")
-
-
-            # Plot completeness curve
-            plt.figure()
-            plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g')
-            plt.plot(bin_centers, completeness, marker='.', label=f'{dataset} completeness', color='g')
-
-            # Plot the fitted sigmoid curve
-            x_fit = np.logspace(-2, 2, 100)
-            y_fit = sigmoid(x_fit, *popt)
-            plt.plot(x_fit, y_fit, label=f'{dataset} sigmoid fit', color='b')
-
-            # And the polynomial fit
-            y_fit_poly = polynomial(np.log10(x_fit), *popt)
-            plt.plot(x_fit, y_fit_poly, label=f'{dataset} polynomial fit', color='r')
-
-            plt.xscale('log')
-            plt.xlabel("Integrated Flux Density (mJy/beam)")
-            plt.ylabel("Completeness")
-            plt.show()
-            plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
 
 if __name__ == "__main__":
     completeness_estim = CompletenessEstimator()
     completeness_estim.get_completeness_estim()
-
