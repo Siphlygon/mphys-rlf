@@ -5,8 +5,10 @@ from tqdm import tqdm
 import astropy.stats
 import pandas as pd
 import matplotlib.pyplot as plt
-from utils.img_data_arrays import ImageDataArrays
 import scipy.signal
+
+import rms_dist
+from utils.img_data_arrays import ImageDataArrays
 import configparser
 import utils.paths as pth
 import logging
@@ -23,8 +25,8 @@ class CompletenessEstimator:
         # Set up logging
         self.logger = utils.logging.get_logger("completeness estimator", logging.DEBUG)
 
-        # Average LOFAR beam rms in mJy/beam
-        self.rms_LOFAR = 95e-3
+        # Initialise the RMS distribution finder
+        self.rms_dist = rms_dist.RMSDistribution()
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
@@ -46,6 +48,7 @@ class CompletenessEstimator:
             self.datasets = [datasets_input.strip()]
 
     def create_noise_LOFAR(self,
+                           rms : float | np.ndarray = 95e-3,
                            filter_kernel: np.ndarray = None,
                            shape: tuple[int, int, int] = (5, 80, 80),
                            ) -> np.ndarray:
@@ -57,7 +60,7 @@ class CompletenessEstimator:
         # Source - https://stackoverflow.com/a/63868276
         # Posted by Igor
         # Retrieved 2026-02-12, License - CC BY-SA 4.0
-        noise = np.random.normal(loc=0.0, scale=self.rms_LOFAR, size=shape)
+        noise = np.random.normal(loc=0.0, scale=rms, size=shape)
         noise = scipy.signal.fftconvolve(noise, filter_kernel, mode='same')
 
         return noise
@@ -95,12 +98,12 @@ class CompletenessEstimator:
             start = i * self.num_noise_patches
             end = start + self.num_noise_patches
 
-            # TODO: use proper rms scaling
-            rms = self.rms_LOFAR
+            # Randomly draw a RMS from the distribution of values present in the Hardcastle catalogue sources
+            rms = self.rms_dist.sample()
 
             # Create and apply noise patches for every input image
             mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
-            noise_patches = self.create_noise_LOFAR(_filter_kernel_2d, shape=(self.num_noise_patches, 80, 80))
+            noise_patches = self.create_noise_LOFAR(rms, _filter_kernel_2d, shape=(self.num_noise_patches, 80, 80))
             sim_data = noise_patches + images[i][np.newaxis, :, :]
 
             # Determine if the mock sources are detectable based on a peak flux threshold (e.g., 5 sigma)
