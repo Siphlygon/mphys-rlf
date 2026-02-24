@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tenacity import retry, wait_exponential, stop_after_attempt
 import time
 import configparser
+from pathlib import Path
 
 
 class CutoutDownloader:
@@ -47,7 +48,9 @@ class CutoutDownloader:
         self.last_request = 0
 
     # ---------- SET UP ----------
-    def read_positions(self, file_path=paths.IMAGE_DOWNLOADING/"resolved_positions.txt"):
+    def read_positions(self,
+                       file_path : Path = paths.IMAGE_DOWNLOADING/"resolved_positions.txt")\
+            -> list[tuple[float, float]]:
         """
         Reads the RA and DEC positions from a text file.
 
@@ -66,7 +69,9 @@ class CutoutDownloader:
             self.logger.error(f"Error reading positions from text file: {e}.")
             return []
 
-    def make_folder(self, folder_num):
+    def make_folder(self,
+                    folder_num : int)\
+            -> Path:
         """
         It can be hard and take a long time to view 300k image files in a single directory. We have made the design choice
         to store images in individual folders containing up to 10k images each. This file decides which folder
@@ -101,10 +106,16 @@ class CutoutDownloader:
     # This method was comes from the LOFAR API, with major changes made to optimise it for large-batch requests.
     # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
     @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(RETRIES))
-    def get_cutout(self, outfile, pos, size=2, low=False, dr3=False, auth=None):
+    def get_cutout(self,
+                   outfile : Path | str,
+                   pos : str,
+                   size : int = 2,
+                   low=False, dr3=False, auth=None):
         """
         Get a cutout at position pos with size size arcmin. If low is True, get the 20-arcsec cutout, else get the
         6-arcsec one. If dr3 is true, try to access the DR3 data instead. Save to outfile
+
+        NOTE: pos is in format "RA DEC"
         """
         base = 'dr3' if dr3 else 'dr2'
         url = 'https://lofar-surveys.org/'
@@ -141,7 +152,16 @@ class CutoutDownloader:
 
     # ---------- PARALLEL ORCHESTRATION ----------
 
-    def _download_one(self, args):
+    def _download_one(self,
+                      args : tuple[int, float, float, Path])\
+            -> tuple[int, str | None]:
+        """
+        Downloads a single cutout image from the LOFAR cutout server based on the RA and DEC positions, and saves it to
+        the specified path.
+
+        :param args: A tuple containing the index of the image, RA, DEC, and the path to save the cutout file to.
+        :return: A tuple containing the index of the image and any error message (or None if successful).
+        """
         i, ra, dec, path = args
 
         if os.path.exists(path):
@@ -155,9 +175,13 @@ class CutoutDownloader:
             self.recent_errors += 1
             return i, str(e)
 
-    def download_all_cutouts(self, custom_positions=None):
+    def download_all_cutouts(self,
+                             custom_positions : list[tuple[float, float]] = None):
         """
         Downloads all cutouts from the LOFAR cutout server based on the Hardcastle catalogue positions.
+
+        :param custom_positions: An optional list of RA and DEC positions to use instead of loading from the Hardcastle
+        catalogue. This is useful for testing or if you want to download a specific subset of cutouts.
         """
         if custom_positions is not None:
             self.logger.info('Using custom positions provided as argument for downloading cutouts...')
@@ -206,7 +230,7 @@ class CutoutDownloader:
 
             tasks.append((i, ra, dec, cutout_path))
 
-
+        # Concurrent downloads
         self.logger.info('Starting download of cutouts for images %i to %i...', image_nums[0], image_nums[-1])
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as ex:
             futures = {ex.submit(self._download_one, t): t[0] for t in tasks}

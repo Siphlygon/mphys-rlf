@@ -9,6 +9,7 @@ import logging
 import utils.logging
 from tqdm import tqdm
 import utils.paths as pths
+from pathlib import Path
 
 from cutout_downloader import CutoutDownloader
 import configparser
@@ -34,7 +35,8 @@ class CutoutDownloadVerifier:
         self.folder_size = int(de_config['FOLDER_SIZE'])
 
 
-    def verify_downloads(self, download_path=pths.DATASET_PARENT/"dr2_cutouts_download"):
+    def verify_downloads(self,
+                         download_path : Path = pths.DATASET_PARENT/"dr2_cutouts_download"):
         """
         Verifies that all cutout files have been downloaded.
 
@@ -58,8 +60,8 @@ class CutoutDownloadVerifier:
         folders.sort(key=lambda x: int(x.split('-')[0]))
 
         # Keep track of files for information displays
-        initial_files = 0
-        surviving_files = 0
+        initial_files = 0  # these are the found files before we remove/redownload
+        surviving_files = 0  # these are the files that are not deleted because corrupted
 
         i = 0
         # iterate through folder

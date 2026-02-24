@@ -11,6 +11,7 @@ import utils.logging
 from astropy.io import fits
 import utils.paths as paths
 from tqdm import tqdm
+from pathlib import Path
 
 
 class HardcastleCatalogueDownloader:
@@ -24,7 +25,8 @@ class HardcastleCatalogueDownloader:
         # Set up logging
         self.logger = utils.logging.get_logger("hardcastle catalogue downloader", logging.DEBUG)
 
-    def download_hardcastle_catalogue(self, save_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
+    def download_hardcastle_catalogue(self,
+                                      save_path : Path = paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
         """
         Downloads the Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -46,7 +48,9 @@ class HardcastleCatalogueDownloader:
         else:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
-    def load_hardcastle_catalogue(self, file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
+    def load_hardcastle_catalogue(self,
+                                  file_path : Path =paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits")\
+            -> list[dict]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
         LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
@@ -72,7 +76,9 @@ class HardcastleCatalogueDownloader:
 
         return resolved_items
 
-    def get_positions_from_hardcastle(self, hardcastle_catalogue):
+    def get_positions_from_hardcastle(self,
+                                      hardcastle_catalogue: list[dict]) \
+            -> list[tuple[float, float]]:
         """
         Extracts the positions (RA, DEC) from the resolved items in the Hardcastle catalogue.
 
@@ -86,7 +92,9 @@ class HardcastleCatalogueDownloader:
             positions.append((ra, dec))
         return positions
 
-    def write_positions_to_file(self, positions, file_path=paths.IMAGE_DOWNLOADING/"resolved_positions.txt"):
+    def write_positions_to_file(self,
+                                positions : list[tuple[float, float]],
+                                file_path : Path = paths.IMAGE_DOWNLOADING/"resolved_positions.txt"):
         """
         Writes the list of positions (RA, DEC) to a text file for future use.
 

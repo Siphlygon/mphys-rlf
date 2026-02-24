@@ -17,10 +17,11 @@ import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import utils.logging
 import logging
-import utils.paths as paths
+import utils.paths as pths
 import configparser
 
 
@@ -36,7 +37,7 @@ class HardcastleDatasetCreator:
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(paths.PROGRAM_CONFIG)
+        config.read(pths.PROGRAM_CONFIG)
 
         # we are using sources generated in a loguniform way
         de_config = config['DEFAULT']
@@ -45,7 +46,9 @@ class HardcastleDatasetCreator:
         self.folder_size = int(de_config['FOLDER_SIZE'])
 
 
-    def load_hardcastle_header(self, file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
+    def load_hardcastle_header(self,
+                               file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits") \
+            -> list[dict]:
         """
         Loads the Hardcastle "headers" from a downloaded FITS file and filters for resolved items, extracting all data.
 
@@ -64,7 +67,8 @@ class HardcastleDatasetCreator:
         return resolved_list
 
 
-    def load_single_cutout(self, file):
+    def load_single_cutout(self,
+                           file : Path) -> tuple[int, np.ndarray]:
         """
         Loads a single cutout image from a FITS file.
 
@@ -81,13 +85,15 @@ class HardcastleDatasetCreator:
             return idx, np.nan
 
 
-    def load_cutout_images(self, list_of_dicts, folder_path=paths.DATASET_PARENT/'dr2_cutouts_download/'):
+    def load_cutout_images(self,
+                           list_of_dicts : list[dict],
+                           folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/') -> list[dict]:
         """
-        Loads the cutout images from LoTSS-DR2 in the specified folder.
+        Loads the cutout images from LoTSS-DR2 in the specified folder into a given dictionary.
 
         :param list_of_dicts: The list of dictionaries containing header information.
         :param folder_path: The path to the folder containing the cutout FITS files.
-        :return: A list of radio images.
+        :return: list_of_dicts with added image information.
         """
         # Get a list of folders in the folder path
         folders = [d for d in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, d))]
@@ -114,9 +120,10 @@ class HardcastleDatasetCreator:
         return list_of_dicts
 
 
-    def save_to_fits(self, hardcastle_catalogue,
-                     file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
-                     save_path=paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+    def save_to_fits(self,
+                     hardcastle_catalogue : list[dict],
+                     file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
+                     save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
         Saves the full Hardcastle catalogue with pixel values to a FITS file.
 
@@ -171,9 +178,9 @@ class HardcastleDatasetCreator:
 
 
     def create_hardcastle_dataset(self,
-                                    file_path=paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
-                                    folder_path=paths.DATASET_PARENT/'dr2_cutouts_download/',
-                                    save_path=paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+                                  file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
+                                  folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/',
+                                  save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
         Creates the Hardcastle dataset by loading the header and images, then combining them.
         """

@@ -9,6 +9,7 @@ import logging
 from tqdm import tqdm
 import numpy as np
 from enum import Enum
+from pathlib import Path
 
 import utils.paths as pths
 import utils.logging
@@ -38,7 +39,9 @@ class HardcastleCatalogue:
         # Load the catalogue data once during initialization to avoid repeated loading
         self.catalogue_data = self.load_hardcastle_catalogue()
 
-    def load_hardcastle_catalogue(self, file_path=pths.IMAGE_DOWNLOADING / "combined-release-v1.2-LM_opt_mass.fits"):
+    def load_hardcastle_catalogue(self,
+                                  file_path : Path = pths.IMAGE_DOWNLOADING / "combined-release-v1.2-LM_opt_mass.fits")\
+            -> list[dict]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
         LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
@@ -59,7 +62,7 @@ class HardcastleCatalogue:
 
         return resolved_items
 
-    def get_positions(self):
+    def get_positions(self) -> list[tuple[float, float]]:
         """
         Extracts the positions (RA, DEC) from the resolved items in the Hardcastle catalogue.
 
@@ -72,11 +75,12 @@ class HardcastleCatalogue:
             positions.append((ra, dec))
         return positions
 
-    def get_values(self, value):
+    def get_values(self,
+                   value : str) -> list:
         """
         Extracts a specific value from the resolved items in the Hardcastle catalogue.
 
-        :param value: The name of the value to extract (e.g., 'RA', 'DEC', 'Flux').
+        :param value: The name of the value to extract (e.g., 'RA', 'DEC', 'Total_flux').
         :return: A list of the specified value for each resolved item.
         """
         values = []
@@ -88,7 +92,8 @@ class HardcastleCatalogue:
                 values.append(np.nan)
         return values
 
-    def get_multiple_values(self, *args):
+    def get_multiple_values(self,
+                            *args : str) -> list[dict]:
         """
         Extracts multiple specified values from the resolved items in the Hardcastle catalogue.
 
@@ -117,4 +122,6 @@ class HardcastleCatalogue:
 if __name__ == "__main__":
     catalogue = HardcastleCatalogue()
     print(f"Loaded {len(catalogue.catalogue_data)} resolved items from the Hardcastle catalogue.")
-    print(catalogue.get_values(Property.PeakFlux.value)[0])
+    # print(catalogue.get_values(Property.PeakFlux.value)[1])
+    # print(catalogue.get_multiple_values("Source_Name", "Mosaic_ID", "S_Code", "objid")[1])
+    # print(catalogue.get_multiple_values(Property.RA.value, Property.DEC.value)[1])
