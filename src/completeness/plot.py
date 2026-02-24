@@ -114,6 +114,7 @@ def create_noise_LOFAR(shape=(80,80), rms=rms_LOFAR):
     y = np.arange(-correlation_scale, correlation_scale)
     X, Y = np.meshgrid(x, y)
     dist = np.sqrt(X*X + Y*Y)
+    dist = dist[np.newaxis, :, :]
     filter_kernel = np.exp(-dist**2/(2*correlation_scale))
 
     noise = np.random.normal( loc=0.0, scale=rms, size=shape )
