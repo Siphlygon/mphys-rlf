@@ -83,6 +83,7 @@ class CompletenessEstimator:
         y = np.arange(-correlation_scale, correlation_scale)
         X, Y = np.meshgrid(x, y)
         dist = np.sqrt(X * X + Y * Y)
+        dist = dist[np.newaxis, :, :]
         _filter_kernel_2d = np.exp(-dist ** 2 / (2 * correlation_scale))
 
         # Initialise empty arrays to store the mock fluxes (real images w/ noise) and whether they are detectable
