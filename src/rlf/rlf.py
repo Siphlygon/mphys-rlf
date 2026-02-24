@@ -96,7 +96,7 @@ class RLF:
                 random_volumes = np.random.uniform(v_min.value, v_max.value, self.n_mc_pts)
                 redshift_grid = np.geomspace(z_min, z_max, self.n_interp_pts)
                 volume_grid = cosmo.comoving_volume(redshift_grid)
-                random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)
+                random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)[ :, np.newaxis ]
 
                 # get luminosity bins from offset indices
                 # and make them (1,n_lum_bins) arrays for broadcasting with (n_sources,1)
@@ -120,7 +120,7 @@ class RLF:
                 # flux values here are in Jy, luminosities in W/Hz
                 # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
                 random_luminosities = np.random.uniform(l_mins, l_maxs, (self.n_mc_pts, n_lum_bins))
-                random_luminosity_distances = (cosmo.luminosity_distance(random_redshifts).to(u.m).value)[ self.n_mc_pts, np.newaxis ]
+                random_luminosity_distances = (cosmo.luminosity_distance(random_redshifts).to(u.m).value)
                 random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+self.spectral_index)
 
                 # weight each point by Completeness[ flux ] and add to total monte-carlo integral
@@ -128,12 +128,12 @@ class RLF:
                 bin_integrals = np.sum(self.get_completeness(random_fluxes), axis=0) / self.n_mc_pts
 
                 # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-                bin_integrals *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_maxs ) - np.log10( l_mins ) )
+                bin_integrals *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_maxs[ 0, : ] ) - np.log10( l_mins[ 0, : ] ) )
 
                 # if we have a 0 bin integral but N > 0 it must be a monte carlo failure
-                if np.any( bin_integrals == 0 ):
+                if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
                     print( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
-                           {np.sum( bin_integrals == 0 )}/{bin_integrals.shape[ 0 ]} bins" )
+                           {np.sum( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0  ) )}/{bin_integrals.shape[ 0 ]} bins" )
 
                 # now we have phi_est as given by Page & Carrera 2000
                 phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
