@@ -41,21 +41,32 @@ class RLF:
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # Read completeness function parameters from file
         #print( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
-        return np.where( integ_fluxes > 1e-3, 1, 0 )
+        return np.where( integ_fluxes > 1e1, 1, 0 )
 
     def calculate_rlf(self):
         """
         Calculate and plot the estimated differential RLF for the generated data
         """
         print( "start rlf calculation" )
-        for subdir in [self.dataset_subdir, self.generated_subdir]:
+
+        cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
+        Z_MIN = 0.001
+        Z_MAX = 1
+        V_MAX, V_MIN = cosmo.comoving_volume( [Z_MIN, Z_MAX] )
+
+        for subdir in [self.dataset_subdir]:
             print( f"subdir {subdir}" )
-            # assign each AGN a random redshift
+
+            # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
             data = ImageDataArrays(subdir)
-            redshifts = np.random.uniform(0.01, 1, len(data.images))
+            volumes = np.random.uniform( V_MIN, V_MAX, len( data.images ) )
+
+            # conversion from comoving volume to redshift
+            redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
+            volume_grid = cosmo.comoving_volume( redshift_grid )
+            redshifts = np.interp(volumes, volume_grid.value, redshift_grid)
 
             # use the redshift to calculate luminosity distance and luminosity
-            cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
             luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.m).value
             luminosities = data.model_fluxes * ( 1e-26 * luminosity_distances ) * (4 * np.pi * luminosity_distances) / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
 
@@ -63,12 +74,12 @@ class RLF:
             redshifts = redshifts[ luminosities > 0 ]
             luminosities = luminosities[ luminosities > 0 ]
 
-            print( f"luminosities {np.min( luminosities )} to {np.max( luminosities )}" )
+            print( f"{subdir} luminosities {np.min( luminosities )} to {np.max( luminosities )}" )
 
             # select a redshift-luminosity bin, use monte-carlo to populate the bin,
             # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
             # Also calculate the number of sources in the bin while we're at it
-            z_bins = np.arange(0.01, 1, self.dz) # only consider sources with z < 1 for now, we can extend this later if needed
+            z_bins = np.arange(Z_MIN, Z_MAX, self.dz)
             l_bins = np.logspace(21, 29, self.lum_bins_count)
             phi_est = np.zeros((len(z_bins), self.lum_bins_count-1))
 
@@ -94,8 +105,6 @@ class RLF:
                 # getting redshift from comoving volume would involve reversing an integral, which can be quite
                 # complicated. Official documentation offers linear interpolation as a solution
                 random_volumes = np.random.uniform(v_min.value, v_max.value, self.n_mc_pts)
-                redshift_grid = np.geomspace(z_min, z_max, self.n_interp_pts)
-                volume_grid = cosmo.comoving_volume(redshift_grid)
                 random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)[ :, np.newaxis ]
 
                 # get luminosity bins from offset indices
@@ -106,7 +115,6 @@ class RLF:
                 l_maxs = l_bins[ 1: ][ np.newaxis, : ]
 
                 # now calculate the number of 'real' sources in each bin
-                # if N=0 we can ignore bin to save resources
                 # masks have shape:
                 #   redshift_mask: (n_sources, 1)
                 #   luminosity_mask: (n_sources, n_lum_bins)
@@ -134,6 +142,7 @@ class RLF:
                 if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
                     print( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
                            {np.sum( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0  ) )}/{bin_integrals.shape[ 0 ]} bins" )
+                bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
 
                 # now we have phi_est as given by Page & Carrera 2000
                 phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
