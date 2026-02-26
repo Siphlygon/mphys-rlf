@@ -184,9 +184,13 @@ if __name__ == "__main__":
     luminosities = hardcastle_data[ :, 2 ]
 
     redshift_lum_mask = ~(np.isnan( luminosities ) | np.isnan( redshifts ))
-    redshifts = redshifts[ redshift_lum_mask ]
-    fluxes = fluxes[ redshift_lum_mask ]
-    luminosities = luminosities[ redshift_lum_mask ]
+    hardcastle_flux_mask = fluxes > 1.1e-3
+
+    mask = redshift_lum_mask & hardcastle_flux_mask
+
+    redshifts = redshifts[ mask ]
+    fluxes = fluxes[ mask ]
+    luminosities = luminosities[ mask ]
 
     print( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
     rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities )
