@@ -8,6 +8,10 @@ import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from scipy.stats import loguniform
 from image_downloading.hardcastle_catalogue import Property, HardcastleCatalogue
+from utils.logging import get_logger
+import logging
+
+logger = get_logger( __name__, logging.DEBUG )
 
 class RLF:
     """
@@ -37,26 +41,28 @@ class RLF:
         self.n_interp_pts = int(lu_config['N_INTERP_PTS']) # number of points to use in interpolation approximation of
         self.n_mc_pts = int(lu_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
         self.spectral_index = float(lu_config['SPECTRAL_INDEX'])
+        self.z_max = float(lu_config['Z_MAX'])
+        self.z_min = float(lu_config['Z_MIN'])
 
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # Read completeness function parameters from file
-        #print( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
+        #logger.info( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
         return np.where( integ_fluxes > 1.1e-3, 1, 0 )
 
     def calculate_rlf(self, fluxes, redshifts = None, luminosities = None):
         """
         Calculate and plot the estimated differential RLF for the generated data
         """
-        print( "start rlf calculation" )
+        logger.info( "start rlf calculation" )
 
 
         cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
-        Z_MIN = 0.01
-        Z_MAX = 1
+        Z_MIN = self.z_min
+        Z_MAX = self.z_max
         V_MIN, V_MAX = cosmo.comoving_volume( [Z_MIN, Z_MAX] ).value
 
-        print( f"volume range: {V_MIN}-{V_MAX}" )
+        logger.debug( f"volume range: {V_MIN}-{V_MAX}" )
 
         redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
         volume_grid = cosmo.comoving_volume( redshift_grid )
@@ -89,8 +95,8 @@ class RLF:
         #if (pth.NP_ARRAY_PARENT / subdir / 'rlf.npy').exists():
         #    phi_est = np.load(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy')
         # iteration so we can index phi_est by phi_est[ i_z, i_l ]
-        print( f"z bins to iterate over: {len(z_bins)}" )
-        print( f"l bins to iterate over: {self.lum_bins_count}" )
+        logger.debug( f"z bins to iterate over: {len(z_bins)}" )
+        logger.debug( f"l bins to iterate over: {self.lum_bins_count}" )
 
         for i_z in range(len(z_bins)):
             z_min = z_bins[i_z]
@@ -124,7 +130,7 @@ class RLF:
 
             # shape (n_lum_bins)
             n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
-            print( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
+            logger.debug( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
 
             # then generate random luminosities -> fluxes
             # flux values here are in Jy, luminosities in W/Hz
@@ -142,19 +148,19 @@ class RLF:
 
             # if we have a 0 bin integral but N > 0 it must be a monte carlo failure or completeness mismatch
             if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
-                print( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
+                logger.error( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
                        {np.sum( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0  ) )}/{bin_integrals.shape[ 0 ]} bins" )
             bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
 
             # now we have phi_est as given by Page & Carrera 2000
             phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
 
-            print( f'Redshift range {z_bins[i_z]:.2f}-{z_bins[i_z]+self.dz:.2f} complete' )
+            logger.info( f'Redshift range {z_bins[i_z]:.2f}-{z_bins[i_z]+self.dz:.2f} complete' )
 
             #np.save(pth.NP_ARRAY_PARENT / subdir / 'rlf.npy', phi_est)
 
         # plot the resulting graph
-        print( "plotting..." )
+        logger.info( "plotting..." )
         plt.figure()
         for i_z in range(phi_est.shape[0]):
             specific_phi_est = phi_est[i_z]
@@ -169,7 +175,7 @@ class RLF:
         plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
         plt.legend()
         plt.savefig(f'rlf.png')
-        print( "saved figure" )
+        logger.info( "saved figure" )
 
 
 if __name__ == "__main__":
@@ -192,5 +198,5 @@ if __name__ == "__main__":
     fluxes = fluxes[ mask ]
     luminosities = luminosities[ mask ]
 
-    print( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
+    logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
     rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities )
