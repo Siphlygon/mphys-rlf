@@ -180,7 +180,7 @@ class RLF:
 
 if __name__ == "__main__":
     rlf_calculator = RLF()
-    catalog = HardcastleCatalogue()
+    catalog = HardcastleCatalogue( resolved_only=False )
 
     logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )

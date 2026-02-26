@@ -34,8 +34,9 @@ class HardcastleCatalogue:
     A class to handle and extracting information from the Hardcastle catalogue. This may be used in other parts of the
     program hence it's separation from the downloader an dataset creator.
     """
-    def __init__(self):
+    def __init__(self, resolved_only: bool = True):
         self.logger = utils.logging.get_logger("HardcastleCatalogue", logging.DEBUG)
+        self.resolved_only = resolved_only
 
         # Load the catalogue data once during initialization to avoid repeated loading
         self.catalogue_data = self.load_hardcastle_catalogue()
@@ -58,7 +59,10 @@ class HardcastleCatalogue:
             self.logger.error(f"Error loading Catalogue file: {e}.")
 
         # Get the headers of resolved sources
-        resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
+        if self.resolved_only:
+            resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
+        else:
+            resolved_items = catalogue_data
         self.logger.info(f"Loaded {len(resolved_items)} resolved items from the Hardcastle catalogue.")
 
         return resolved_items
