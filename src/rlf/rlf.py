@@ -51,7 +51,7 @@ class RLF:
         return np.where( integ_fluxes > 1.1e-3, 1, 0 )
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None, completeness_path=None ):
-        self.get_completeness( self.flux_from_coordinate( v, l, cosmo, volume_grid, redshift_grid ), completeness_path )
+        return self.get_completeness( self.flux_from_coordinate( v, l, cosmo, volume_grid, redshift_grid ), completeness_path )
     
     def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
         """
@@ -93,8 +93,8 @@ class RLF:
         x = a + i * h
         y = f( x )
         return 1/3 * h * ( y[ 0 ] 
-               + 4 * np.sum( y[ 1:-1:2 ] )
-               + 2 * np.sum( y[ 2:-1:2 ] )
+               + 4 * np.sum( y[ 1:-1:2 ], axis=0 )
+               + 2 * np.sum( y[ 2:-1:2 ], axis=0 )
                + y[ -1 ] )
     
     def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
@@ -217,8 +217,8 @@ class RLF:
             n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
             logger.debug( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
 
-            #bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
-            bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
+            #bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
+            bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
 
             logger.debug( f"bin integrals: {bin_integrals}" )
 
