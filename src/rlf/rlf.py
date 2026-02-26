@@ -220,6 +220,8 @@ class RLF:
             #bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
             bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
 
+            logger.debug( f"bin integrals: {bin_integrals}" )
+
             # if we have a 0 bin integral but N > 0 it must be a monte carlo failure or completeness mismatch
             if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
                 logger.error( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
