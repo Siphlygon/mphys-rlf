@@ -21,7 +21,9 @@ if __name__ == '__main__':
     parser.add_argument( "SUBDIRS", help="Any number of subdirectories, or 0 to use utils.paths.SUBDIRS", nargs='*' )
     args = parser.parse_args()
 
-    if len( args.SUBDIRS ) > 1:
+    if len( args.SUBDIRS ) > 0:
+        logger.info( f"Analyzing {len( args.SUBDIRS )} custom subdirs" )
         analyze( args.SUBDIRS, args.input_dir )
     else:
+        logger.info( f"Analyzing default subdirectories from utils.paths.SUBDIRS" )
         analyze( pth.SUBDIRS )
