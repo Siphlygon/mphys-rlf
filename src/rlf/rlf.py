@@ -7,7 +7,7 @@ from utils.img_data_arrays import ImageDataArrays
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from scipy.stats import loguniform
-from image_downloading.hardcastle_catalogue import Property, HardcastleCatalogue
+from image_downloading.hardcastle_catalogue import Source, HardcastleCatalogue
 from utils.logging import get_logger
 import logging
 
@@ -181,13 +181,14 @@ class RLF:
 if __name__ == "__main__":
     rlf_calculator = RLF()
     catalog = HardcastleCatalogue()
-    hardcastle_dict_list = catalog.get_multiple_values( Property.Redshift.value, Property.TotalFlux.value, Property.Luminosity.value ) 
-    hardcastle_data = [ [ dict[ Property.Redshift.value ], dict[ Property.TotalFlux.value ], dict[ Property.Luminosity.value ] ] for dict in hardcastle_dict_list ]
 
-    hardcastle_data = np.array( hardcastle_data )
-    redshifts = hardcastle_data[ :, 0 ]
-    fluxes = hardcastle_data[ :, 1 ]
-    luminosities = hardcastle_data[ :, 2 ]
+    logger.debug( "getting catalog data" )
+    redshifts = catalog.get_values( Source.Redshift )
+    logger.debug( "   redshifts done" )
+    fluxes = catalog.get_values( Source.TotalFlux )
+    logger.debug( "   fluxes done" )
+    luminosities = catalog.get_values( Source.Luminosity )
+    logger.debug( "   luminosity done" )
 
     redshift_lum_mask = ~(np.isnan( luminosities ) | np.isnan( redshifts ))
     hardcastle_flux_mask = fluxes > 1.1e-3

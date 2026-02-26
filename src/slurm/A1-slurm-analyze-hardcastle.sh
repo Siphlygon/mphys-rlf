@@ -4,6 +4,7 @@
 #SBATCH --constraint=A100
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
+#SBATCH --array=0-10
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --cpus-per-task=16
