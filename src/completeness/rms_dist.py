@@ -20,7 +20,7 @@ class RMSDistribution:
     def get_rms_values(self) -> np.ndarray:
         # Get all RMS values from the catalogue
         catalogue = hdc.HardcastleCatalogue()
-        rms_values = catalogue.get_values(hdc.Property.RMS.value)
+        rms_values = catalogue.get_values(hdc.Source.RMS)
 
         #  Remove NaN values from the RMS data
         rms_values = np.array(rms_values)

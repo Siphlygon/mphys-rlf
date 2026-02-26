@@ -14,7 +14,7 @@ from pathlib import Path
 import utils.paths as pths
 import utils.logging
 
-class Property(Enum):
+class Source(Enum):
     """
     An enum to represent the different properties we want to extract from the Hardcastle catalogue. Column headers can
     be found in Hardcastle et al. (2023) but this is here for self-documentation.
@@ -26,6 +26,7 @@ class Property(Enum):
     AngSize = "LAS"   # Largest angular size in arcseconds
     Luminosity = "L_144"    # Luminosity at 144 MHz in W/Hz for alpha=0.7
     Redshift = "z_best"    # Best redshift (spectroscopic if available, otherwise photometric)
+    RMS = "Isl_rms"    # RMS noise in the island containing the source in mJy/beam
 
 
 class HardcastleCatalogue:
@@ -76,47 +77,47 @@ class HardcastleCatalogue:
         return positions
 
     def get_values(self,
-                   value : str) -> list:
+                   value : Source | str) -> list:
         """
         Extracts a specific value from the resolved items in the Hardcastle catalogue.
 
         :param value: The name of the value to extract (e.g., 'RA', 'DEC', 'Total_flux').
         :return: A list of the specified value for each resolved item.
         """
-        values = []
-        for item in tqdm(self.catalogue_data, desc=f"Extracting {value}..."):
-            try:
-                values.append(item[value])
-            except Exception as e:
-                self.logger.error(f"Error extracting {value} from item: {e}. Appending NaN for this item.")
-                values.append(np.nan)
-        return values
+        # values = []
+        # for item in tqdm(self.catalogue_data, desc=f"Extracting {value}..."):
+        #     try:
+        #         extracted_value = item[value.value] if isinstance(value, Source) else item[value]
+        #         values.append(extracted_value)
+        #     except Exception as e:
+        #         self.logger.error(f"Error extracting {value} from item: {e}. Appending NaN for this item.")
+        #         values.append(np.nan)
+        # return values
+        key = value.value if isinstance(value, Source) else value
+        return self.catalogue_data[key]
+
 
     def get_multiple_values(self,
-                            *args : str) -> list[dict]:
+                            *args : Source | str) -> np.ndarray:
         """
         Extracts multiple specified values from the resolved items in the Hardcastle catalogue.
 
         :param args: The names of the values to extract (e.g., 'RA', 'DEC', 'Flux').
-        :return: A list of dictionaries containing the specified values for each resolved item.
+        :return: A 2D numpy array where each column corresponds to one of the specified values and each row correspondsto a resolved item.
         """
-        values = []
-        for item in tqdm(self.catalogue_data, desc=f"Extracting {', '.join(args)}..."):
-            item_values = {}
-            for arg in args:
-                try:
-                    item_values[arg] = item[arg]
-                except Exception as e:
-                    self.logger.error(f"Error extracting {arg} from item: {e}. Setting {arg} to NaN for this item.")
-                    item_values[arg] = np.nan
-            values.append(item_values)
-        return values
+        # Account for the ability to input enum e.g., Source.RA instead of "RA"
+        keys = [arg.value if isinstance(arg, Source) else arg for arg in args]
+
+        # Catalogue_data is a numpy recarray and is vectorised so this is very fast
+        columns = [self.catalogue_data[key] for key in keys]
+        return np.column_stack(columns)
+
 
     def get_luminosities(self):
-        return self.get_values(Property.Luminosity.value)
+        return self.get_values(Source.Luminosity)
 
     def get_redshifts(self):
-        return self.get_values(Property.Redshift.value)
+        return self.get_values(Source.Redshift)
 
 
 if __name__ == "__main__":
@@ -124,4 +125,4 @@ if __name__ == "__main__":
     print(f"Loaded {len(catalogue.catalogue_data)} resolved items from the Hardcastle catalogue.")
     # print(catalogue.get_values(Property.PeakFlux.value)[1])
     # print(catalogue.get_multiple_values("Source_Name", "Mosaic_ID", "S_Code", "objid")[1])
-    # print(catalogue.get_multiple_values(Property.RA.value, Property.DEC.value)[1])
+    print(catalogue.get_multiple_values(Source.RA, Source.DEC)[1])
