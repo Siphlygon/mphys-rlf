@@ -49,6 +49,101 @@ class RLF:
         # Read completeness function parameters from file
         #logger.info( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
         return np.where( integ_fluxes > 1.1e-3, 1, 0 )
+    
+    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None, completeness_path=None ):
+        self.get_completeness( self.flux_from_coordinate( v, l, cosmo, volume_grid, redshift_grid ), completeness_path )
+    
+    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+        """
+        Generate luminosities + redshifts -> fluxes. Flux values here are in Jy, luminosities in W/Hz
+        
+        :param v: Volume(s)
+        :type v: float | np.ndarray
+        :param l: Luminosity/Luminosities
+        :type l: float | np.ndarray
+        :param cosmo: FLRW cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
+        :type cosmo: astropy.cosmology.FLRW
+        :param volume_grid: Volume grid for volume -> redshift interpolation, paired with redshift grid
+        :type volume_grid: np.ndarray | None
+        :param redshift_grid: Redshift grid for volume -> redshift interpolation, paired with volume grid
+        :type redshift_grid: np.ndarray | None
+        """
+
+        # generate volume/redshift grid if not provided
+        if redshift_grid is None or volume_grid is None:
+            redshift_grid = np.geomspace( self.z_min, self.z_max, self.n_interp_pts )
+            volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
+
+        z = np.interp(v, volume_grid, redshift_grid)[ :, np.newaxis ]
+        d_l = cosmo.luminosity_distance(z).to(u.m).value
+        s = l / (4 * np.pi * d_l) / ( 1e-26 * d_l ) * (1+z)**(1+self.spectral_index)
+        return s
+    
+    def one_dim_simpsons_rule( self, f, a, b, n ):
+        """
+        Perform integration using simpson's rule on a 1 dimentional function as integral from a to b of f( x ) dx
+
+        :param f: Function to integrate
+        :param a: Lower limit
+        :param b: Upper limit
+        :param n: Order of simpson's rule, must be divisible by 2
+        """
+        h = ( b - a ) / n
+        i = np.arange( 0, n+1, 1, dtype=int )[ :, np.newaxis ]
+        x = a + i * h
+        y = f( x )
+        return 1/3 * h * ( y[ 0 ] 
+               + 4 * np.sum( y[ 1:-1:2 ] )
+               + 2 * np.sum( y[ 2:-1:2 ] )
+               + y[ -1 ] )
+    
+    def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+        # integral from l_min to l_max of C[L] d(log10 L)
+        # = integral from l_min to l_max of ln[10] C[L] / L dL
+        # = ln[10] ( l_max - l_min ) / 6 * ( C[l_min]/l_min + C[l_max]/l_max + 8C[(l_max+l_min)/2]/(l_max+l_min) )
+
+        c_div_l = lambda l : self.get_completeness_from_coord( v, l, cosmo, volume_grid, redshift_grid ) / l
+        return np.log( 10 ) * self.one_dim_simpsons_rule( c_div_l, l_mins, l_maxs, self.n_mc_pts )
+
+    def simpson_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+        c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
+        return self.one_dim_simpsons_rule( c, v_min, v_max, self.n_mc_pts )
+
+    
+    def monte_carlo_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+        """
+        Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
+        
+        :param v_min: Bin volume minimum
+        :param v_max: Bin volume maximum
+        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins)
+        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins)
+        :param volume_grid: Grid of volumes for interpolation, pair with redshift_grid
+        :param redshift_grid: Grid of redshifts for interpolation, pair with volume_grid
+        :param cosmo: FLRW Cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
+        """
+        # generate volume/redshift grid if not provided
+        if redshift_grid is None or volume_grid is None:
+            redshift_grid = np.geomspace( self.z_min, self.z_max, self.n_interp_pts )
+            volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
+
+        # -- MONTE CARLO METHOD ---
+        # Now generate random points in this bin; so random in volume and in luminosity, and then
+        # compare to the completeness function to find the function of RLF in that bin.
+        # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
+        random_volumes = np.random.uniform(v_min, v_max, self.n_mc_pts)
+        random_luminosities = loguniform.rvs(l_mins[ 0, : ], l_maxs[ 0, : ], size=(self.n_mc_pts, l_mins.shape[ 1 ]))
+        random_fluxes = self.flux_from_coordinate( random_volumes[ :, np.newaxis ], random_luminosities)
+
+        # weight each point by Completeness[ flux ] and add to total monte-carlo integral
+        # for now, placeholder, assume flux cutoff at 1 mJy
+        bin_integrals = np.sum(self.get_completeness(random_fluxes), axis=0) / self.n_mc_pts
+
+        # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
+        bin_integrals *= v_max - v_min * ( np.log10( l_maxs[ 0, : ] ) - np.log10( l_mins[ 0, : ] ) )
+
+        return bin_integrals
+
 
     def calculate_rlf(self, fluxes, redshifts = None, luminosities = None):
         """
@@ -65,13 +160,13 @@ class RLF:
         logger.debug( f"volume range: {V_MIN}-{V_MAX}" )
 
         redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
-        volume_grid = cosmo.comoving_volume( redshift_grid )
+        volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
             volumes = np.random.uniform( V_MIN, V_MAX, fluxes.shape[ 0 ] )
 
             # conversion from comoving volume to redshift
-            redshifts = np.interp(volumes, volume_grid.value, redshift_grid)
+            redshifts = np.interp(volumes, volume_grid, redshift_grid)
 
         if luminosities is None:
             # use the redshift to calculate luminosity distance and luminosity
@@ -103,17 +198,7 @@ class RLF:
             z_max = z_min + self.dz
 
             # find min & max of comoving volume for redshift bin
-            v_min, v_max = cosmo.comoving_volume([z_min, z_max])
-
-            # -- MONTE CARLO METHOD ---
-            # Now generate random points in this bin; so random in volume and in luminosity, and then
-            # compare to the completeness function to find the function of RLF in that bin.
-
-            # we need to generate random comoving volumes and calculate the respective redshifts in MC method
-            # getting redshift from comoving volume would involve reversing an integral, which can be quite
-            # complicated. Official documentation offers linear interpolation as a solution
-            random_volumes = np.random.uniform(v_min.value, v_max.value, self.n_mc_pts)
-            random_redshifts = np.interp(random_volumes, volume_grid.value, redshift_grid)[ :, np.newaxis ]
+            v_min, v_max = cosmo.comoving_volume([z_min, z_max]).to( u.Mpc**3 ).value
 
             # get luminosity bins from offset indices
             # and make them (1,n_lum_bins) arrays for broadcasting with (n_sources,1)
@@ -132,19 +217,8 @@ class RLF:
             n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
             logger.debug( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
 
-            # then generate random luminosities -> fluxes
-            # flux values here are in Jy, luminosities in W/Hz
-            # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
-            random_luminosities = loguniform.rvs(l_mins[ 0, : ], l_maxs[ 0, : ], size=(self.n_mc_pts, n_lum_bins))
-            random_luminosity_distances = (cosmo.luminosity_distance(random_redshifts).to(u.m).value)
-            random_fluxes = random_luminosities / (4 * np.pi * random_luminosity_distances) / ( 1e-26 * random_luminosity_distances ) * (1+random_redshifts)**(1+self.spectral_index)
-
-            # weight each point by Completeness[ flux ] and add to total monte-carlo integral
-            # for now, placeholder, assume flux cutoff at 1 mJy
-            bin_integrals = np.sum(self.get_completeness(random_fluxes), axis=0) / self.n_mc_pts
-
-            # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-            bin_integrals *= ( v_max - v_min ).to( u.Mpc**3 ).value * ( np.log10( l_maxs[ 0, : ] ) - np.log10( l_mins[ 0, : ] ) )
+            #bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
+            bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, volume_grid, redshift_grid, cosmo )
 
             # if we have a 0 bin integral but N > 0 it must be a monte carlo failure or completeness mismatch
             if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
