@@ -60,12 +60,12 @@ class HardcastleCatalogue:
 
         # Get the headers of resolved sources
         if self.resolved_only:
-            resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
+            catalogue_data = catalogue_data[catalogue_data['Resolved'] == True]
+            self.logger.info(f"Loaded {len(catalogue_data)} resolved items from the Hardcastle catalogue.")
         else:
-            resolved_items = catalogue_data
-        self.logger.info(f"Loaded {len(resolved_items)} resolved items from the Hardcastle catalogue.")
+            self.logger.info(f"Loaded {len(catalogue_data)} items from the Hardcastle catalogue (including unresolved).")
 
-        return resolved_items
+        return catalogue_data
 
     def get_positions(self) -> list[tuple[float, float]]:
         """
@@ -88,15 +88,6 @@ class HardcastleCatalogue:
         :param value: The name of the value to extract (e.g., 'RA', 'DEC', 'Total_flux').
         :return: A list of the specified value for each resolved item.
         """
-        # values = []
-        # for item in tqdm(self.catalogue_data, desc=f"Extracting {value}..."):
-        #     try:
-        #         extracted_value = item[value.value] if isinstance(value, Source) else item[value]
-        #         values.append(extracted_value)
-        #     except Exception as e:
-        #         self.logger.error(f"Error extracting {value} from item: {e}. Appending NaN for this item.")
-        #         values.append(np.nan)
-        # return values
         key = value.value if isinstance(value, Source) else value
         return self.catalogue_data[key]
 
