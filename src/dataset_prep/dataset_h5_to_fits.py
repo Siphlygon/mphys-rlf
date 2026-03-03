@@ -87,10 +87,10 @@ def validate_LOFAR_fits_images( subdir: str, cutoff: int | None, bin_size: int |
     if fits_dataset_folder.exists():
         #first check if the bin structure is the same or if it has changed
         for bin in fits_dataset_folder.glob( "*" ):
-            #if cutoff is None, we can check for compliance immediately
-            #if we have a directory, we need to clean the dir, otherwise we can break and assume compliance
-            if cutoff is None:
+            #if bin_size is None, we can check for compliance immediately - if we have a directory, we need to clean the dir
+            if bin_size is None:
                 if bin.is_dir():
+                    print( "Directory not compliant with bin_size of None" )
                     shutil.rmtree( fits_dataset_folder )
                 break
 
@@ -127,7 +127,7 @@ if __name__ == "__main__":
     config.read( pth.PROGRAM_CONFIG )
     specific_config = config[ args.config ]
 
-    cutoff = int( specific_config[ 'VM_FITS_COUNT_CUTOFF' ] )
+    cutoff = int( specific_config[ 'VM_FITS_COUNT_CUTOFF' ] ) if specific_config[ 'VM_FITS_COUNT_CUTOFF' ] != 'None' else None
     bin_size = int( specific_config[ 'FOLDER_SIZE' ] )
     vm_dataset_subdir = specific_config[ 'VM_DATASET_SUBDIR' ]
 
