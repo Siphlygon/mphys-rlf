@@ -13,6 +13,12 @@ import logging
 
 logger = get_logger( __name__, logging.DEBUG )
 
+def z_from_v( v, a, b ):
+    """
+    Redshift from comoving volume, where a and b are respective points in log-log space
+    """
+    return 10**np.interp( np.log10( v ), a, b )
+
 class RLF:
     """
     A class to calculate the radio luminosity function (RLF) of a sample of AGN using the method of Page & Carrera
@@ -50,11 +56,11 @@ class RLF:
         #logger.info( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
         return np.where( integ_fluxes > 1.1e-3, 1, 0 )
     
-    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None, completeness_path=None ):
-        logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, volume_grid, redshift_grid )}')
-        return self.get_completeness( self.flux_from_coordinate( v, l, cosmo, volume_grid, redshift_grid ), completeness_path )
+    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
+        logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
+        return self.get_completeness( self.flux_from_coordinate( v, l, cosmo, zvparams ), completeness_path )
     
-    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, z: float | np.ndarray | None = None ):
         """
         Generate luminosities + redshifts -> fluxes. Flux values here are in Jy, luminosities in W/Hz
         
@@ -64,18 +70,14 @@ class RLF:
         :type l: float | np.ndarray
         :param cosmo: FLRW cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
         :type cosmo: astropy.cosmology.FLRW
-        :param volume_grid: Volume grid for volume -> redshift interpolation, paired with redshift grid
-        :type volume_grid: np.ndarray | None
-        :param redshift_grid: Redshift grid for volume -> redshift interpolation, paired with volume grid
-        :type redshift_grid: np.ndarray | None
+        :param zvparams: Parameters for v->z conversion (to pass to z_from_v)
+        :type zvparams: tuple
+        :param z: Redshift override, v parameter ignored in this case, as are the zvparams
+        :type z: float | np.ndarray | None
         """
+        if z is None:
+            z = z_from_v( v, *zvparams )
 
-        # generate volume/redshift grid if not provided
-        if redshift_grid is None or volume_grid is None:
-            redshift_grid = np.linspace( self.z_min, self.z_max, self.n_interp_pts )
-            volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
-
-        z = np.interp(v, volume_grid, redshift_grid)[ :, np.newaxis ]
         d_l = cosmo.luminosity_distance(z).to(u.m).value
         s = l / (4 * np.pi * d_l) / ( 1e-26 * d_l ) * (1+z)**(1+self.spectral_index)
         return s
@@ -109,23 +111,23 @@ class RLF:
                + 2 * np.sum( y[ 2:-1:2 ], axis=0 )
                + y[ -1 ] )
     
-    def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+    def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple ):
         # integral from l_min to l_max of C[L] d(log10 L)
         # = integral from l_min to l_max of ln[10] C[L] / L dL
         # = ln[10] ( l_max - l_min ) / 6 * ( C[l_min]/l_min + C[l_max]/l_max + 8C[(l_max+l_min)/2]/(l_max+l_min) )
 
         logger.debug( f'Entering lum simpson integral from {l_mins.shape}-{l_maxs.shape}' )
 
-        c_div_l = lambda l : self.get_completeness_from_coord( v, l, cosmo, volume_grid, redshift_grid ) / l
+        c_div_l = lambda l : self.get_completeness_from_coord( v, l, cosmo, zvparams ) / l
         return np.log( 10 ) * self.one_dim_simpsons_rule( c_div_l, l_mins, l_maxs, self.n_mc_pts )
 
-    def simpson_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+    def simpson_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple ):
         logger.debug( f'Entering volume simpson integral from {v_min}-{v_max}' )
-        c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
+        c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs, cosmo, zvparams )
         return self.one_dim_simpsons_rule( c, v_min, v_max, self.n_mc_pts )
 
     
-    def monte_carlo_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, volume_grid: np.ndarray | None = None, redshift_grid: np.ndarray | None = None ):
+    def monte_carlo_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple ):
         """
         Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
         
@@ -133,22 +135,17 @@ class RLF:
         :param v_max: Bin volume maximum
         :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins)
         :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins)
-        :param volume_grid: Grid of volumes for interpolation, pair with redshift_grid
-        :param redshift_grid: Grid of redshifts for interpolation, pair with volume_grid
+        :param zvparams: Parameters for v->z conversion (to pass to z_from_v)
+        :type zvparams: tuple
         :param cosmo: FLRW Cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
         """
-        # generate volume/redshift grid if not provided
-        if redshift_grid is None or volume_grid is None:
-            redshift_grid = np.linspace( self.z_min, self.z_max, self.n_interp_pts )
-            volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
-
         # -- MONTE CARLO METHOD ---
         # Now generate random points in this bin; so random in volume and in luminosity, and then
         # compare to the completeness function to find the function of RLF in that bin.
         # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
         random_volumes = np.random.uniform(v_min, v_max, self.n_mc_pts)
-        random_luminosities = loguniform.rvs(l_mins[ 0, : ], l_maxs[ 0, : ], size=(self.n_mc_pts, l_mins.shape[ 1 ]))
-        random_fluxes = self.flux_from_coordinate( random_volumes[ :, np.newaxis ], random_luminosities, cosmo, volume_grid, redshift_grid )
+        random_log_luminosities = np.random.uniform(np.log10(l_mins[ 0, : ]), np.log10(l_maxs[ 0, : ]), size=(self.n_mc_pts, l_mins.shape[ 1 ]))
+        random_fluxes = self.flux_from_coordinate( random_volumes[ :, np.newaxis ], 10**random_log_luminosities, cosmo, zvparams )
 
         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
         # for now, placeholder, assume flux cutoff at 1 mJy
@@ -174,14 +171,34 @@ class RLF:
 
         logger.debug( f"volume range: {V_MIN}-{V_MAX}" )
 
-        redshift_grid = np.linspace( Z_MIN, Z_MAX, self.n_interp_pts )
-        volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
+        #redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
+        #volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
+
+        # select a redshift-luminosity bin, use monte-carlo to populate the bin,
+        # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
+        # Also calculate the number of sources in the bin while we're at it
+        z_bins = np.arange(Z_MIN, Z_MAX, self.dz)
+        l_bins = np.logspace(21, 29, self.lum_bins_count)
+        n_lum_bins = len( l_bins ) - 1
+        phi_est = np.zeros((len(z_bins), n_lum_bins))
+
+        # params for interp
+        volume_grid = cosmo.comoving_volume( z_bins ).to( u.Mpc**3 ).value
+        zvparams = [ np.log10( volume_grid ), np.log10( z_bins ) ]
+
+        #plt.figure()
+        #plt.plot( volume_grid, redshift_grid, label='real data' )
+        #plt.plot( volume_grid, z_from_v( volume_grid, *zvparams ), label='reconstructed data' )
+        #plt.legend()
+        #plt.savefig( 'debugrel.png' )
+        #plt.figure()
+
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
             volumes = np.random.uniform( V_MIN, V_MAX, fluxes.shape[ 0 ] )
 
             # conversion from comoving volume to redshift
-            redshifts = np.interp(volumes, volume_grid, redshift_grid)
+            redshifts = z_from_v( volumes, *zvparams )
 
         if luminosities is None:
             # use the redshift to calculate luminosity distance and luminosity
@@ -193,13 +210,6 @@ class RLF:
         luminosities = luminosities[ fluxes > 0 ]
         fluxes = fluxes[ fluxes > 0 ]
 
-        # select a redshift-luminosity bin, use monte-carlo to populate the bin,
-        # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
-        # Also calculate the number of sources in the bin while we're at it
-        z_bins = np.arange(Z_MIN, Z_MAX, self.dz)
-        l_bins = np.logspace(21, 29, self.lum_bins_count)
-        n_lum_bins = len( l_bins ) - 1
-        phi_est = np.zeros((len(z_bins), n_lum_bins))
 
         # Can read previously created numpy files to avoid recomputation
         #if (pth.NP_ARRAY_PARENT / subdir / 'rlf.npy').exists():
@@ -221,6 +231,16 @@ class RLF:
             l_mins = l_bins[ :-1 ][ np.newaxis, : ]
             l_maxs = l_bins[ 1: ][ np.newaxis, : ]
 
+            # as a debugging step, get min/max flux values for each lum bin and compare to using interpolation
+            s_mins = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams, z=z_max )
+            s_maxs = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams, z=z_min )
+            s_mins_interp = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams )
+            s_maxs_interp = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams )
+            logger.debug( f'minimum fluxes: {s_mins}' )
+            logger.debug( f'minimum fluxes interpolated: {s_mins_interp}' )
+            logger.debug( f'maximum fluxes: {s_maxs}' )
+            logger.debug( f'maximum fluxes interpolated: {s_maxs_interp}' )
+
             # now calculate the number of 'real' sources in each bin
             # masks have shape:
             #   redshift_mask: (n_sources, 1)
@@ -232,8 +252,8 @@ class RLF:
             n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
             logger.debug( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
 
-            #bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
-            bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, cosmo, volume_grid, redshift_grid )
+            bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, cosmo, zvparams )
+            #bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, cosmo, zvparams )
 
             logger.debug( f"bin integrals: {bin_integrals}" )
 
@@ -241,7 +261,7 @@ class RLF:
             if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
                 logger.error( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
                        {np.sum( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0  ) )}/{bin_integrals.shape[ 0 ]} bins" )
-            bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
+            #bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
 
             # now we have phi_est as given by Page & Carrera 2000
             phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
@@ -259,7 +279,8 @@ class RLF:
             plt.plot( l_bins[ :-1], specific_phi_est, color=colormaps['cool'](i_z / phi_est.shape[0]),
                      marker='o',
                      label=f'{z_bins[i_z]:.2f}<z<{z_bins[i_z]+self.dz:.2f}')
-            
+        #plt.title( 'Simpson RLF - {self.n_mc_pts**2} pts per bin' )
+        plt.title( f'Monte-Carlo RLF - {self.n_mc_pts} pts per bin' )
         plt.xscale( 'log' )
         plt.xlabel( 'L144 * Hz / W')
         plt.yscale( 'log' )
