@@ -106,7 +106,7 @@ class CompletenessEstimator:
 
             # Create and apply noise patches for every input image
             mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
-            noise_patches = self.create_noise_LOFAR(rms, _filter_kernel_2d, shape=(self.num_noise_patches, 80, 80))
+            noise_patches = self.create_noise_LOFAR(_filter_kernel_2d, rms=rms, shape=(self.num_noise_patches, 80, 80))
             sim_data = noise_patches + images[i][np.newaxis, :, :]
 
             # Determine if the mock sources are detectable based on a peak flux threshold (e.g., 5 sigma)
@@ -255,12 +255,13 @@ class CompletenessEstimator:
             bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
 
             # Count detected sources in each bin and calculate completeness
-            completeness = []  # to store completeness per bin
-            total_counts = []  # optional: for diagnostics
+            n_bins = len(int_flux_bins) - 1
+            completeness = np.zeros(n_bins, dtype=float)  # to store completeness per bin
+            total_counts = np.zeros(n_bins, dtype=int)  # optional: for diagnostics
 
             # For all bins
             self.logger.info("Calculating completeness per flux bin for dataset {}".format(dataset))
-            for i in tqdm(range(len(int_flux_bins) - 1), desc='Calculating completeness per flux bin'):
+            for i in tqdm(range(n_bins), desc='Calculating completeness per flux bin'):
                 # Select sources in this flux bin
                 in_bin = (mock_fluxes >= int_flux_bins[i]) & (mock_fluxes < int_flux_bins[i + 1])
 
@@ -275,8 +276,8 @@ class CompletenessEstimator:
                             int_flux_bins[i], int_flux_bins[i + 1], dataset))
                     frac_recovered = 0
 
-                completeness.append(frac_recovered)
-                total_counts.append(np.sum(in_bin))
+                completeness[i] = frac_recovered
+                total_counts[i] = np.sum(in_bin)
 
             # Handle confidence interval with poisson_conf_interval for total_counts = 0
             total_counts = np.array(total_counts)
@@ -298,6 +299,10 @@ class CompletenessEstimator:
                 f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
                 for center, comp, err in zip(bin_centers, completeness, yerr):
                     f.write(f"{center}\t{comp}\t{err}\n")
+
+            # Fit a sigmoid function to the completeness curve and plot
+            completeness = np.array(completeness)
+            yerr = np.array(yerr)
 
             # Fit a sigmoid function to the completeness curve and plot
             self.fit_function(bin_centers, completeness, yerr, dataset)
