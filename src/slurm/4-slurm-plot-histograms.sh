@@ -21,4 +21,4 @@ echo "Array Count:"
 echo $SLURM_ARRAY_TASK_COUNT
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/scripts/plot_histograms.py
+python /share/nas2_3/lgreen/mphys-rlf/src/plotting/plot_histograms.py

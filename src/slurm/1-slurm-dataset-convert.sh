@@ -17,4 +17,5 @@ echo ">>>activating venv"
 source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/analysis/dataset_h5_to_fits.py --config DEFAULT
+export HDF5_USE_FILE_LOCKING='FALSE'
+python /share/nas2_3/lgreen/mphys-rlf/src/dataset_prep/dataset_h5_to_fits.py --config DEFAULT
