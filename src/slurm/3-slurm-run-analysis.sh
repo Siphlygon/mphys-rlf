@@ -5,7 +5,7 @@
 #SBATCH --time=1-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
 #SBATCH --no-requeue
-#SBATCH --array=0-20
+#SBATCH --array=0-10
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --cpus-per-task=16
 #SBATCH --exclude=compute-0-9,compute-0-1,compute-0-2
