@@ -22,7 +22,7 @@ class CutoutPreprocessor:
         :param dataset_file_path: The path to the FITS file containing the initial dataset with header information and pixel values.
         :return: A pandas DataFrame containing the initial dataset with header information and pixel values.
         """
-        self.logger.info("Loading Hardcastle catalogue from FITS file...")
+        self.logger.info("Loading Hardcastle dataset from FITS file...")
 
         catalogue_data = []
         # Get the information from the Hardcastle catalogue
@@ -31,7 +31,7 @@ class CutoutPreprocessor:
             hdul = hdul[2:]
 
             # Extract the pixel values from each imageHDU
-            for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle catalogue")):
+            for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
                 try:
                     if isinstance(hdu.data, np.ndarray):
                         catalogue_data.append({'index': idx, 'pixel_values': hdu.data})
@@ -39,7 +39,7 @@ class CutoutPreprocessor:
                         self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
                         catalogue_data.append({'index': idx, 'pixel_values': np.nan})
                 except Exception as e:
-                    self.logger.error(f"Error loading Hardcastle catalogue item {idx}: {e}")
+                    self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
                     catalogue_data.append({'index': idx, 'pixel_values': np.nan})
 
         # Initialise all other columns to default right now
@@ -73,25 +73,34 @@ class CutoutPreprocessor:
                             threshold : float = 5) -> float:
         """
         Identifies a source and background region based on a threshold with the median pixel value in a region and the
-        standard deviation of the pixel values in that region. The S/N is then calculated as the the ratio of average
-        pixel values in both regions.
+        standard deviation of the pixel values in that region. The S/N is then calculated as the ratio of average pixel
+        values in both regions.
 
-        :param image:
-        :param threshold:
-        :return:
+        :param image: The image to calculate the S/N_sigma ratio for.
+        :param threshold: The sigma threshold value to use for identifying source and background regions.
+        :return: The S/N_sigma ratio for the image, or -1 if no source region is identified.
         """
         _, median, stddev = sigma_clipped_stats(image)
-        threshold = median + threshold * stddev
-        mask = image > threshold
 
-        if mask.sum() == 0:
-            return self.calculate_SNR_sigma(image, threshold - 0.5)
+        def apply_threshold(thresh):
+            # Apply the threshold to identify source and background regions
+            mask = image > median + thresh * stddev
 
-        if image[~mask].sum() == 0:
-            print("No pixels below threshold.")
-            return -1
+            # No source region identified; lower threshold and try again
+            if mask.sum() == 0:
+                return apply_threshold(thresh - 0.5)
 
-        return image[mask].sum() / image[~mask].sum() * (~mask).sum() / mask.sum()
+            # The whole region is a source region -- pretty bad but doesn't occur in the data
+            if image[~mask].sum() == 0:
+                self.logger.error("No pixels below threshold.")
+                return -1
+
+            # Calculate the S/N as the ratio of average pixel values in the source and background regions, weighted by
+            # the number of pixels in each region
+            return image[mask].sum() / image[~mask].sum() * (~mask).sum() / mask.sum()
+
+        # Apply the recursive threshold
+        return apply_threshold(threshold)
 
 
     def identify_edge_pixels(self, image):
@@ -116,7 +125,14 @@ class CutoutPreprocessor:
         edge_pixels = []
 
         # Compute flags for each image
-        for arr in dataset["pixel_values"]:
+        for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
+
+            # Guard clause here to check for NaN values before any other processing
+            if np.isnan(arr).any():
+                self.logger.warning("NaN values found in image. Marking as broken.")
+                broken.append(True)
+                continue
+
             broken.append(self.identify_broken_source(arr))
             snr_sigma.append(self.calculate_SNR_sigma(arr))
             edge_pixels.append(self.identify_edge_pixels(arr))
