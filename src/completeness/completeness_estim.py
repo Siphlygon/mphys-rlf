@@ -83,14 +83,12 @@ class CompletenessEstimator:
         # Precompute correlation / blur parameters used to create beam-correlated noise.
         # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
         correlation_scale = 6 / 1.5
-        # Use the same value for gaussian_filter sigma (pixels). Keep a precomputed 2D kernel as fallback.
-        _gaussian_sigma = correlation_scale
         x = np.arange(-correlation_scale, correlation_scale)
         y = np.arange(-correlation_scale, correlation_scale)
         X, Y = np.meshgrid(x, y)
         dist = np.sqrt(X * X + Y * Y)
         dist = dist[np.newaxis, :, :]
-        _filter_kernel_2d = np.exp(-dist ** 2 / (2 * correlation_scale))
+        _filter_kernel_2d = np.exp(-dist ** 2 / (2 * correlation_scale)) * (1 / (2 * np.pi * correlation_scale ** 2))  # Normalise the kernel
 
         # Initialise empty arrays to store the mock fluxes (real images w/ noise) and whether they are detectable
         mock_fluxes = np.empty((images.shape[0] * self.num_noise_patches), dtype=float)
@@ -238,12 +236,11 @@ class CompletenessEstimator:
             self.logger.info("Estimating completeness for dataset {}".format(dataset))
             # Extract all the relevant arrays from the generated dataset
             self.logger.info("Extracting data arrays for dataset {}".format(dataset))
-            images, resid_images, m_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays(
-                dataset).get_all_arrays()
+            _, _, m_images, model_fluxes, _, _, _ = ImageDataArrays(dataset).get_all_arrays()
 
             # Get the mock fluxes and whether they are detectable for all the images in the dataset
             self.logger.info("Creating mock images and running detection logic for dataset {}".format(dataset))
-            mock_fluxes, detectable = self.detect_mock_sources(images, model_fluxes)
+            mock_fluxes, detectable = self.detect_mock_sources(m_images, model_fluxes)
 
             # Combine these into a dataframe for easier analysis
             mock_sources = pd.DataFrame()
