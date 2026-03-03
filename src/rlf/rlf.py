@@ -52,9 +52,8 @@ class RLF:
 
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
-        # Read completeness function parameters from file
-        #logger.info( f"min flux: {np.min( integ_fluxes )} - max flux: {np.max( integ_fluxes )} - cutoff 0.01" )
-        return np.where( integ_fluxes > 1.1e-3, 1, 0 )
+        # todo: Read completeness function parameters from file
+        return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes ) - 0.483)) + -0.001)
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
         logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
