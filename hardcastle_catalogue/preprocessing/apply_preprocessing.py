@@ -46,7 +46,7 @@ class CutoutPreprocessor:
         catalogue_data = [{**item, 'broken': False, 'S/N_sigma': 0, 'edge_pixels': 0, 'incomplete': False} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_pixels', 'incomplete']  # Add more columns as needed for header information
+        columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_max', 'incomplete']  # Add more columns as needed for header information
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset
@@ -61,7 +61,9 @@ class CutoutPreprocessor:
         # way they compute "broken" is by seeing if there are two pixels which share the minimum value in any dataset
         # We will follow the paper methodology
 
-        return np.isnan(image).any() or (image == 0).all()
+        # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
+
+        return (image == -99).any() or (image == 0).all()
 
 
     """
@@ -82,13 +84,16 @@ class CutoutPreprocessor:
         """
         _, median, stddev = sigma_clipped_stats(image)
 
-        def apply_threshold(thresh):
+        # n.b. deliberate structure of a nested function here so that we don't need to run sigma_clipped_stats every
+        # single time on every single source. It's just faster
+
+        def apply_src_threshold(thresh):
             # Apply the threshold to identify source and background regions
             mask = image > median + thresh * stddev
 
             # No source region identified; lower threshold and try again
             if mask.sum() == 0:
-                return apply_threshold(thresh - 0.5)
+                return apply_src_threshold(thresh - 0.5)
 
             # The whole region is a source region -- pretty bad but doesn't occur in the data
             if image[~mask].sum() == 0:
@@ -100,12 +105,17 @@ class CutoutPreprocessor:
             return image[mask].sum() / image[~mask].sum() * (~mask).sum() / mask.sum()
 
         # Apply the recursive threshold
-        return apply_threshold(threshold)
+        return apply_src_threshold(threshold)
 
-
-    def identify_edge_pixels(self, image):
-        #todo: similarly, instead of bool store the brightest edge pixel as frac brightness or smth
-        return
+    """
+    Code below taken from the original LOFAR-diffusion repository, found here:
+    https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
+    """
+    def calculate_edge_max(self, image):
+        # currently only considering the maximum value of the edge pixels, frankly I think there could be grounds to
+        # expand it to consider e.g., if the maximum pixel lies within a defined central region, as a way of finding
+        # poorly centred sources, but for now we will just follow the paper
+        return max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
 
     def identify_incomplete_images(self, image):
         return
@@ -122,7 +132,7 @@ class CutoutPreprocessor:
         """
         broken = []
         snr_sigma = []
-        edge_pixels = []
+        edge_max = []
 
         # Compute flags for each image
         for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
@@ -135,12 +145,12 @@ class CutoutPreprocessor:
 
             broken.append(self.identify_broken_source(arr))
             snr_sigma.append(self.calculate_SNR_sigma(arr))
-            edge_pixels.append(self.identify_edge_pixels(arr))
+            edge_max.append(self.calculate_edge_max(arr))
 
         # Apply flags to the dataset
         dataset["broken"] = broken
         dataset["S/N_sigma"] = snr_sigma
-        dataset["edge_pixels"] = edge_pixels
+        dataset["edge_max"] = edge_max
 
         return dataset
 
@@ -155,7 +165,7 @@ class CutoutPreprocessor:
         clean_dataset = dataset[
             (~dataset["broken"]) &
             (~dataset["S/N_sigma"]) &
-            (~dataset["edge_pixels"]) &
+            (~dataset["edge_max"]) &
             (~dataset["incomplete"])
         ]
 
