@@ -17,7 +17,7 @@ def z_from_v( v, a, b ):
     """
     Redshift from comoving volume, where a and b are respective points in log-log space
     """
-    return 10**np.interp( np.log10( v ), a, b )
+    return np.interp( v, a, b )
 
 class RLF:
     """
@@ -53,7 +53,7 @@ class RLF:
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # todo: Read completeness function parameters from file
-        return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes ) - 0.483)) + -0.001)
+        return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes * 1000 ) - 0.483)) + -0.001)
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
         logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
@@ -170,8 +170,8 @@ class RLF:
 
         logger.debug( f"volume range: {V_MIN}-{V_MAX}" )
 
-        #redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
-        #volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
+        redshift_grid = np.geomspace( Z_MIN, Z_MAX, self.n_interp_pts )
+        volume_grid = cosmo.comoving_volume( redshift_grid ).to( u.Mpc**3 ).value
 
         # select a redshift-luminosity bin, use monte-carlo to populate the bin,
         # work backwards to find fluxes and weight by completeness function to calculate integral as in Page & Carrera 2000.
@@ -179,18 +179,18 @@ class RLF:
         z_bins = np.arange(Z_MIN, Z_MAX, self.dz)
         l_bins = np.logspace(21, 29, self.lum_bins_count)
         n_lum_bins = len( l_bins ) - 1
-        phi_est = np.zeros((len(z_bins), n_lum_bins))
+        n_z_bins = len( z_bins ) - 1
+        phi_est = np.zeros((n_z_bins, n_lum_bins))
 
         # params for interp
-        volume_grid = cosmo.comoving_volume( z_bins ).to( u.Mpc**3 ).value
-        zvparams = [ np.log10( volume_grid ), np.log10( z_bins ) ]
+        zvparams = [ volume_grid, redshift_grid ]
 
-        #plt.figure()
-        #plt.plot( volume_grid, redshift_grid, label='real data' )
-        #plt.plot( volume_grid, z_from_v( volume_grid, *zvparams ), label='reconstructed data' )
-        #plt.legend()
-        #plt.savefig( 'debugrel.png' )
-        #plt.figure()
+        plt.figure()
+        plt.plot( volume_grid, redshift_grid - z_from_v( volume_grid, *zvparams ), label='residual by volume' )
+        plt.legend()
+        plt.ylim([-1e-9, 1e-9])
+        plt.savefig( 'debugrel.png' )
+        plt.figure()
 
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
@@ -217,9 +217,9 @@ class RLF:
         logger.debug( f"z bins to iterate over: {len(z_bins)}" )
         logger.debug( f"l bins to iterate over: {self.lum_bins_count}" )
 
-        for i_z in range(len(z_bins)):
+        for i_z in range(n_z_bins):
             z_min = z_bins[i_z]
-            z_max = z_min + self.dz
+            z_max = z_bins[i_z+1]
 
             # find min & max of comoving volume for redshift bin
             v_min, v_max = cosmo.comoving_volume([z_min, z_max]).to( u.Mpc**3 ).value
@@ -231,6 +231,11 @@ class RLF:
             l_maxs = l_bins[ 1: ][ np.newaxis, : ]
 
             # as a debugging step, get min/max flux values for each lum bin and compare to using interpolation
+            __z_min_rec = z_from_v( v_min, *zvparams )
+            __z_max_rec = z_from_v( v_max, *zvparams )
+            logger.debug( f'z_min: {z_min}, z_min_rec: {__z_min_rec}' )
+            logger.debug( f'z_max: {z_max}, z_max_rec: {__z_max_rec}' )
+
             s_mins = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams, z=z_max )
             s_maxs = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams, z=z_min )
             s_mins_interp = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams )
@@ -291,7 +296,7 @@ class RLF:
 
 if __name__ == "__main__":
     rlf_calculator = RLF()
-    catalog = HardcastleCatalogue( resolved_only=False )
+    catalog = HardcastleCatalogue( resolved_only=True )
 
     logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
