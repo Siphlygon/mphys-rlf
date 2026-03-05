@@ -53,7 +53,8 @@ class RLF:
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # todo: Read completeness function parameters from file
-        return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes * 1000 ) - 0.483)) + -0.001)
+        #return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes * 1000 ) - 0.483)) + -0.001)
+        return np.where( integ_fluxes > 1e-3, 1, 0 )
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
         logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
@@ -185,12 +186,6 @@ class RLF:
         # params for interp
         zvparams = [ volume_grid, redshift_grid ]
 
-        plt.figure()
-        plt.plot( volume_grid, redshift_grid - z_from_v( volume_grid, *zvparams ), label='residual by volume' )
-        plt.legend()
-        plt.ylim([-1e-9, 1e-9])
-        plt.savefig( 'debugrel.png' )
-        plt.figure()
 
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
@@ -202,7 +197,23 @@ class RLF:
         if luminosities is None:
             # use the redshift to calculate luminosity distance and luminosity
             luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.m).value
-            luminosities = fluxes * ( 1e-26 * luminosity_distances ) * (4 * np.pi * luminosity_distances) / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+            luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+        else:
+            #ensure luminosities and redshifts are consistent with total flux
+            # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
+            luminosity_distances = cosmo.luminosity_distance(redshifts).to(u.m).value
+            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+            logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
+            plt.scatter( flux_luminosities, luminosities, s=0.001 )
+            plt.yscale( 'log' )
+            plt.xscale( 'log' )
+            plt.title( 'Luminosity from flux vs catalog' )
+            plt.xlabel( 'luminosity from flux' )
+            plt.ylabel( 'luminosity from catalog' )
+            plt.grid()
+            plt.savefig( 'debugdiff.png' )
+            plt.figure()
+            logger.info( 'saved debug luminosity diff figure to debugdiff.png' )
 
         # clip flux values to those above 0 for log plotting
         redshifts = redshifts[ fluxes > 0 ]
@@ -230,20 +241,21 @@ class RLF:
             l_mins = l_bins[ :-1 ][ np.newaxis, : ]
             l_maxs = l_bins[ 1: ][ np.newaxis, : ]
 
-            # as a debugging step, get min/max flux values for each lum bin and compare to using interpolation
-            __z_min_rec = z_from_v( v_min, *zvparams )
-            __z_max_rec = z_from_v( v_max, *zvparams )
-            logger.debug( f'z_min: {z_min}, z_min_rec: {__z_min_rec}' )
-            logger.debug( f'z_max: {z_max}, z_max_rec: {__z_max_rec}' )
-
-            s_mins = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams, z=z_max )
-            s_maxs = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams, z=z_min )
-            s_mins_interp = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams )
-            s_maxs_interp = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams )
-            logger.debug( f'minimum fluxes: {s_mins}' )
-            logger.debug( f'minimum fluxes interpolated: {s_mins_interp}' )
-            logger.debug( f'maximum fluxes: {s_maxs}' )
-            logger.debug( f'maximum fluxes interpolated: {s_maxs_interp}' )
+            ### archived debugging z_from_v and flux relation code ###
+            #__z_min_rec = z_from_v( v_min, *zvparams )
+            #__z_max_rec = z_from_v( v_max, *zvparams )
+            #logger.debug( f'z_min: {z_min}, z_min_rec: {__z_min_rec}' )
+            #logger.debug( f'z_max: {z_max}, z_max_rec: {__z_max_rec}' )
+            #
+            #s_mins = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams, z=z_max )
+            #s_maxs = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams, z=z_min )
+            #s_mins_interp = self.flux_from_coordinate( v_max, l_mins, cosmo, zvparams )
+            #s_maxs_interp = self.flux_from_coordinate( v_min, l_maxs, cosmo, zvparams )
+            #logger.debug( f'minimum fluxes: {s_mins}' )
+            #logger.debug( f'minimum fluxes interpolated: {s_mins_interp}' )
+            #logger.debug( f'maximum fluxes: {s_maxs}' )
+            #logger.debug( f'maximum fluxes interpolated: {s_maxs_interp}' )
+            ##########################################################
 
             # now calculate the number of 'real' sources in each bin
             # masks have shape:
@@ -265,7 +277,7 @@ class RLF:
             if np.any( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0 ) ):
                 logger.error( f"Monte Carlo failure - {self.n_mc_pts} points insufficient for \
                        {np.sum( ( bin_integrals == 0 ) & ( n_sources_in_lum_bins > 0  ) )}/{bin_integrals.shape[ 0 ]} bins" )
-            #bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
+            bin_integrals[ n_sources_in_lum_bins == 0 ] = 1
 
             # now we have phi_est as given by Page & Carrera 2000
             phi_est[i_z] = n_sources_in_lum_bins / bin_integrals
@@ -279,8 +291,8 @@ class RLF:
         plt.figure()
         for i_z in range(phi_est.shape[0]):
             specific_phi_est = phi_est[i_z]
-            #mask = specific_phi_est > 0
-            plt.plot( l_bins[ :-1], specific_phi_est, color=colormaps['cool'](i_z / phi_est.shape[0]),
+            mask = specific_phi_est > 0
+            plt.plot( l_bins[ :-1][ mask ], specific_phi_est[ mask ], color=colormaps['brg']( ( n_z_bins - i_z ) / phi_est.shape[0]),
                      marker='o',
                      label=f'{z_bins[i_z]:.2f}<z<{z_bins[i_z]+self.dz:.2f}')
         #plt.title( 'Simpson RLF - {self.n_mc_pts**2} pts per bin' )
@@ -296,12 +308,12 @@ class RLF:
 
 if __name__ == "__main__":
     rlf_calculator = RLF()
-    catalog = HardcastleCatalogue( resolved_only=True )
+    catalog = HardcastleCatalogue( resolved_only=False )
 
     logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
     logger.debug( "   redshifts done" )
-    fluxes = catalog.get_values( Source.TotalFlux )
+    fluxes = catalog.get_values( Source.TotalFlux ) / 1000
     logger.debug( "   fluxes done" )
     luminosities = catalog.get_values( Source.Luminosity )
     logger.debug( "   luminosity done" )
