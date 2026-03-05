@@ -57,6 +57,13 @@ class CutoutPreprocessor:
     # ---------- FLAGS ----------
 
     def identify_broken_source(self, image : np.ndarray) -> bool:
+        """
+        Identifies whether an image is a "broken source" based on the presence of blank values or -99 values.
+
+        :param image: The image to check for being a broken source, represented as a 2D numpy array of pixel values.
+        :return: Whether the image is identified as a broken source (True) or not (False).
+        """
+
         # The criterion for broken source they state in the paper is NaN values or blank image values. The actual
         # way they compute "broken" is by seeing if there are two pixels which share the minimum value in any dataset
         # We will follow the paper methodology
@@ -111,7 +118,13 @@ class CutoutPreprocessor:
     Code below taken from the original LOFAR-diffusion repository, found here:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
     """
-    def calculate_edge_max(self, image):
+    def calculate_edge_max(self, image : np.ndarray) -> float:
+        """
+        Calculates the maximum pixel value among the edge pixels of the image.
+
+        :param image: The image to calculate the edge maximum for, shape (80, 80).
+        :return: The maximum pixel value among the edge pixels of the image.
+        """
         # currently only considering the maximum value of the edge pixels, frankly I think there could be grounds to
         # expand it to consider e.g., if the maximum pixel lies within a defined central region, as a way of finding
         # poorly centred sources, but for now we will just follow the paper
