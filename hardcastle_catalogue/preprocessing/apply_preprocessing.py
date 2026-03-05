@@ -14,6 +14,10 @@ class CutoutPreprocessor:
     def __init__(self):
         self.logger = utils.logging.get_logger('CutoutPreprocessor', logging.DEBUG)
 
+        # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
+        self.snr_threshold = 5
+        self.edge_max_threshold = 0.8
+
     def load_initial_dataset(self,
                              dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
@@ -43,10 +47,10 @@ class CutoutPreprocessor:
                     catalogue_data.append({'index': idx, 'pixel_values': np.nan})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'broken': False, 'S/N_sigma': 0, 'edge_pixels': 0, 'incomplete': False} for item in catalogue_data]
+        catalogue_data = [{**item, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_max', 'incomplete']  # Add more columns as needed for header information
+        columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_max']  # Add more columns as needed for header information
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset
@@ -115,7 +119,7 @@ class CutoutPreprocessor:
         return apply_src_threshold(threshold)
 
     """
-    Code below taken from the original LOFAR-diffusion repository, found here:
+    Code below modified from the original LOFAR-diffusion repository, found here:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
     """
     def calculate_edge_max(self, image : np.ndarray) -> float:
@@ -128,13 +132,15 @@ class CutoutPreprocessor:
         # currently only considering the maximum value of the edge pixels, frankly I think there could be grounds to
         # expand it to consider e.g., if the maximum pixel lies within a defined central region, as a way of finding
         # poorly centred sources, but for now we will just follow the paper
-        return max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
 
-    def identify_incomplete_images(self, image):
-        return
+        # Find the edge max
+        edge_max = max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
+
+        # Return it as a ratio to the maximum pixel value in the image
+        return edge_max / image.max()
+
 
     # ---------- MAIN PROCESSING ----------
-
     def compute_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
@@ -154,6 +160,8 @@ class CutoutPreprocessor:
             if np.isnan(arr).any():
                 self.logger.warning("NaN values found in image. Marking as broken.")
                 broken.append(True)
+                snr_sigma.append(-99)
+                edge_max.append(-99)
                 continue
 
             broken.append(self.identify_broken_source(arr))
@@ -174,15 +182,34 @@ class CutoutPreprocessor:
         self.compute_flags(dataset)
 
         # Filter the dataset based on the flags
-        # todo: not all flags are going to be boolean
-        clean_dataset = dataset[
-            (~dataset["broken"]) &
-            (~dataset["S/N_sigma"]) &
-            (~dataset["edge_max"]) &
-            (~dataset["incomplete"])
-        ]
+        clean_dataset = dataset[~dataset["broken"]
+                                & (dataset["S/N_sigma"] >= self.snr_threshold)
+                                & (dataset["edge_max"] <= self.edge_max_threshold)]
+
+        # Log the number of sources removed by each flag
+        num_broken = dataset["broken"].sum()
+        num_low_snr = (dataset["S/N_sigma"] < self.snr_threshold).sum()
+        num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
+        self.logger.info(f"Number of sources removed as broken: {num_broken}")
+        self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
+        self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
+        self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr + num_edge_max}")
+        self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
         return clean_dataset
+
+    def save_clean_dataset(self, clean_dataset: pd.DataFrame, output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+        """
+        Saves the cleaned dataset to a FITS file.
+
+        :param clean_dataset: The cleaned dataset to save, as a pandas DataFrame.
+        :param output_file_path: The path to save the cleaned dataset FITS file.
+        """
+        self.logger.info(f"Saving cleaned dataset to {output_file_path}...")
+        # Convert the DataFrame to a FITS table and save it
+        hdu = fits.BinTableHDU.from_columns(clean_dataset.to_records(index=False))
+        hdu.writeto(output_file_path, overwrite=True)
+        self.logger.info(f"Cleaned dataset saved to {output_file_path}.")
 
 
 if __name__ == "__main__":
