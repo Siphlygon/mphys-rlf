@@ -30,7 +30,7 @@ class CutoutPreprocessor:
 
         catalogue_data = []
         # Get the information from the Hardcastle catalogue
-        with fits.open(dataset_file_path) as hdul:
+        with fits.open(dataset_file_path, memmap=False) as hdul:
             # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
             catalogue_info = hdul[1].data
 
@@ -203,9 +203,9 @@ class CutoutPreprocessor:
 
         # Create extension HDUs as ImageHDUs for each passed image
         self.logger.info("Creating ImageHDUs for every passing image...")
-        for idx, item in enumerate(tqdm(clean_dataset, desc="Creating ImageHDUs")):
+        for idx, row in tqdm(clean_dataset.iterrows(), desc="Creating ImageHDUs"):
             try:
-                hdu = fits.ImageHDU(data=item['pixel_values'], name=f"IMAGE{idx}")
+                hdu = fits.ImageHDU(data=row['pixel_values'], name=f"IMAGE{idx}")
             except KeyError as e:
                 self.logger.error(f"Missing pixel values for item {idx}: {e}. Not saving this to file.")
                 continue
