@@ -163,7 +163,7 @@ class CompletenessEstimator:
             print(f"  k (steepness): {popt_sigmoid[1]:.3f}")
             print(f"  a (amplitude): {popt_sigmoid[2]:.3f}")
             print(f"  b (offset): {popt_sigmoid[3]:.3f}")
-            np.save( pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.npy', popt_sigmoid )
+            np.savetxt( pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt', popt_sigmoid )
             if pcov_sigmoid is not None:
                 print(f"  covariance (diag): {np.sqrt(np.diag(pcov_sigmoid))}")
         except Exception as e:
@@ -189,7 +189,7 @@ class CompletenessEstimator:
             print(f"  c (x^2): {popt_poly[2]:.3e}")
             print(f"  d (x): {popt_poly[3]:.3e}")
             print(f"  e (constant): {popt_poly[4]:.3e}")
-            np.save( pth.NP_ARRAY_PARENT / 'completeness_args_poly4.npy', popt_poly )
+            np.savetxt( pth.NP_ARRAY_PARENT / 'completeness_args_poly4.txt', popt_poly )
             if pcov_poly is not None:
                 print(f"  covariance (diag): {np.sqrt(np.diag(pcov_poly))}")
         except Exception as e:
