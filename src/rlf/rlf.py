@@ -66,11 +66,12 @@ class RLF:
         #return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes * 1000 ) - 0.483)) + -0.001)
         if completeness_path is None:
             completeness_path = pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
-        completeness_args = np.loadtxt( completeness_path )
-        #return sigmoid( integ_fluxes * 1000, *completeness_args )
+        if completeness_path.exists():
+            completeness_args = np.loadtxt( completeness_path )
+            #return sigmoid( integ_fluxes * 1000, *completeness_args )
         
         #for now use hardcastle completeness
-        return np.where( integ_fluxes > 1e-3, 1, 0 )
+        return np.where( integ_fluxes > 1.1e-3, 1, 0 )
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
         #logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
@@ -264,9 +265,10 @@ class RLF:
             #logger.debug( f'Vmax_i = {Vmax_i}' )
             phi_a[ z_bin, lum_bin ] += 1.0 / Vmax_i
 
-        logl_bin_sizes = np.log10( l_bins[ 1: ] ) - np.log10( l_bins[ :-1 ] )
-        logl_bin_sizes = logl_bin_sizes[ np.newaxis, : ]
-        phi_a /= logl_bin_sizes
+        # division covered in monte_carlo_integral
+        #logl_bin_sizes = np.log10( l_bins[ 1: ] ) - np.log10( l_bins[ :-1 ] )
+        #logl_bin_sizes = logl_bin_sizes[ np.newaxis, : ]
+        #phi_a /= logl_bin_sizes
 
         # plot the resulting graph
         logger.info( "plotting..." )
