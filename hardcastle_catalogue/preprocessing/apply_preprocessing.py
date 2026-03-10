@@ -31,6 +31,9 @@ class CutoutPreprocessor:
         catalogue_data = []
         # Get the information from the Hardcastle catalogue
         with fits.open(dataset_file_path) as hdul:
+            # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
+            catalogue_info = hdul[1].data
+
             # Remove the first two HDUs which are just Primary and the header table
             hdul = hdul[2:]
 
@@ -53,7 +56,7 @@ class CutoutPreprocessor:
         columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_max']  # Add more columns as needed for header information
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
-        return dataset
+        return dataset, catalogue_info
 
     # ---------- THRESHOLDS ----------
 
@@ -175,8 +178,57 @@ class CutoutPreprocessor:
 
         return dataset
 
+    def save_clean_dataset(self,
+                           clean_dataset: pd.DataFrame,
+                           clean_cat_info: list,
+                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+        """
+        Saves the cleaned dataset to a FITS file.
+
+        :param clean_dataset: The cleaned dataset to save, as a pandas DataFrame.
+        :param clean_cat_info: The cleaned catalogue information to save, as a FITS BinTableHDU.
+        :param output_file_path: The path to save the cleaned dataset FITS file.
+        """
+        self.logger.info(f"Saving cleaned dataset to {output_file_path}...")
+        hdu_list = []
+
+        # Create PrimaryHDU (empty, as we will use extensions)
+        self.logger.info("Creating PrimaryHDU...")
+        primary_hdu = fits.PrimaryHDU()
+        hdu_list.append(primary_hdu)
+
+        # Create BinTableHDU with the cleaned header information from the Hardcastle catalogue
+        self.logger.info("Saving cleaned catalogue information to BinTableHDU...")
+        hdu_list.append(fits.BinTableHDU(data=clean_cat_info, name="CLEAN_HARDCASTLE_HEADERS"))
+
+        # Create extension HDUs as ImageHDUs for each passed image
+        self.logger.info("Creating ImageHDUs for every passing image...")
+        for idx, item in enumerate(tqdm(clean_dataset, desc="Creating ImageHDUs")):
+            try:
+                hdu = fits.ImageHDU(data=item['pixel_values'], name=f"IMAGE{idx}")
+            except KeyError as e:
+                self.logger.error(f"Missing pixel values for item {idx}: {e}. Not saving this to file.")
+                continue
+
+            # Add WCS information to the header for pyBDSF
+            hdu.header["CTYPE1"] = "RA---SIN"
+            hdu.header["CTYPE2"] = "DEC--SIN"
+            hdu.header["CDELT1"] = 1.5 * 0.00027778
+            hdu.header["CDELT2"] = 1.5 * 0.00027778
+            hdu.header["CUNIT1"] = "deg"
+            hdu.header["CUNIT2"] = "deg"
+
+            # Add an index so the original header information can be restored from PrimaryHDU
+            hdu.header["CATIDX"] = idx
+            hdu_list.append(hdu)
+
+        hdul = fits.HDUList(hdu_list)
+        self.logger.info(f"Writing HDUList to {output_file_path}...")
+        hdul.writeto(output_file_path, overwrite=True)
+        self.logger.info(f'Final dataset saved to {output_file_path}.')
+
     def apply_preprocessing(self):
-        dataset = self.load_initial_dataset()
+        dataset, cat_info = self.load_initial_dataset()
 
         # Compute the flags for each image in the dataset
         self.compute_flags(dataset)
@@ -196,20 +248,12 @@ class CutoutPreprocessor:
         self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr + num_edge_max}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
-        return clean_dataset
+        # Filter the catalogue information to only include the sources in the clean dataset
+        indices = clean_dataset["index"].values
+        clean_cat_info = cat_info[indices]
 
-    def save_clean_dataset(self, clean_dataset: pd.DataFrame, output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
-        """
-        Saves the cleaned dataset to a FITS file.
-
-        :param clean_dataset: The cleaned dataset to save, as a pandas DataFrame.
-        :param output_file_path: The path to save the cleaned dataset FITS file.
-        """
-        self.logger.info(f"Saving cleaned dataset to {output_file_path}...")
-        # Convert the DataFrame to a FITS table and save it
-        hdu = fits.BinTableHDU.from_columns(clean_dataset.to_records(index=False))
-        hdu.writeto(output_file_path, overwrite=True)
-        self.logger.info(f"Cleaned dataset saved to {output_file_path}.")
+        # Save the cleaned dataset to a FITS file
+        self.save_clean_dataset(clean_dataset, clean_cat_info)
 
 
 if __name__ == "__main__":
