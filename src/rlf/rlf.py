@@ -11,6 +11,7 @@ from image_downloading.hardcastle_catalogue import Source, HardcastleCatalogue
 from utils.logging import get_logger
 import logging
 from tqdm import tqdm
+from utils.fitfunctions import sigmoid
 
 logger = get_logger( __name__, logging.DEBUG )
 
@@ -63,6 +64,12 @@ class RLF:
     def get_completeness(self, integ_fluxes, completeness_path=None):
         # todo: Read completeness function parameters from file
         #return 1.004 / ( 1 + np.exp(-6.995 * ( np.log10( integ_fluxes * 1000 ) - 0.483)) + -0.001)
+        if completeness_path is None:
+            completeness_path = pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
+        completeness_args = np.loadtxt( completeness_path )
+        #return sigmoid( integ_fluxes * 1000, *completeness_args )
+        
+        #for now use hardcastle completeness
         return np.where( integ_fluxes > 1e-3, 1, 0 )
     
     def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, zvparams: tuple, completeness_path=None ):
