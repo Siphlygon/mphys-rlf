@@ -13,6 +13,7 @@ import configparser
 import utils.paths as pth
 import logging
 import utils.logging
+from utils.fitfunctions import sigmoid, polynomial_deg4
 
 
 class CompletenessEstimator:
@@ -127,16 +128,6 @@ class CompletenessEstimator:
         :param yerr:  The error on the completeness values, typically calculated from confidence intervals.
         :param dataset: The name of the dataset being analyzed, used for labeling the plot and fit results.
         """
-        # Fit sigmoid to completeness curve
-        def sigmoid(x, x0, k, a, b):
-            """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
-            return a / (1 + np.exp(-k * (x - x0))) + b
-
-        # Try just some polynomial
-        def polynomial(x, a, b, c, d, e):
-            """Quadratic polynomial: ax^2 + bx + c"""
-            return a * x ** 4 + b * x ** 3 + c * x ** 2 + d * x + e
-
         # Use log of flux for fitting since we're on a log scale
         log_bin_centers = np.log10(bin_centers)
 
@@ -172,6 +163,7 @@ class CompletenessEstimator:
             print(f"  k (steepness): {popt_sigmoid[1]:.3f}")
             print(f"  a (amplitude): {popt_sigmoid[2]:.3f}")
             print(f"  b (offset): {popt_sigmoid[3]:.3f}")
+            np.save( pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.npy', popt_sigmoid )
             if pcov_sigmoid is not None:
                 print(f"  covariance (diag): {np.sqrt(np.diag(pcov_sigmoid))}")
         except Exception as e:
@@ -180,11 +172,11 @@ class CompletenessEstimator:
         try:
             self.logger.info(f"Fitting polynomial function to completeness curve for dataset {dataset}")
             # Fit the polynomial (on the log flux)
-            popt_poly, pcov_poly = curve_fit(polynomial, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
+            popt_poly, pcov_poly = curve_fit(polynomial_deg4, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
 
             # Generate smooth curve for plotting
             log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-            completeness_fit_poly = polynomial(log_flux_smooth, *popt_poly)
+            completeness_fit_poly = polynomial_deg4(log_flux_smooth, *popt_poly)
 
             # Convert back to linear scale for plotting
             flux_smooth = 10 ** log_flux_smooth
@@ -197,6 +189,7 @@ class CompletenessEstimator:
             print(f"  c (x^2): {popt_poly[2]:.3e}")
             print(f"  d (x): {popt_poly[3]:.3e}")
             print(f"  e (constant): {popt_poly[4]:.3e}")
+            np.save( pth.NP_ARRAY_PARENT / 'completeness_args_poly4.npy', popt_poly )
             if pcov_poly is not None:
                 print(f"  covariance (diag): {np.sqrt(np.diag(pcov_poly))}")
         except Exception as e:
