@@ -95,6 +95,10 @@ class RLF:
         if z is None:
             z = z_from_v( v, *zvparams )
 
+        # l may be of shape (n_pts, n_bins), while z is of shape (n_pts), so make them broadcastable in that case
+        if len( z.shape ) == len( l.shape ) - 1:
+            z = z[ :, np.newaxis ]
+
         d_l = cosmo.luminosity_distance(z).to(u.m).value
         s = l / (4 * np.pi * d_l) / ( 1e-26 * d_l ) * (1+z)**(1+self.spectral_index)
         return s
@@ -160,12 +164,16 @@ class RLF:
         # Now generate random points in this bin; so random in volume and in luminosity, and then
         # compare to the completeness function to find the function of RLF in that bin.
         # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
-        random_volumes = np.random.uniform(v_min, v_max, self.n_mc_pts)
 
         if lum is None:
             lums = 10**np.random.uniform(np.log10(l_mins[ 0, : ]), np.log10(l_maxs[ 0, : ]), size=(self.n_mc_pts, l_mins.shape[ 1 ]))
         else:
-            lums = lum
+            lums = np.repeat( np.array( [ lum ] ), self.n_mc_pts ) if type( lum ) is float or np.float64 else lum
+
+        if lums.shape[ 0 ] != self.n_mc_pts:
+            logger.info( f'overriding n_mc_pts={self.n_mc_pts} based on luminosity array size {lums.shape}' )
+
+        random_volumes = np.random.uniform(v_min, v_max, lums.shape[ 0 ])
 
         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
         # for now, placeholder, assume flux cutoff at 1 mJy
@@ -238,14 +246,13 @@ class RLF:
         luminosities = luminosities[ fluxes > 0 ]
         fluxes = fluxes[ fluxes > 0 ]
 
-
         for flux, redshift, luminosity in tqdm( zip( fluxes, redshifts, luminosities ), desc='Calculating rlf...', total=fluxes.shape[ 0 ] ):
             # index of the luminosity and redshift bin this object is in, as well as bounds
             lum_bin = np.searchsorted( l_bins, luminosity ) - 1
             z_bin = np.searchsorted( z_bins, redshift ) - 1
 
             if lum_bin == -1 or lum_bin >= len( l_bins ) - 1 or z_bin == -1 or z_bin >= len( z_bins ) - 1:
-                logger.info( f'skipping object with s={flux}, z={redshift}, l={luminosity}' )
+                logger.debug( f'skipping object with s={flux}, z={redshift}, l={luminosity}' )
                 continue
 
             l_min, l_max = l_bins[ lum_bin ], l_bins[ lum_bin + 1 ]
@@ -260,10 +267,17 @@ class RLF:
             # find min & max of comoving volume for redshift bin
             v_min, v_max = cosmo.comoving_volume([z_min, z_max]).to( u.Mpc**3 ).value
 
-            # monte carlo methods to evaluate integral C[s[V,l]] dV
-            Vmax_i = self.monte_carlo_integral( v_min, v_max, l_min, l_max, cosmo, zvparams, luminosity )
+            # hack to reduce calc times if completeness is const over the integral
+            min_completeness = self.get_completeness_from_coord( v_max, l_min[ 0, 0 ], cosmo, zvparams )
+            max_completeness = self.get_completeness_from_coord( v_min, l_max[ 0, 0 ], cosmo, zvparams )
+            if min_completeness == max_completeness:
+                Vmax_i_incllum = max_completeness * ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
+            else:
+                # monte carlo methods to evaluate integral C[s[V,l]] dV
+                Vmax_i_incllum = self.monte_carlo_integral( v_min, v_max, l_min, l_max, cosmo, zvparams, luminosity )
+
             #logger.debug( f'Vmax_i = {Vmax_i}' )
-            phi_a[ z_bin, lum_bin ] += 1.0 / Vmax_i
+            phi_a[ z_bin, lum_bin ] += 1.0 / Vmax_i_incllum
 
         # division covered in monte_carlo_integral
         #logl_bin_sizes = np.log10( l_bins[ 1: ] ) - np.log10( l_bins[ :-1 ] )
@@ -286,8 +300,8 @@ class RLF:
         plt.xlabel( 'L144 * Hz / W')
         plt.yscale( 'log' )
         plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
-        #plt.xlim( [ 1e21, 1e29 ] )
-        #plt.ylim( [ 1e-9, 3e-4 ] )
+        plt.xlim( [ 1e21, 1e29 ] )
+        plt.ylim( [ 1e-9, 3e-4 ] )
         plt.legend()
         plt.savefig(f'rlf_vmax.png')
         logger.info( "saved figure" )
@@ -468,4 +482,4 @@ if __name__ == "__main__":
     luminosities = luminosities[ mask ]
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
-    rlf_calculator.calculate_rlf_vmax( fluxes, redshifts, luminosities )
+    rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities )
