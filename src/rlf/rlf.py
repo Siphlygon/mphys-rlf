@@ -76,11 +76,11 @@ class RLF:
         if lu_config.getboolean( 'HARDCASTLE_Z_BINS' ):
             self.z_bins = np.array( [ 0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2 ] ) #hardcastle bins
         else:
-            z_bins = np.arange( self.z_min, self.z_max, self.dz )
+            self.z_bins = np.arange( self.z_min, self.z_max, self.dz )
 
         self.l_bins = np.logspace( self.l_min, self.l_max, self.lum_bins_count)
         self.n_lum_bins = self.lum_bins_count - 1
-        self.n_z_bins = z_bins.shape[ 0 ] - 1
+        self.n_z_bins = self.z_bins.shape[ 0 ] - 1
 
         # params for interp
         self.zvparams = [ self.volume_grid, self.redshift_grid ]
