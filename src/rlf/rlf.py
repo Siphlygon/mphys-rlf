@@ -101,11 +101,11 @@ class RLF:
         #for now use hardcastle completeness
         return np.where( integ_fluxes > 1.1e-3, 1, 0 )
     
-    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, completeness_path=None ):
+    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, completeness_path=None ):
         #logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
-        return self.get_completeness( self.flux_from_coordinate( v, l, cosmo ), completeness_path )
+        return self.get_completeness( self.flux_from_coordinate( v, l ), completeness_path )
     
-    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, cosmo: astropy.cosmology.FLRW, z: float | np.ndarray | None = None ):
+    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, z: float | np.ndarray | None = None ):
         """
         Generate luminosities + redshifts -> fluxes. Flux values here are in Jy, luminosities in W/Hz
         
@@ -113,19 +113,13 @@ class RLF:
         :type v: float | np.ndarray
         :param l: Luminosity/Luminosities
         :type l: float | np.ndarray
-        :param cosmo: FLRW cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
-        :type cosmo: astropy.cosmology.FLRW
         :param z: Redshift override, v parameter ignored in this case
         :type z: float | np.ndarray | None
         """
         if z is None:
             z = z_from_v( v, *self.zvparams )
 
-        # l may be of shape (n_pts, n_bins), while z is of shape (n_pts), so make them broadcastable in that case
-        if len( z.shape ) == len( l.shape ) - 1:
-            z = z[ :, np.newaxis ]
-
-        d_l = cosmo.luminosity_distance(z).to(u.m).value
+        d_l = self.cosmo.luminosity_distance(z).to(u.m).value
         s = l / (4 * np.pi * d_l) / ( 1e-26 * d_l ) * (1+z)**(1+self.spectral_index)
         return s
     
@@ -158,53 +152,80 @@ class RLF:
                + 2 * np.sum( y[ 2:-1:2 ], axis=0 )
                + y[ -1 ] )
     
-    def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW ):
+    def completeness_simpson_lum_integral( self, v: float, l_mins: np.ndarray, l_maxs: np.ndarray ):
         # integral from l_min to l_max of C[L] d(log10 L)
         # = integral from l_min to l_max of ln[10] C[L] / L dL
         # = ln[10] ( l_max - l_min ) / 6 * ( C[l_min]/l_min + C[l_max]/l_max + 8C[(l_max+l_min)/2]/(l_max+l_min) )
 
         logger.debug( f'Entering lum simpson integral from {l_mins.shape}-{l_maxs.shape}' )
 
-        c_div_l = lambda l : self.get_completeness_from_coord( v, l, cosmo ) / l
+        c_div_l = lambda l : self.get_completeness_from_coord( v, l ) / l
         return np.log( 10 ) * self.one_dim_simpsons_rule( c_div_l, l_mins, l_maxs, self.n_mc_pts )
 
-    def simpson_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW ):
+    def simpson_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray ):
         logger.debug( f'Entering volume simpson integral from {v_min}-{v_max}' )
-        c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs, cosmo )
+        c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs )
         return self.one_dim_simpsons_rule( c, v_min, v_max, self.n_mc_pts )
 
-    def monte_carlo_integral( self, v_min: float, v_max: float, l_mins: np.ndarray, l_maxs: np.ndarray, cosmo: astropy.cosmology.FLRW, lum: np.ndarray | float | None = None ):
+    def monte_carlo_integral( self, v_min: float, v_max: float, l_min: float | np.ndarray, l_max: float | np.ndarray, lum: np.ndarray | float | None = None ):
         """
         Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
+
+        lum is a 2-dim array with shape
+        (n_mc_pts, n_integrals)
+
+        where n_integrals is any of 1 (in the case of l_min/max being floats and lum being None or float), l_min/max.shape[ 1 ] (in the case of l_min/max being passed as arrays), or lum.shape[ 0 ] (in the case of lum being passed as an array)
         
         :param v_min: Bin volume minimum
         :param v_max: Bin volume maximum
-        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins)
-        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins)
-        :param cosmo: FLRW Cosmology (e.g. astropy.cosmology.FlatLambdaCDM)
+        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins) or float
+        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins) or float
         :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method
         """
+        if lum is None:
+            if l_min is np.ndarray and l_max is np.ndarray:
+                lums = 10**np.random.uniform(np.log10(l_min[ 0, : ]), np.log10(l_max[ 0, : ]), size=(self.n_mc_pts, l_min.shape[ 1 ]))
+            else:
+                lums = 10**np.random.uniform(np.log10(l_min), np.log10(l_max), size=(self.n_mc_pts, l_min.shape[ 1 ]))
+
+        elif lum is np.ndarray:
+            if l_min is np.ndarray and l_max is np.ndarray:
+                raise AssertionError( 'Cannot have lum and l_min/max as nparrays' )
+
+            if lum.ndim == 1:
+                lums = lum[ np.newaxis, : ]
+                lums = np.broadcast_to( lums, (self.n_mc_pts, lums.shape[ 1 ]) )
+            elif lum.ndim == 2:
+                lums = lum
+            else: raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
+        
+        else: #lum is float
+            if l_min is np.ndarray and l_max is np.ndarray:
+                lums = np.broadcast_to( lum, (self.n_mc_pts, l_min.shape[ 1 ] ) )
+            else:
+                lums = np.broadcast_to( lum, (self.n_mc_pts, 1) )
+
+        # lums now definitely has shape (self.n_mc_pts, n_integrals)
+
         # -- MONTE CARLO METHOD ---
         # Now generate random points in this bin; so random in volume and in luminosity, and then
         # compare to the completeness function to find the function of RLF in that bin.
         # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
-
-        if lum is None:
-            lums = 10**np.random.uniform(np.log10(l_mins[ 0, : ]), np.log10(l_maxs[ 0, : ]), size=(self.n_mc_pts, l_mins.shape[ 1 ]))
-        else:
-            lums = np.repeat( np.array( [ lum ] ), self.n_mc_pts ) if type( lum ) is float or np.float64 else lum
-
-        if lums.shape[ 0 ] != self.n_mc_pts:
-            logger.info( f'overriding n_mc_pts={self.n_mc_pts} based on luminosity array size {lums.shape}' )
-
-        random_volumes = np.random.uniform(v_min, v_max, lums.shape[ 0 ])
+        random_volumes = np.random.uniform(v_min, v_max, lums.shape)
 
         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
         # for now, placeholder, assume flux cutoff at 1 mJy
-        bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums, cosmo ), axis=0) / self.n_mc_pts
+        bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums ), axis=0) / self.n_mc_pts
 
         # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-        bin_integrals *= ( v_max - v_min ) * ( np.log10( l_maxs[ 0, : ] ) - np.log10( l_mins[ 0, : ] ) )
+        if l_min is np.ndarray and l_max is np.ndarray:
+            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max[ 0, : ] ) - np.log10( l_min[ 0, : ] ) )
+        else:
+            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
+
+        # if n_integrals is 1, cut out the last axis so we just return a 1d array of shape (n_lum_bins,)
+        if ( bin_integrals is np.ndarray ) and ( bin_integrals.shape[ -1 ] == 1 ):
+            bin_integrals = bin_integrals[ :, 0 ]
 
         return bin_integrals
 
@@ -257,38 +278,21 @@ class RLF:
         fluxes = fluxes[ fluxes > 0 ]
 
         if vmax_method:
-            for flux, redshift, luminosity in tqdm( zip( fluxes, redshifts, luminosities ), desc='Calculating rlf...', total=fluxes.shape[ 0 ] ):
-                # index of the luminosity and redshift bin this object is in, as well as bounds
-                lum_bin = np.searchsorted( self.l_bins, luminosity ) - 1
-                z_bin = np.searchsorted( self.z_bins, redshift ) - 1
-
-                if lum_bin == -1 or lum_bin >= self.n_lum_bins or z_bin == -1 or z_bin >= self.n_z_bins:
-                    logger.debug( f'skipping object with s={flux}, z={redshift}, l={luminosity}' )
-                    continue
-
-                l_min, l_max = self.l_bins[ lum_bin ], self.l_bins[ lum_bin + 1 ]
-                z_min, z_max = self.z_bins[ z_bin ], self.z_bins[ z_bin + 1 ]
-
-                l_min = np.array( [ l_min ] )[ np.newaxis, : ]
-                l_max = np.array( [ l_max ] )[ np.newaxis, : ]
-
-                # find min & max of comoving volume for redshift bin
+            for i_z in range( self.n_z_bins ):
+                z_min, z_max = self.z_bins[ i_z ], self.z_bins[ i_z+1 ]
                 v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to( u.Mpc**3 ).value
+                redshift_mask = (redshifts[ :, np.newaxis ] >= z_min) & (redshifts[ :, np.newaxis ] < z_max)
 
-                # hack to reduce calc times if completeness is const over the integral
-                min_completeness = self.get_completeness_from_coord( v_max, l_min[ 0, 0 ], self.cosmo )
-                max_completeness = self.get_completeness_from_coord( v_min, l_max[ 0, 0 ], self.cosmo )
-                if min_completeness == max_completeness:
-                    Vmax_i_incllum = max_completeness * ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
-                elif False: #don't use monte carlo for now
-                    # monte carlo methods to evaluate integral C[s[V,l]] dV
-                    Vmax_i_incllum = self.monte_carlo_integral( v_min, v_max, l_min, l_max, self.cosmo, luminosity )
-                else:
-                    logger.info( f'Max completeness: {max_completeness}, Min completeness: {min_completeness}' )
-                    Vmax_i_incllum = ( max_completeness + min_completeness ) / 2 * ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
+                for i_l in range( self.n_lum_bins ):
+                    l_min, l_max = self.l_bins[ i_l ], self.l_bins[ i_l+1 ]
 
-                #logger.debug( f'Vmax_i = {Vmax_i}' )
-                self.phi[ z_bin, lum_bin ] += 1.0 / Vmax_i_incllum
+                    luminosity_mask = (luminosities[ :, np.newaxis ] >= l_min) & (luminosities[ :, np.newaxis ] < l_max)
+
+                    luminosities_in_bin = luminosities[ redshift_mask & luminosity_mask ]
+                    Vmaxs = self.monte_carlo_integral( v_min, v_max, l_min, l_max, luminosities_in_bin )
+
+                    self.phi[ i_z, i_l ] = 1.0 / ( np.log10( l_max ) - np.log10( l_min ) ) * np.sum( 1.0 / Vmaxs )
+                logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
         # otherwise, do Page & Carrera 2000 method
         else:
@@ -316,8 +320,8 @@ class RLF:
                 n_sources_in_lum_bins = np.sum( redshift_mask & luminosity_mask, axis=0 )
                 logger.debug( f"n_sources_in_lum_bins: {n_sources_in_lum_bins}" )
 
-                bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs, self.cosmo )
-                #bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs, cosmo, zvparams )
+                bin_integrals = self.monte_carlo_integral( v_min, v_max, l_mins, l_maxs )
+                #bin_integrals = self.simpson_integral( v_min, v_max, l_mins, l_maxs )
 
                 logger.debug( f"bin integrals: {bin_integrals}" )
 
