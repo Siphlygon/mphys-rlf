@@ -152,29 +152,42 @@ class CutoutPreprocessor:
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
         """
-        broken = []
-        snr_sigma = []
-        edge_max = []
+        image_lists = dataset['pixel_values'].values
 
-        # Compute flags for each image
-        for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
+        # filter nans from image_lists
+        image_lists = image_lists[~np.isnan(image_lists)]
 
-            # Guard clause here to check for NaN values before any other processing
-            if np.isnan(arr).any():
-                self.logger.warning("NaN values found in image. Marking as broken.")
-                broken.append(True)
-                snr_sigma.append(-99)
-                edge_max.append(-99)
-                continue
+        images = np.stack(image_lists, axis=0)
 
-            broken.append(self.identify_broken_source(arr))
-            snr_sigma.append(self.calculate_SNR_sigma(arr))
-            edge_max.append(self.calculate_edge_max(arr))
+        # Vectorised broken checks
+        has_nan = np.isnan(images).any(axis=(1, 2))  # shape (N,)
+        has_minus99 = (images == -99).any(axis=(1, 2))
+        all_zero = (images == 0).all(axis=(1, 2))
+        broken = has_nan | has_minus99 | all_zero
 
-        # Apply flags to the dataset
-        dataset["broken"] = broken
-        dataset["S/N_sigma"] = snr_sigma
-        dataset["edge_max"] = edge_max
+        # Vectorised edge max: compute max along the border for each image
+        top = images[:, 0, :].max(axis=1)
+        bottom = images[:, -1, :].max(axis=1)
+        left = images[:, 1:-1, 0].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
+        right = images[:, 1:-1, -1].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
+        edge_max_vals = np.maximum.reduce([top, bottom, left, right])
+        global_max = images.max(axis=(1, 2))
+        # avoid division by zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
+
+        # write back vector results
+        dataset['broken'] = broken
+        dataset['edge_max'] = edge_ratio
+
+        # S/N per-image: still compute serially as per-image recursion
+        snr_list = []
+        for i, arr in enumerate(images):
+            if broken[i]:
+                snr_list.append(-99)
+            else:
+                snr_list.append(self.calculate_SNR_sigma(arr))
+        dataset['S/N_sigma'] = snr_list
 
         return dataset
 
@@ -219,6 +232,7 @@ class CutoutPreprocessor:
             hdu.header["CUNIT2"] = "deg"
 
             # Add an index so the original header information can be restored from PrimaryHDU
+            #todo: you should probably try to extract the index from the row, not the iteration index
             hdu.header["CATIDX"] = idx
             hdu_list.append(hdu)
 
