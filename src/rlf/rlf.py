@@ -219,13 +219,13 @@ class RLF:
 
         # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
         if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
-            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max[ 0, : ] ) - np.log10( l_min[ 0, : ] ) )
+            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max[ 0, : ] / l_min[ 0, : ] ) )
         else:
-            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
+            bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max / l_min ) )
 
-        # if n_integrals is 1, cut out the last axis so we just return a 1d array of shape (n_lum_bins,)
+        # if n_integrals is 1, cut out the last axis so we just return a scalar
         if isinstance( bin_integrals, np.ndarray ) and ( bin_integrals.shape[ -1 ] == 1 ):
-            bin_integrals = bin_integrals[ :, 0 ]
+            bin_integrals = bin_integrals[ 0 ]
 
         return bin_integrals
 
@@ -300,7 +300,7 @@ class RLF:
 
                     Vmaxs = self.monte_carlo_integral( v_min, v_max, l_min, l_max, luminosities_in_bin )
 
-                    self.phi[ i_z, i_l ] = 1.0 / ( np.log10( l_max ) - np.log10( l_min ) ) * np.sum( 1.0 / Vmaxs )
+                    self.phi[ i_z, i_l ] = 1.0 / ( np.log10( l_max / l_min ) ) * np.sum( 1.0 / Vmaxs )
                 logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
         # otherwise, do Page & Carrera 2000 method
