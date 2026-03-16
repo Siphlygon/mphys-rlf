@@ -194,16 +194,16 @@ class RLF:
 
             if lum.ndim == 1:
                 lums = lum[ np.newaxis, : ]
-                lums = np.broadcast_to( lums, (self.n_mc_pts, lums.shape[ 1 ]) )
             elif lum.ndim == 2:
                 lums = lum
             else: raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
-        
-        else: #lum is float
-            if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
-                lums = np.broadcast_to( lum, (self.n_mc_pts, l_min.shape[ 1 ] ) )
-            else:
-                lums = np.broadcast_to( lum, (self.n_mc_pts, 1) )
+       
+        #if lum is a float, broadcasts will work fine anyways 
+        #else: #lum is float
+        #    if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
+        #        lums = np.broadcast_to( lum, (self.n_mc_pts, l_min.shape[ 1 ] ) )
+        #    else:
+        #        lums = np.broadcast_to( lum, (self.n_mc_pts, 1) )
 
         # lums now definitely has shape (self.n_mc_pts, n_integrals)
 
@@ -226,6 +226,14 @@ class RLF:
         # if n_integrals is 1, cut out the last axis so we just return a scalar
         if isinstance( bin_integrals, np.ndarray ) and ( bin_integrals.shape[ -1 ] == 1 ):
             bin_integrals = bin_integrals[ 0 ]
+
+        if not isinstance( bin_integrals, np.ndarray ) and bin_integrals == 0:
+            logger.info( 'bin_integral is 0 when it probably shouldn\'t be' )
+            logger.debug( f'lums={lums}, shape={lums.shape}, volumes={random_volumes}, shape={random_volumes.shape}' )
+        elif np.any( bin_integrals == 0 ):
+            logger.info( f'{bin_integrals[ bin_integrals == 0 ].shape[ 0 ]} bin integrals are 0 when they probably shouldn\'t be' )
+            logger.debug( f'bin_integrals={( bin_integrals )}' )
+            logger.debug( f'lums={lums}, shape={lums.shape}, min_vol={np.min( random_volumes )}, min_z={z_from_v( np.min( random_volumes ), *self.zvparams )}, max_fluxes={self.flux_from_coordinate( np.min( random_volumes ), lums )}' )
 
         return bin_integrals
 
@@ -251,22 +259,24 @@ class RLF:
             # conversion from comoving volume to redshift
             redshifts = z_from_v( volumes, *self.zvparams )
 
-        if luminosities is None:
-            # use the redshift to calculate luminosity distance and luminosity
-            luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-            luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
-        elif debug_flux_lum_relation:
+        # use the redshift to calculate luminosity distance and luminosity
+        # because of errors on the margin, disregard passed luminosity
+        luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
+        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+
+        if debug_flux_lum_relation:
             #ensure luminosities and redshifts are consistent with total flux
             # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
             luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
             flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
             logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
-            plt.scatter( flux_luminosities, luminosities, s=0.001 )
-            plt.yscale( 'log' )
+            residuals = flux_luminosities / luminosities
+            plt.scatter( flux_luminosities, residuals, s=0.001 )
+            #plt.yscale( 'log' )
             plt.xscale( 'log' )
             plt.title( 'Luminosity from flux vs catalog' )
             plt.xlabel( 'luminosity from flux' )
-            plt.ylabel( 'luminosity from catalog' )
+            plt.ylabel( 'luminosity from catalog / luminosity from flux' )
             plt.grid()
             plt.savefig( 'debugdiff.png' )
             plt.figure()
@@ -345,8 +355,16 @@ class RLF:
 
                 logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
+        # sky coverage completeness factor
+        self.phi /= 5700 / 41253 # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
+
         # plot the resulting graph
-        self.plot_rlf( f'1/Vmax RLF - {self.n_mc_pts} pts per source', colors )
+        title = ''
+        if vmax_method:
+            title = f'1/Vmax RLF - {self.n_mc_pts} pts per bin'
+        else:
+            title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
+        self.plot_rlf( title, colors )
 
     def plot_rlf( self, 
                   title: str,
@@ -356,15 +374,16 @@ class RLF:
                   output: str = 'rlf.png' ):
         logger.info( "plotting..." )
         plt.figure( figsize=(10,10) )
+        bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
         for i_z in range( self.phi.shape[0] ):
             specific_phi = self.phi[i_z]
             mask = specific_phi > 0
-            plt.plot( self.l_bins[ :-1][ mask ], specific_phi[ mask ], color=colors[ i_z ],
+            plt.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
                      marker='o',
                      label=f'{self.z_bins[ i_z ]:.2f}<z<{self.z_bins[ i_z + 1 ]:.2f}')
         plt.title( title )
         plt.xscale( 'log' )
-        plt.xlabel( 'L144 * Hz / W')
+        plt.xlabel( 'L144 * Hz / W' )
         plt.yscale( 'log' )
         plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
         plt.xlim( xlim )
