@@ -120,7 +120,7 @@ class RLF:
             z = z_from_v( v, *self.zvparams )
 
         d_l = self.cosmo.luminosity_distance(z).to(u.m).value
-        s = l / (4 * np.pi * d_l) / ( 1e-26 * d_l ) * (1+z)**(1+self.spectral_index)
+        s = 1e26 * l / (4 * np.pi * d_l**2) * (1+z)**(1+self.spectral_index)
         return s
     
     def one_dim_simpsons_rule( self, f, a, b, n ):
@@ -183,13 +183,13 @@ class RLF:
         :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method
         """
         if lum is None:
-            if l_min is np.ndarray and l_max is np.ndarray:
+            if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
                 lums = 10**np.random.uniform(np.log10(l_min[ 0, : ]), np.log10(l_max[ 0, : ]), size=(self.n_mc_pts, l_min.shape[ 1 ]))
             else:
                 lums = 10**np.random.uniform(np.log10(l_min), np.log10(l_max), size=(self.n_mc_pts, l_min.shape[ 1 ]))
 
-        elif lum is np.ndarray:
-            if l_min is np.ndarray and l_max is np.ndarray:
+        elif isinstance( lum, np.ndarray ):
+            if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
                 raise AssertionError( 'Cannot have lum and l_min/max as nparrays' )
 
             if lum.ndim == 1:
@@ -200,7 +200,7 @@ class RLF:
             else: raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
         
         else: #lum is float
-            if l_min is np.ndarray and l_max is np.ndarray:
+            if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
                 lums = np.broadcast_to( lum, (self.n_mc_pts, l_min.shape[ 1 ] ) )
             else:
                 lums = np.broadcast_to( lum, (self.n_mc_pts, 1) )
@@ -211,20 +211,20 @@ class RLF:
         # Now generate random points in this bin; so random in volume and in luminosity, and then
         # compare to the completeness function to find the function of RLF in that bin.
         # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
-        random_volumes = np.random.uniform(v_min, v_max, lums.shape)
+        random_volumes = np.random.uniform(v_min, v_max, self.n_mc_pts)[ :, np.newaxis ]
 
         # weight each point by Completeness[ flux ] and add to total monte-carlo integral
         # for now, placeholder, assume flux cutoff at 1 mJy
         bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums ), axis=0) / self.n_mc_pts
 
         # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
-        if l_min is np.ndarray and l_max is np.ndarray:
+        if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
             bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max[ 0, : ] ) - np.log10( l_min[ 0, : ] ) )
         else:
             bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max ) - np.log10( l_min ) )
 
         # if n_integrals is 1, cut out the last axis so we just return a 1d array of shape (n_lum_bins,)
-        if ( bin_integrals is np.ndarray ) and ( bin_integrals.shape[ -1 ] == 1 ):
+        if isinstance( bin_integrals, np.ndarray ) and ( bin_integrals.shape[ -1 ] == 1 ):
             bin_integrals = bin_integrals[ :, 0 ]
 
         return bin_integrals
@@ -281,14 +281,23 @@ class RLF:
             for i_z in range( self.n_z_bins ):
                 z_min, z_max = self.z_bins[ i_z ], self.z_bins[ i_z+1 ]
                 v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to( u.Mpc**3 ).value
-                redshift_mask = (redshifts[ :, np.newaxis ] >= z_min) & (redshifts[ :, np.newaxis ] < z_max)
+                redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
+                logger.debug( f'{luminosities[ redshift_mask ].shape[ 0 ]} sources in z: {z_min}-{z_max}' )
 
                 for i_l in range( self.n_lum_bins ):
                     l_min, l_max = self.l_bins[ i_l ], self.l_bins[ i_l+1 ]
 
-                    luminosity_mask = (luminosities[ :, np.newaxis ] >= l_min) & (luminosities[ :, np.newaxis ] < l_max)
+                    luminosity_mask = (luminosities >= l_min) & (luminosities < l_max)
 
                     luminosities_in_bin = luminosities[ redshift_mask & luminosity_mask ]
+
+                    # for n=0, the RLF should be 0 regardless, and also it breaks the code so just ignore it
+                    if not luminosities_in_bin.size:
+                        logger.debug( f'no sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
+                        self.phi[ i_z, i_l ] = 0
+                        continue
+                    logger.debug( f'{luminosities_in_bin.shape[ 0 ]} sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
+
                     Vmaxs = self.monte_carlo_integral( v_min, v_max, l_min, l_max, luminosities_in_bin )
 
                     self.phi[ i_z, i_l ] = 1.0 / ( np.log10( l_max ) - np.log10( l_min ) ) * np.sum( 1.0 / Vmaxs )
