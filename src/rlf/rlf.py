@@ -87,6 +87,7 @@ class RLF:
 
         # init rlf values as zero
         self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
+        self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
 
 
     def get_completeness(self, integ_fluxes, completeness_path=None):
@@ -251,6 +252,7 @@ class RLF:
 
         # reset phi in case it's not our first time calling this
         self.phi = np.zeros( (self.n_z_bins, self.n_lum_bins) )
+        self.counts = np.zeros( (self.n_z_bins, self.n_lum_bins) )
 
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
@@ -304,13 +306,13 @@ class RLF:
                     # for n=0, the RLF should be 0 regardless, and also it breaks the code so just ignore it
                     if not luminosities_in_bin.size:
                         logger.debug( f'no sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
-                        self.phi[ i_z, i_l ] = 0
                         continue
                     logger.debug( f'{luminosities_in_bin.shape[ 0 ]} sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
 
                     Vmaxs = self.monte_carlo_integral( v_min, v_max, l_min, l_max, luminosities_in_bin )
 
-                    self.phi[ i_z, i_l ] = 1.0 / ( np.log10( l_max / l_min ) ) * np.sum( 1.0 / Vmaxs )
+                    self.phi[ i_z, i_l ] = np.sum( 1.0 / Vmaxs ) #log bin size included in Vmaxs from monte_carlo_integral
+                    self.counts[ i_z, i_l ] = luminosities_in_bin.shape[ 0 ]
                 logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
         # otherwise, do Page & Carrera 2000 method
@@ -352,6 +354,7 @@ class RLF:
 
                 # now we have phi_est as given by Page & Carrera 2000
                 self.phi[i_z] = n_sources_in_lum_bins / bin_integrals
+                self.counts[ i_z ] = n_sources_in_lum_bins
 
                 logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
@@ -377,17 +380,19 @@ class RLF:
         bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
         for i_z in range( self.phi.shape[0] ):
             specific_phi = self.phi[i_z]
-            mask = specific_phi > 0
+            specific_counts = self.counts[i_z]
+            mask = specific_counts >= 7
             plt.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
                      marker='o',
                      label=f'{self.z_bins[ i_z ]:.2f}<z<{self.z_bins[ i_z + 1 ]:.2f}')
+            plt.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
         plt.title( title )
         plt.xscale( 'log' )
         plt.xlabel( 'L144 * Hz / W' )
         plt.yscale( 'log' )
         plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
-        plt.xlim( xlim )
-        plt.ylim( ylim )
+        #plt.xlim( xlim )
+        #plt.ylim( ylim )
         plt.legend()
         plt.savefig( output )
         logger.info( "saved figure" )
