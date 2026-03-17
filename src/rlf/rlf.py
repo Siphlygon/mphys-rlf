@@ -246,6 +246,7 @@ class RLF:
                             redshifts = None, 
                             luminosities = None,
                             debug_flux_lum_relation: bool = False,
+                            plot_rlf: bool = True,
                             vmax_method: bool = False ):
         """
         Calculate the Radio Luminosity Function, either using the Page & Carrera 2000 method or
@@ -366,41 +367,50 @@ class RLF:
         # sky coverage completeness factor
         self.phi /= 5700 / 41253 # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
 
-        # plot the resulting graph
-        title = ''
-        if vmax_method:
-            title = f'1/Vmax RLF - {self.n_mc_pts} pts per bin'
-        else:
-            title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
-        self.plot_rlf( title, colors )
+        if plot_rlf:
+            # plot the resulting graph
+            title = ''
+            output = ''
+            if vmax_method:
+                title = f'1/Vmax RLF - {self.n_mc_pts} pts per bin'
+                output = 'rlf_vmax.png'
+            else:
+                title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
+                output = 'rlf_page_and_carrera.png'
+            self.plot_rlf( title, colors, output=output )
 
     def plot_rlf( self, 
                   title: str,
                   colors: list,
+                  ax = None,
                   ylim: tuple = [ 1e-9, 3e-4 ],
                   xlim: tuple = [ 1e21, 1e29 ],
                   output: str = 'rlf.png' ):
-        logger.info( "plotting..." )
-        plt.figure( figsize=(10,10) )
+        self_contained = ax is None
+        if self_contained:
+            logger.info( "plotting self contained rlf" )
+            fig, ax = plt.subplots( figsize=(10,10) )
+
         bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
         for i_z in range( self.phi.shape[0] ):
             specific_phi = self.phi[i_z]
             specific_counts = self.counts[i_z]
             mask = specific_counts >= 7
-            plt.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
+            ax.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
                      marker='o',
                      label=f'{self.z_bins[ i_z ]:.2f}<z<{self.z_bins[ i_z + 1 ]:.2f}')
-            plt.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
-        plt.title( title )
-        plt.xscale( 'log' )
-        plt.xlabel( 'L144 * Hz / W' )
-        plt.yscale( 'log' )
-        plt.ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
-        #plt.xlim( xlim )
-        #plt.ylim( ylim )
-        plt.legend()
-        plt.savefig( output )
-        logger.info( "saved figure" )
+            ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
+        ax.set_title( title )
+        ax.set_xscale( 'log' )
+        ax.set_xlabel( 'L144 * Hz / W' )
+        ax.set_yscale( 'log' )
+        ax.set_ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
+        ax.set_xlim( xlim )
+        ax.set_ylim( ylim )
+        ax.legend()
+        if self_contained:
+            plt.savefig( output )
+            logger.info( f"saved figure to {output}" )
 
 def mag_to_flux_w3( mag, default_spectral_index = -1 ):
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
@@ -420,6 +430,7 @@ def mag_to_flux_w2( mag, default_spectral_index = -1 ):
 
 if __name__ == "__main__":
     rlf_calculator = RLF()
+    vmax_rlf = RLF()
     catalog = HardcastleCatalogue( resolved_only=False )
 
     logger.debug( "getting catalog data" )
@@ -483,6 +494,18 @@ if __name__ == "__main__":
     fluxes = fluxes[ agn_mask ]
     luminosities = luminosities[ agn_mask ]
 
+    fig, axes = plt.subplots( ncols=2, figsize=(20, 10) )
+    ax_vmax, ax_pnc = axes
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
-    rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, vmax_method=True )
+    rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, plot_rlf=False, vmax_method=False )
+    vmax_rlf.calculate_rlf( fluxes, redshifts, luminosities, False, plot_rlf=False, vmax_method=True )
+
+    rlf_calculator.plot_rlf( f'Page & Carrera RLF - {rlf_calculator.n_mc_pts} pts per bin', colors, ax_pnc )
+    vmax_rlf.plot_rlf( f'1/Vmax RLF - {vmax_rlf.n_mc_pts} pts per bin', colors, ax_vmax )
+
+    plt.savefig( 'rlfs.png' )
+    plt.show()
+
+    logger.info( 'done' )
+    
