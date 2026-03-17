@@ -430,7 +430,7 @@ if __name__ == "__main__":
     wise_2_mag = catalog.get_values( Source.WISE2Mag )
     logger.debug( "done" )
 
-    mask = ( fluxes > 0 ) & ( wise_3_mag > 0 ) & ( wise_2_mag > 0 ) & ~np.isnan( fluxes ) & ~np.isnan( wise_3_mag ) & ~np.isnan( wise_2_mag ) & ~np.isnan( redshifts ) & ~np.isnan( luminosities ) & ( fluxes > 1.1e-3 )
+    mask = ( fluxes > 0 ) & ( wise_3_mag > 0 ) & ( wise_2_mag > 0 ) & ~np.isnan( fluxes ) & ~np.isnan( wise_3_mag ) & ~np.isnan( wise_2_mag ) & ~np.isnan( redshifts ) & ~np.isnan( luminosities ) & ( fluxes > 1.1e-3 ) & ( redshifts > 0.01 )
     redshifts = redshifts[ mask ]
     luminosities = luminosities[ mask ]
     wise_3_mag = wise_3_mag[ mask ]
@@ -451,12 +451,17 @@ if __name__ == "__main__":
     wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) - rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
-    if False:
-        wise_3_linspace = np.linspace( -34, -18, 10000 )
-        agn_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
+    rqq_xpt = -27.923076923076923 #mag
+    rqq_ypt = 25.563106796116504 #log10( lum )
+    if True:
+        wise_3_linspace = np.linspace( -34, -18, 1000 )
+        wise_3_linspace_below_27 = np.linspace( -34, -27, 1000 )
+        sfg_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
+        rqq_lum_cutoff = 10**( -( wise_3_linspace_below_27 - rqq_xpt ) / 3.4844629455909923 + rqq_ypt )
         plt.figure( figsize=(8,8) )
         plt.scatter( wise_3_absmag[ wise_3_absmag < -19 ], luminosities[ wise_3_absmag < -19 ], s=0.0001 )
-        plt.plot( wise_3_linspace, agn_lum_cutoff, color='r' )
+        plt.plot( wise_3_linspace, sfg_lum_cutoff, color='r' )
+        plt.plot( wise_3_linspace_below_27, rqq_lum_cutoff, color='m' )
         plt.xlabel( 'wise 3 absolute magnitude' )
         plt.ylabel( 'L144' )
         plt.title( 'L144 vs W3 AbsMag Relation' )
@@ -469,12 +474,14 @@ if __name__ == "__main__":
 
 
     sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) )
+    rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 )
+    agn_mask = ~sfg_mask & ~rqq_mask
 
-    logger.info( f'# agn: {redshifts[ ~sfg_mask ].shape[ 0 ]} - # sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - total: {redshifts.shape[ 0 ]}' )
+    logger.info( f'# agn: {redshifts[ agn_mask ].shape[ 0 ]} - # sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - # rqq: {redshifts[ rqq_mask ].shape[ 0 ]} - total: {redshifts.shape[ 0 ]}' )
 
-    redshifts = redshifts[ ~sfg_mask ]
-    fluxes = fluxes[ ~sfg_mask ]
-    luminosities = luminosities[ ~sfg_mask ]
+    redshifts = redshifts[ agn_mask ]
+    fluxes = fluxes[ agn_mask ]
+    luminosities = luminosities[ agn_mask ]
 
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
