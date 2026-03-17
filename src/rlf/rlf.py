@@ -7,7 +7,7 @@ from utils.img_data_arrays import ImageDataArrays
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from scipy.stats import loguniform
-from image_downloading.hardcastle_catalogue import Source, HardcastleCatalogue
+from hardcastle_catalogue import Source, HardcastleCatalogue
 from utils.logging import get_logger
 import logging
 from tqdm import tqdm
@@ -451,7 +451,7 @@ if __name__ == "__main__":
     wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) - rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
-    if True:
+    if False:
         wise_3_linspace = np.linspace( -34, -18, 10000 )
         agn_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
         plt.figure( figsize=(8,8) )
@@ -468,13 +468,14 @@ if __name__ == "__main__":
         logger.debug( "saved lum_vs_w3.png" )
 
 
-    agn_mask = luminosities > 10**( 14 - wise_3_absmag / 2.5 )
+    sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) )
 
-    redshifts = redshifts[ agn_mask ]
-    fluxes = fluxes[ agn_mask ]
-    luminosities = luminosities[ agn_mask ]
+    logger.info( f'# agn: {redshifts[ ~sfg_mask ].shape[ 0 ]} - # sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - total: {redshifts.shape[ 0 ]}' )
 
-    logger.info( f'number of agn sources: {redshifts.shape[ 0 ]}' )
+    redshifts = redshifts[ ~sfg_mask ]
+    fluxes = fluxes[ ~sfg_mask ]
+    luminosities = luminosities[ ~sfg_mask ]
+
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
     rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, vmax_method=True )
