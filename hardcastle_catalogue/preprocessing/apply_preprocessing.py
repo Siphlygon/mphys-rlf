@@ -1,5 +1,3 @@
-from calendar import day_abbr
-
 from astropy.io import fits
 from tqdm import tqdm
 import numpy as np
@@ -7,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 from astropy.stats import sigma_clipped_stats
 import logging
+import time
 
 import utils.logging
 import utils.paths as pths
@@ -124,20 +123,27 @@ class CutoutPreprocessor:
                     dataset.at[i, 'incomplete'] = True
 
         # Filter out the indices with incomplete coverage
+        self.logger.info("Building image lists for vectorised computation...")
         image_lists = dataset[dataset['incomplete'] == False]['pixel_values'].values
 
         # Stack for numpy
         images = np.stack(image_lists, axis=0)
+        del image_lists
 
         # Vectorised broken checks
         # Checks for the image having any NAN pixels, any -99 (code for missing), or is all 0s
+        self.logger.info(f"Creating vectorised flags for broken images...")
+        start_time = time.time()
         has_nan = np.isnan(images).any(axis=(1, 2))  # shape (N,)
         has_minus99 = (images == -99).any(axis=(1, 2))
         all_zero = (images == 0).all(axis=(1, 2))
         broken = has_nan | has_minus99 | all_zero
+        self.logger.info(f"Broken image flags created in {time.time() - start_time} seconds")
 
         # Vectorised edge max
         # Computes the ratio of the maximum border pixel to the image max; too high implies source cutoff by the cutout
+        self.logger.info(f"Creating vectorised flags for edge max...")
+        start_time = time.time()
         top = images[:, 0, :].max(axis=1)
         bottom = images[:, -1, :].max(axis=1)
         left = images[:, 1:-1, 0].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
@@ -147,18 +153,19 @@ class CutoutPreprocessor:
         # avoid division by zero
         with np.errstate(divide='ignore', invalid='ignore'):
             edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
-
-        # write back vector results
-        dataset['broken'] = broken
-        dataset['edge_max'] = edge_ratio
+        self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
         # S/N_sigma checks done per-image, as it's a recursive and changing threshold
         snr_list = []
-        for i, arr in enumerate(images):
+        for i, arr in enumerate(tqdm(images, desc="Calculating S/N_sigma per image...")):
             if broken[i]:
                 snr_list.append(-99)
             else:
                 snr_list.append(self.calculate_SNR_sigma(arr))
+
+        # write back results
+        dataset['broken'] = broken
+        dataset['edge_max'] = edge_ratio
         dataset['S/N_sigma'] = snr_list
 
         return dataset
