@@ -10,6 +10,10 @@ import utils.logging
 import utils.paths as pths
 
 class CutoutPreprocessor:
+    """
+    A class that takes the full resolved source from the Hardcastle 2023 dataset and applies pre-processing steps to
+    select images suitable for training the diffusion model on.
+    """
 
     def __init__(self):
         self.logger = utils.logging.get_logger('CutoutPreprocessor', logging.DEBUG)
@@ -58,28 +62,7 @@ class CutoutPreprocessor:
 
         return dataset, catalogue_info
 
-    # ---------- THRESHOLDS ----------
-
-
     # ---------- FLAGS ----------
-
-    def identify_broken_source(self, image : np.ndarray) -> bool:
-        """
-        Identifies whether an image is a "broken source" based on the presence of blank values or -99 values.
-
-        :param image: The image to check for being a broken source, represented as a 2D numpy array of pixel values.
-        :return: Whether the image is identified as a broken source (True) or not (False).
-        """
-
-        # The criterion for broken source they state in the paper is NaN values or blank image values. The actual
-        # way they compute "broken" is by seeing if there are two pixels which share the minimum value in any dataset
-        # We will follow the paper methodology
-
-        # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
-
-        return (image == -99).any() or (image == 0).all()
-
-
     """
     Code below modified from the original LOFAR-diffusion repository, found here:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
@@ -121,28 +104,6 @@ class CutoutPreprocessor:
         # Apply the recursive threshold
         return apply_src_threshold(threshold)
 
-    """
-    Code below modified from the original LOFAR-diffusion repository, found here:
-    https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
-    """
-    def calculate_edge_max(self, image : np.ndarray) -> float:
-        """
-        Calculates the maximum pixel value among the edge pixels of the image.
-
-        :param image: The image to calculate the edge maximum for, shape (80, 80).
-        :return: The maximum pixel value among the edge pixels of the image.
-        """
-        # currently only considering the maximum value of the edge pixels, frankly I think there could be grounds to
-        # expand it to consider e.g., if the maximum pixel lies within a defined central region, as a way of finding
-        # poorly centred sources, but for now we will just follow the paper
-
-        # Find the edge max
-        edge_max = max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
-
-        # Return it as a ratio to the maximum pixel value in the image
-        return edge_max / image.max()
-
-
     # ---------- MAIN PROCESSING ----------
     def compute_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
         """
@@ -160,12 +121,14 @@ class CutoutPreprocessor:
         images = np.stack(image_lists, axis=0)
 
         # Vectorised broken checks
+        # Checks for the image having any NAN pixels, any -99 (code for missing), or is all 0s
         has_nan = np.isnan(images).any(axis=(1, 2))  # shape (N,)
         has_minus99 = (images == -99).any(axis=(1, 2))
         all_zero = (images == 0).all(axis=(1, 2))
         broken = has_nan | has_minus99 | all_zero
 
-        # Vectorised edge max: compute max along the border for each image
+        # Vectorised edge max
+        # Computes the ratio of the maximum border pixel to the image max; too high implies source cutoff by the cutout
         top = images[:, 0, :].max(axis=1)
         bottom = images[:, -1, :].max(axis=1)
         left = images[:, 1:-1, 0].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
@@ -180,7 +143,7 @@ class CutoutPreprocessor:
         dataset['broken'] = broken
         dataset['edge_max'] = edge_ratio
 
-        # S/N per-image: still compute serially as per-image recursion
+        # S/N_sigma checks done per-image, as it's a recursive and changing threshold
         snr_list = []
         for i, arr in enumerate(images):
             if broken[i]:
@@ -232,8 +195,7 @@ class CutoutPreprocessor:
             hdu.header["CUNIT2"] = "deg"
 
             # Add an index so the original header information can be restored from PrimaryHDU
-            #todo: you should probably try to extract the index from the row, not the iteration index
-            hdu.header["CATIDX"] = idx
+            hdu.header["CATIDX"] = row['index']
             hdu_list.append(hdu)
 
         hdul = fits.HDUList(hdu_list)
@@ -241,7 +203,10 @@ class CutoutPreprocessor:
         hdul.writeto(output_file_path, overwrite=True)
         self.logger.info(f'Final dataset saved to {output_file_path}.')
 
-    def apply_preprocessing(self):
+    def apply_preprocessing(self, output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+        """
+        Applies the pre-processing steps in this class, and filters out sources which do not pass.
+        """
         dataset, cat_info = self.load_initial_dataset()
 
         # Compute the flags for each image in the dataset
@@ -267,7 +232,7 @@ class CutoutPreprocessor:
         clean_cat_info = cat_info[indices]
 
         # Save the cleaned dataset to a FITS file
-        self.save_clean_dataset(clean_dataset, clean_cat_info)
+        self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
 
 
 if __name__ == "__main__":
