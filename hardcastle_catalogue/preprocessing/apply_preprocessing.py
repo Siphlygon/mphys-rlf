@@ -119,7 +119,14 @@ class CutoutPreprocessor:
         return apply_src_threshold(threshold)
 
     def identify_incomplete_image(self, image: np.ndarray) -> bool:
-        pass
+        """
+        Identifies whether there is incomplete coverage in the target cutout, which is categorised by an array size
+        that is not the standard (80x80)
+
+        :param image: The image to calculate the S/N_sigma ratio for.
+        :return: Whether the image is incomplete or not.
+        """
+        return image.shape != (80, 80)
 
     def identify_broken_source(self, image: np.ndarray) -> bool:
         """
@@ -164,7 +171,7 @@ class CutoutPreprocessor:
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
 
-        This is similar processesing to compute_iterative_flags, except it's vectorised, which is expected to be better
+        This is similar processing to compute_iterative_flags, except it's vectorised, which is expected to be better
         performing on high-memory nodes.
 
         :param dataset: The dataset containing the pixel values and other information for each source.
@@ -244,32 +251,44 @@ class CutoutPreprocessor:
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
         """
+        incomplete = []
         broken = []
         snr_sigma = []
         edge_max = []
 
         # Compute flags for each image
-        for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
+        for idx, img in enumerate(tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset")):
+            # Guard clause to test for incomplete images
+            if self.identify_incomplete_image(img):
+                self.logger.warning(f"Incomplete sky coverage found in image {idx}.")
+                incomplete.append(True)
+                broken.append(False)
+                snr_sigma.append(-99)
+                edge_max.append(-99)
+                continue
+            incomplete.append(False)
 
             # Guard clause here to check for NaN values before any other processing
-            if np.isnan(arr).any():
-                self.logger.warning("NaN values found in image. Marking as broken.")
+            if np.isnan(img).any():
+                self.logger.warning(f"NaN values found in image {idx}. Marking as broken.")
                 broken.append(True)
                 snr_sigma.append(-99)
                 edge_max.append(-99)
                 continue
 
-            broken.append(self.identify_broken_source(arr))
-            snr_sigma.append(self.calculate_SNR_sigma(arr))
-            edge_max.append(self.calculate_edge_max(arr))
+            broken.append(self.identify_broken_source(img))
+            snr_sigma.append(self.calculate_SNR_sigma(img))
+            edge_max.append(self.calculate_edge_max(img))
 
         # Apply flags to the dataset
+        dataset["incomplete"] = incomplete
         dataset["broken"] = broken
         dataset["S/N_sigma"] = snr_sigma
         dataset["edge_max"] = edge_max
 
         return dataset
 
+    # ---------- FINAL PRODUCT ----------
     def save_clean_dataset(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
@@ -361,4 +380,4 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing(vectorised=True)
+    preprocessor.apply_preprocessing(vectorised=False)
