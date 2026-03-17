@@ -27,6 +27,8 @@ class Source(Enum):
     Luminosity = "L_144"    # Luminosity at 144 MHz in W/Hz for alpha=0.7
     Redshift = "z_best"    # Best redshift (spectroscopic if available, otherwise photometric)
     RMS = "Isl_rms"    # RMS noise in the island containing the source in mJy/beam
+    WISE3Mag = "mag_w3" # magnitude in the wise band 3
+    WISE2Mag = "mag_w2" # magnitude in the wise band 2
 
 
 class HardcastleCatalogue:

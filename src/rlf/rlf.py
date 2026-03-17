@@ -12,6 +12,7 @@ from utils.logging import get_logger
 import logging
 from tqdm import tqdm
 from utils.fitfunctions import sigmoid
+import kcorrect.kcorrect
 
 logger = get_logger( __name__, logging.DEBUG )
 
@@ -121,7 +122,7 @@ class RLF:
             z = z_from_v( v, *self.zvparams )
 
         d_l = self.cosmo.luminosity_distance(z).to(u.m).value
-        s = 1e26 * l / (4 * np.pi * d_l**2) * (1+z)**(1+self.spectral_index)
+        s = 1e26 * l / (4 * np.pi * d_l**2) * self.k_corr_factor( z )
         return s
     
     def one_dim_simpsons_rule( self, f, a, b, n ):
@@ -172,16 +173,11 @@ class RLF:
         """
         Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
 
-        lum is a 2-dim array with shape
-        (n_mc_pts, n_integrals)
-
-        where n_integrals is any of 1 (in the case of l_min/max being floats and lum being None or float), l_min/max.shape[ 1 ] (in the case of l_min/max being passed as arrays), or lum.shape[ 0 ] (in the case of lum being passed as an array)
-        
         :param v_min: Bin volume minimum
         :param v_max: Bin volume maximum
-        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins) or float
-        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins) or float
-        :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method
+        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins) or float. To use more than one lum bin requires lum = None
+        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins) or float. To use more than one lum bin requires lum = None
+        :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method. Float for one integral of that luminosity, or array of shape (1, n_integrals) or (n_integrals), or none to use uniform logluminosities (Page & Carrera 2000 method).
         """
         if lum is None:
             if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
@@ -199,26 +195,16 @@ class RLF:
                 lums = lum
             else: raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
        
-        #if lum is a float, broadcasts will work fine anyways 
-        #else: #lum is float
-        #    if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
-        #        lums = np.broadcast_to( lum, (self.n_mc_pts, l_min.shape[ 1 ] ) )
-        #    else:
-        #        lums = np.broadcast_to( lum, (self.n_mc_pts, 1) )
-
         # lums now definitely has shape (self.n_mc_pts, n_integrals)
 
         # -- MONTE CARLO METHOD ---
-        # Now generate random points in this bin; so random in volume and in luminosity, and then
-        # compare to the completeness function to find the function of RLF in that bin.
-        # random_fluxes has shape (self.n_mc_pts, n_lum_bins) for compat w/ np.random.uniform
+        # Now generate random points in volume space and either use given luminosities or random luminosities within the bin(s)
+        # evaluate the completeness at each point to determine the integral C[S[v,L]] dV dlog10L from v=(v_min, v_max) and l=(l_min, l_max)
+        # random_volumes has shape (self.n_mc_pts, 1) while lums has shape (1, n_integrals)
         random_volumes = np.random.uniform(v_min, v_max, self.n_mc_pts)[ :, np.newaxis ]
-
-        # weight each point by Completeness[ flux ] and add to total monte-carlo integral
-        # for now, placeholder, assume flux cutoff at 1 mJy
         bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums ), axis=0) / self.n_mc_pts
 
-        # divide by the luminosity-volume bin area so the result is / MPc^3 / (W/Hz)
+        # divide by the log luminosity-volume bin area so the result is / MPc^3 / log10(W/Hz)
         if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
             bin_integrals *= ( v_max - v_min ) * ( np.log10( l_max[ 0, : ] / l_min[ 0, : ] ) )
         else:
@@ -237,6 +223,23 @@ class RLF:
             logger.debug( f'lums={lums}, shape={lums.shape}, min_vol={np.min( random_volumes )}, min_z={z_from_v( np.min( random_volumes ), *self.zvparams )}, max_fluxes={self.flux_from_coordinate( np.min( random_volumes ), lums )}' )
 
         return bin_integrals
+
+    def k_corr_factor( self, redshift, mag_space: bool = False, spectral_index = None ):
+        """
+        Returns the k-correction factor for one or more objects at given redshifts
+
+        mag_space: bool = False
+        - whether or not to give the k correction in magnitude space (-2.5 * log10( k_corr_lum_space )), default lum space
+        spectral_index = None
+        - override for spectral index to use instead of self.spectral_index, broadcastable with redshift
+        """
+        if spectral_index is None:
+            spectral_index = self.spectral_index
+        k_corr_lum_space = ( 1 + redshift ) ** ( 1 + spectral_index )
+        if not mag_space:
+            return k_corr_lum_space
+        else:
+            return -2.5 * np.log10( k_corr_lum_space )
 
     def calculate_rlf( self, 
                             fluxes,
@@ -264,17 +267,19 @@ class RLF:
         # use the redshift to calculate luminosity distance and luminosity
         # because of errors on the margin, disregard passed luminosity
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / self.k_corr_factor( redshifts ) # W/Hz
 
         if debug_flux_lum_relation:
             #ensure luminosities and redshifts are consistent with total flux
             # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
             luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / ( 1 + redshifts )**(1+self.spectral_index) # W/Hz
+            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / self.k_corr_factor( redshifts ) # W/Hz
             logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
             residuals = flux_luminosities / luminosities
             plt.scatter( flux_luminosities, residuals, s=0.001 )
             #plt.yscale( 'log' )
+            epsilon = 1e-10
+            plt.ylim( 1-epsilon, 1+epsilon )
             plt.xscale( 'log' )
             plt.title( 'Luminosity from flux vs catalog' )
             plt.xlabel( 'luminosity from flux' )
@@ -397,7 +402,21 @@ class RLF:
         plt.savefig( output )
         logger.info( "saved figure" )
 
+def mag_to_flux_w3( mag, default_spectral_index = -1 ):
+    # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
+    f_corr_table = [ 1.1344, 1.0088, 0.9393, 0.9169, 0.9373, 1.0000, 1.1081, 1.2687 ]
+    spectral_index_table = [ 3, 2, 1, 0, -1, -2, -3, -4 ]
+    f_corr = np.interp( default_spectral_index, spectral_index_table, f_corr_table )
+    Fstar_v0 = 29.045
+    return ( Fstar_v0 / f_corr ) * 10**(-mag / 2.5)
 
+def mag_to_flux_w2( mag, default_spectral_index = -1 ):
+    # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
+    f_corr_table = [ 1.0206, 1.0066, 0.9976, 0.9935, 0.9943, 1.0000, 1.0107, 1.0265 ]
+    spectral_index_table = [ 3, 2, 1, 0, -1, -2, -3, -4 ]
+    f_corr = np.interp( default_spectral_index, spectral_index_table, f_corr_table )
+    Fstar_v0 = 170.663
+    return ( Fstar_v0 / f_corr ) * 10**(-mag / 2.5)
 
 if __name__ == "__main__":
     rlf_calculator = RLF()
@@ -405,11 +424,39 @@ if __name__ == "__main__":
 
     logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
-    logger.debug( "   redshifts done" )
     fluxes = catalog.get_values( Source.TotalFlux ) / 1000
-    logger.debug( "   fluxes done" )
     luminosities = catalog.get_values( Source.Luminosity )
-    logger.debug( "   luminosity done" )
+    wise_3_mag = catalog.get_values( Source.WISE3Mag )
+    wise_2_mag = catalog.get_values( Source.WISE2Mag )
+    logger.debug( "done" )
+
+    # use wise bands 2/3 to calculate spectral indices for the k-correction
+    wise_3_flux = mag_to_flux_w3( wise_3_mag )
+    wise_2_flux = mag_to_flux_w2( wise_2_mag )
+    wise_3_freq = 3e8 / 12e-6
+    wise_2_freq = 3e8 / 4.6e-6
+    spectral_inds = np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
+    si_notnan = spectral_inds[ ~np.isnan( spectral_inds ) ]
+    logger.debug( f'spectral_inds: mean={np.average( si_notnan )}, std={np.std( si_notnan )}, max={np.max( si_notnan )}, min={np.min( si_notnan ) }, count={si_notnan.shape[ 0 ]}' )
+
+    wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) - rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+
+    # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
+    if True:
+        wise_3_linspace = np.linspace( -34, -18, 10000 )
+        agn_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
+        plt.figure( figsize=(8,8) )
+        plt.scatter( wise_3_absmag[ wise_3_absmag < -19 ], luminosities[ wise_3_absmag < -19 ], s=0.0001 )
+        plt.plot( wise_3_linspace, agn_lum_cutoff, color='r' )
+        plt.xlabel( 'wise 3 absolute magnitude' )
+        plt.ylabel( 'L144' )
+        plt.title( 'L144 vs W3 AbsMag Relation' )
+        plt.yscale( 'log' )
+        plt.xlim( -18, -34 )
+        plt.ylim( 4e20, 1e29 )
+        plt.savefig( 'lum_vs_w3.png' )
+        plt.show()
+        logger.debug( "saved lum_vs_w3.png" )
 
     redshift_lum_mask = ~(np.isnan( luminosities ) | np.isnan( redshifts ))
     hardcastle_flux_mask = fluxes > 1.1e-3
@@ -421,4 +468,4 @@ if __name__ == "__main__":
     luminosities = luminosities[ mask ]
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
-    rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, vmax_method=True )
+    rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, vmax_method=True )
