@@ -105,11 +105,54 @@ class CutoutPreprocessor:
         # Apply the recursive threshold
         return apply_src_threshold(threshold)
 
+    def identify_incomplete_image(self, image: np.ndarray) -> bool:
+        pass
+
+    def identify_broken_source(self, image: np.ndarray) -> bool:
+        """
+        Identifies whether an image is a "broken source" based on the presence of blank values or -99 values.
+
+        :param image: The image to check for being a broken source, represented as a 2D numpy array of pixel values.
+        :return: Whether the image is identified as a broken source (True) or not (False).
+        """
+
+        # The criterion for broken source they state in the paper is NaN values or blank image values. The actual
+        # way they compute "broken" is by seeing if there are two pixels which share the minimum value in any dataset
+        # We will follow the paper methodology
+
+        # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
+
+        return (image == -99).any() or (image == 0).all()
+
+    """
+    Code below modified from the original LOFAR-diffusion repository, found here:
+    https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
+    """
+    def calculate_edge_max(self, image: np.ndarray) -> float:
+        """
+        Calculates the maximum pixel value among the edge pixels of the image.
+
+        :param image: The image to calculate the edge maximum for, shape (80, 80).
+        :return: The maximum pixel value among the edge pixels of the image.
+        """
+        # currently only considering the maximum value of the edge pixels, frankly I think there could be grounds to
+        # expand it to consider e.g., if the maximum pixel lies within a defined central region, as a way of finding
+        # poorly centred sources, but for now we will just follow the paper
+
+        # Find the edge max
+        edge_max = max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
+
+        # Return it as a ratio to the maximum pixel value in the image
+        return edge_max / image.max()
+
     # ---------- MAIN PROCESSING ----------
-    def compute_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
+    def compute_vectorised_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
+
+        This is similar processesing to compute_iterative_flags, except it's vectorised, which is expected to be better
+        performing on high-memory nodes.
 
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
@@ -170,6 +213,42 @@ class CutoutPreprocessor:
 
         return dataset
 
+    def compute_iterative_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
+        to filter the dataset in the next step.
+
+        This is similar processing to compute_vectorised_flags, but is expected to be faster on low-memory nodes.
+
+        :param dataset: The dataset containing the pixel values and other information for each source.
+        :return: The dataset with the new flags computed.
+        """
+        broken = []
+        snr_sigma = []
+        edge_max = []
+
+        # Compute flags for each image
+        for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
+
+            # Guard clause here to check for NaN values before any other processing
+            if np.isnan(arr).any():
+                self.logger.warning("NaN values found in image. Marking as broken.")
+                broken.append(True)
+                snr_sigma.append(-99)
+                edge_max.append(-99)
+                continue
+
+            broken.append(self.identify_broken_source(arr))
+            snr_sigma.append(self.calculate_SNR_sigma(arr))
+            edge_max.append(self.calculate_edge_max(arr))
+
+        # Apply flags to the dataset
+        dataset["broken"] = broken
+        dataset["S/N_sigma"] = snr_sigma
+        dataset["edge_max"] = edge_max
+
+        return dataset
+
     def save_clean_dataset(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
@@ -219,14 +298,16 @@ class CutoutPreprocessor:
         hdul.writeto(output_file_path, overwrite=True)
         self.logger.info(f'Final dataset saved to {output_file_path}.')
 
-    def apply_preprocessing(self, output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+    def apply_preprocessing(self,
+                            vectorised: bool = False,
+                            output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
         """
         Applies the pre-processing steps in this class, and filters out sources which do not pass.
         """
         dataset, cat_info = self.load_initial_dataset()
 
         # Compute the flags for each image in the dataset
-        self.compute_flags(dataset)
+        self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)
 
         # Filter the dataset based on the flags
         clean_dataset = dataset[dataset["has_image"]
