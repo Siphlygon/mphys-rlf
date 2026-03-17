@@ -430,14 +430,23 @@ if __name__ == "__main__":
     wise_2_mag = catalog.get_values( Source.WISE2Mag )
     logger.debug( "done" )
 
+    mask = ( fluxes > 0 ) & ( wise_3_mag > 0 ) & ( wise_2_mag > 0 ) & ~np.isnan( fluxes ) & ~np.isnan( wise_3_mag ) & ~np.isnan( wise_2_mag ) & ~np.isnan( redshifts ) & ~np.isnan( luminosities ) & ( fluxes > 1.1e-3 )
+    redshifts = redshifts[ mask ]
+    luminosities = luminosities[ mask ]
+    wise_3_mag = wise_3_mag[ mask ]
+    wise_2_mag = wise_2_mag[ mask ]
+    fluxes = fluxes[ mask ]
+
+    #logger.debug( f'wise_3_mag: mean={np.average( wise_3_mag )}, std={np.std( wise_3_mag )}, max={np.max( wise_3_mag )}, min={np.min( wise_3_mag ) }, count={wise_3_mag.shape[ 0 ]}' )
+    #logger.debug( f'wise_2_mag: mean={np.average( wise_2_mag )}, std={np.std( wise_2_mag )}, max={np.max( wise_2_mag )}, min={np.min( wise_2_mag ) }, count={wise_2_mag.shape[ 0 ]}' )
+
     # use wise bands 2/3 to calculate spectral indices for the k-correction
     wise_3_flux = mag_to_flux_w3( wise_3_mag )
     wise_2_flux = mag_to_flux_w2( wise_2_mag )
     wise_3_freq = 3e8 / 12e-6
     wise_2_freq = 3e8 / 4.6e-6
-    spectral_inds = np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
-    si_notnan = spectral_inds[ ~np.isnan( spectral_inds ) ]
-    logger.debug( f'spectral_inds: mean={np.average( si_notnan )}, std={np.std( si_notnan )}, max={np.max( si_notnan )}, min={np.min( si_notnan ) }, count={si_notnan.shape[ 0 ]}' )
+    spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
+    #logger.debug( f'spectral_inds: mean={np.average( spectral_inds )}, std={np.std( spectral_inds )}, max={np.max( spectral_inds )}, min={np.min( spectral_inds ) }, count={spectral_inds.shape[ 0 ]}' )
 
     wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) - rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
@@ -458,14 +467,14 @@ if __name__ == "__main__":
         plt.show()
         logger.debug( "saved lum_vs_w3.png" )
 
-    redshift_lum_mask = ~(np.isnan( luminosities ) | np.isnan( redshifts ))
-    hardcastle_flux_mask = fluxes > 1.1e-3
 
-    mask = redshift_lum_mask & hardcastle_flux_mask
+    agn_mask = luminosities > 10**( 14 - wise_3_absmag / 2.5 )
 
-    redshifts = redshifts[ mask ]
-    fluxes = fluxes[ mask ]
-    luminosities = luminosities[ mask ]
+    redshifts = redshifts[ agn_mask ]
+    fluxes = fluxes[ agn_mask ]
+    luminosities = luminosities[ agn_mask ]
+
+    logger.info( f'number of agn sources: {redshifts.shape[ 0 ]}' )
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
     rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, vmax_method=True )
