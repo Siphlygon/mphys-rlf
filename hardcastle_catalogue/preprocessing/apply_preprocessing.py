@@ -1,3 +1,5 @@
+from calendar import day_abbr
+
 from astropy.io import fits
 from tqdm import tqdm
 import numpy as np
@@ -45,19 +47,19 @@ class CutoutPreprocessor:
             for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
                 try:
                     if isinstance(hdu.data, np.ndarray):
-                        catalogue_data.append({'index': idx, 'pixel_values': hdu.data})
+                        catalogue_data.append({'index': idx, 'pixel_values': hdu.data, 'has_image': True})
                     else:
                         self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
-                        catalogue_data.append({'index': idx, 'pixel_values': np.nan})
+                        catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
                 except Exception as e:
                     self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
-                    catalogue_data.append({'index': idx, 'pixel_values': np.nan})
+                    catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
+        catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'broken', 'S/N_sigma', 'edge_max']  # Add more columns as needed for header information
+        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'S/N_sigma', 'edge_max']  # Add more columns as needed for header information
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset, catalogue_info
@@ -113,11 +115,18 @@ class CutoutPreprocessor:
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
         """
-        image_lists = dataset['pixel_values'].values
+        # Before we can do vectorise check, need to check for incomplete images
+        dataset = dataset[dataset['has_image'] == True]
+        for i, img in enumerate(tqdm(dataset['pixel_values'].values, desc="Checking for incomplete coverage...")):
+            if isinstance(img, np.ndarray):
+                if img.shape != (80, 80):
+                    self.logger.warning(f"Image {i} has unexpected shape {img.shape}. Marking as incomplete.")
+                    dataset.at[i, 'incomplete'] = True
 
-        # filter nans from image_lists
-        image_lists = image_lists[~np.isnan(image_lists)]
+        # Filter out the indices with incomplete coverage
+        image_lists = dataset[dataset['incomplete'] == False]['pixel_values'].values
 
+        # Stack for numpy
         images = np.stack(image_lists, axis=0)
 
         # Vectorised broken checks
@@ -213,14 +222,20 @@ class CutoutPreprocessor:
         self.compute_flags(dataset)
 
         # Filter the dataset based on the flags
-        clean_dataset = dataset[~dataset["broken"]
+        clean_dataset = dataset[dataset["has_image"]
+                                & ~dataset["incomplete"]
+                                & ~dataset["broken"]
                                 & (dataset["S/N_sigma"] >= self.snr_threshold)
                                 & (dataset["edge_max"] <= self.edge_max_threshold)]
 
         # Log the number of sources removed by each flag
+        num_no_images = len(dataset) - dataset["has_image"].sum()
+        num_incomplete = dataset["incomplete"].sum()
         num_broken = dataset["broken"].sum()
         num_low_snr = (dataset["S/N_sigma"] < self.snr_threshold).sum()
         num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
+        self.logger.info(f"Found {num_no_images} missing images.")
+        self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as broken: {num_broken}")
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
