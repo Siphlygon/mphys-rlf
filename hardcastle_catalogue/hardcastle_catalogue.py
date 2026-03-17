@@ -36,12 +36,23 @@ class HardcastleCatalogue:
     A class to handle and extracting information from the Hardcastle catalogue. This may be used in other parts of the
     program hence it's separation from the downloader an dataset creator.
     """
-    def __init__(self, resolved_only: bool = True):
+    def __init__(self,
+                 resolved_only: bool = True,
+                 cat: str = "hardcastle2023"):
         self.logger = utils.logging.get_logger("HardcastleCatalogue", logging.DEBUG)
+
+        # Option to only consider resolved sources or not
         self.resolved_only = resolved_only
 
-        # Load the catalogue data once during initialization to avoid repeated loading
-        self.catalogue_data = self.load_hardcastle_catalogue()
+        # Choice of which catalogue to use; the hardcastle2023 catalogue, or the hardcastle2025 for AGN selection
+        match cat:
+            case "hardcastle2023":
+                self.catalogue_data = self.load_hardcastle_catalogue()
+            case "hardcastle2025":
+                # todo: need to make sure this is downloaded first; maybe add a database downloading script?
+                self.catalogue_data = self.load_hardcastle_catalogue(pths.DATASET_PARENT / "agn-v1.1.fits")
+            case _:
+                raise ValueError("Invalid catalogue")
 
     def load_hardcastle_catalogue(self,
                                   file_path : Path = pths.IMAGE_DOWNLOADING / "combined-release-v1.2-LM_opt_mass.fits")\
@@ -109,12 +120,6 @@ class HardcastleCatalogue:
         columns = [self.catalogue_data[key] for key in keys]
         return np.column_stack(columns)
 
-
-    def get_luminosities(self):
-        return self.get_values(Source.Luminosity)
-
-    def get_redshifts(self):
-        return self.get_values(Source.Redshift)
 
 
 if __name__ == "__main__":

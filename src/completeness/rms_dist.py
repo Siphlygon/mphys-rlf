@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 import logging
 import utils.logging
-import image_downloading.hardcastle_catalogue as hdc
+import hardcastle_catalogue as hdc
 import configparser
 import utils.paths as pths
 
