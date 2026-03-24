@@ -13,7 +13,7 @@ import configparser
 import utils.paths as pth
 import logging
 import utils.logging
-from utils.fitfunctions import sigmoid, polynomial_deg4
+from utils.fitfunctions import sigmoid
 
 
 class CompletenessEstimator:
@@ -32,8 +32,6 @@ class CompletenessEstimator:
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
         config.read(pth.PROGRAM_CONFIG)
-
-        # we are using sources generated in a loguniform way
         de_config = config['DEFAULT']
 
         # Get values from config
@@ -48,6 +46,74 @@ class CompletenessEstimator:
         else:
             self.datasets = [datasets_input.strip()]
 
+    # ---------- FITTING FUNCTION ----------
+    def fit_function(self,
+                     bin_centers : np.ndarray,
+                     completeness : np.ndarray,
+                     yerr : np.ndarray,
+                     dataset : str):
+        """
+        Fit a function to the completeness curve and plot the results.
+
+        :param bin_centers: The centers of the flux bins used for calculating completeness.
+        :param completeness: The completeness values calculated for each flux bin.
+        :param yerr:  The error on the completeness values, typically calculated from confidence intervals.
+        :param dataset: The name of the dataset being analyzed, used for labeling the plot and fit results.
+        """
+        # Use log of flux for fitting since we're on a log scale
+        log_bin_centers = np.log10(bin_centers)
+
+        initial_guess = [0.5, 7.0, 1.0, 0.0]
+        popt_sigmoid = None
+
+        # Start plotting the measured completeness first
+        plt.figure()
+        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'{dataset} data')
+        plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
+
+        try:
+            self.logger.info(f"Fitting sigmoid function to completeness curve for dataset {dataset}")
+            # Fit the sigmoid
+            popt_sigmoid, pcov_sigmoid = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
+
+            # Generate smooth curve for plotting on log scale
+            log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
+            completeness_fit = sigmoid(log_flux_smooth, *popt_sigmoid)
+
+            # Convert back to linear scale for plotting
+            flux_smooth = 10 ** log_flux_smooth
+            plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
+
+            # Show parameters and errors
+            print("Sigmoid fit parameters:")
+            print(f"  x0 (log midpoint): {popt_sigmoid[0]:.3f} (flux: {10 ** popt_sigmoid[0]:.3f} mJy)")
+            print(f"  k (steepness): {popt_sigmoid[1]:.3f}")
+            print(f"  a (amplitude): {popt_sigmoid[2]:.3f}")
+            print(f"  b (offset): {popt_sigmoid[3]:.3f}")
+            if pcov_sigmoid is not None:
+                print(f"  covariance (diag): {np.sqrt(np.diag(pcov_sigmoid))}")
+
+            # Save fitted parameters to a file for use in RLF
+            np.savetxt( pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt', popt_sigmoid )
+
+        except Exception as e:
+            print(f"Warning: Sigmoid fit failed: {e}")
+
+        # Now add fit curves in a consistent way if they exist
+        x_fit = np.logspace(-2, 2, 100)
+        if popt_sigmoid is not None:
+            # sigmoid was fit in log space, so evaluate at log10(x_fit)
+            y_fit_sig = sigmoid(np.log10(x_fit), *popt_sigmoid)
+            plt.plot(x_fit, y_fit_sig, label=f'{dataset} sigmoid fit', color='r')
+
+        plt.xscale('log')
+        plt.xlabel("Integrated Flux Density (mJy/beam)")
+        plt.ylabel("Completeness")
+        plt.legend()
+        plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
+        plt.show()
+
+    # ---------- COMPLETENESS CALCULATION ----------
     def create_noise_LOFAR(self,
                            filter_kernel: np.ndarray,
                            rms : float | np.ndarray = 95e-3,
@@ -114,104 +180,6 @@ class CompletenessEstimator:
             detectable[start:end] = peak_fluxes >= threshold
 
         return mock_fluxes, detectable
-
-    def fit_function(self,
-                     bin_centers : np.ndarray,
-                     completeness : np.ndarray,
-                     yerr : np.ndarray,
-                     dataset : str):
-        """
-        Fit a function to the completeness curve and plot the results.
-
-        :param bin_centers: The centers of the flux bins used for calculating completeness.
-        :param completeness: The completeness values calculated for each flux bin.
-        :param yerr:  The error on the completeness values, typically calculated from confidence intervals.
-        :param dataset: The name of the dataset being analyzed, used for labeling the plot and fit results.
-        """
-        # Use log of flux for fitting since we're on a log scale
-        log_bin_centers = np.log10(bin_centers)
-
-        # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
-        initial_guess = [0.5, 2.0, 1.0, 0.0]
-
-        popt_sigmoid = None
-        pcov_sigmoid = None
-        popt_poly = None
-        pcov_poly = None
-
-        # Start plotting the measured completeness first
-        plt.figure()
-        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'{dataset} data')
-        plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
-
-        try:
-            self.logger.info(f"Fitting sigmoid function to completeness curve for dataset {dataset}")
-            # Fit the sigmoid
-            popt_sigmoid, pcov_sigmoid = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
-
-            # Generate smooth curve for plotting on log scale
-            log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-            completeness_fit = sigmoid(log_flux_smooth, *popt_sigmoid)
-
-            # Convert back to linear scale for plotting
-            flux_smooth = 10 ** log_flux_smooth
-            plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
-
-            # Show parameters and errors
-            print("Sigmoid fit parameters:")
-            print(f"  x0 (log midpoint): {popt_sigmoid[0]:.3f} (flux: {10 ** popt_sigmoid[0]:.3f} mJy)")
-            print(f"  k (steepness): {popt_sigmoid[1]:.3f}")
-            print(f"  a (amplitude): {popt_sigmoid[2]:.3f}")
-            print(f"  b (offset): {popt_sigmoid[3]:.3f}")
-            np.savetxt( pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt', popt_sigmoid )
-            if pcov_sigmoid is not None:
-                print(f"  covariance (diag): {np.sqrt(np.diag(pcov_sigmoid))}")
-        except Exception as e:
-            print(f"Warning: Sigmoid fit failed: {e}")
-
-        try:
-            self.logger.info(f"Fitting polynomial function to completeness curve for dataset {dataset}")
-            # Fit the polynomial (on the log flux)
-            popt_poly, pcov_poly = curve_fit(polynomial_deg4, log_bin_centers, completeness, p0=[1, 1, 1, 1, 0], maxfev=10000)
-
-            # Generate smooth curve for plotting
-            log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-            completeness_fit_poly = polynomial_deg4(log_flux_smooth, *popt_poly)
-
-            # Convert back to linear scale for plotting
-            flux_smooth = 10 ** log_flux_smooth
-            plt.plot(flux_smooth, completeness_fit_poly, 'b--', linewidth=2, label=f'Polynomial fit', alpha=0.7)
-
-            # Show parameters and errors
-            print("Polynomial fit parameters:")
-            print(f"  a (x^4): {popt_poly[0]:.3e}")
-            print(f"  b (x^3): {popt_poly[1]:.3e}")
-            print(f"  c (x^2): {popt_poly[2]:.3e}")
-            print(f"  d (x): {popt_poly[3]:.3e}")
-            print(f"  e (constant): {popt_poly[4]:.3e}")
-            np.savetxt( pth.NP_ARRAY_PARENT / 'completeness_args_poly4.txt', popt_poly )
-            if pcov_poly is not None:
-                print(f"  covariance (diag): {np.sqrt(np.diag(pcov_poly))}")
-        except Exception as e:
-            print(f"Warning: Polynomial fit failed: {e}")
-
-        # Now add fit curves in a consistent way if they exist
-        x_fit = np.logspace(-2, 2, 100)
-        if popt_sigmoid is not None:
-            # sigmoid was fit in log space, so evaluate at log10(x_fit)
-            y_fit_sig = sigmoid(np.log10(x_fit), *popt_sigmoid)
-            plt.plot(x_fit, y_fit_sig, label=f'{dataset} sigmoid fit', color='r')
-
-        if popt_poly is not None:
-            y_fit_poly = polynomial(np.log10(x_fit), *popt_poly)
-            plt.plot(x_fit, y_fit_poly, label=f'{dataset} polynomial fit', color='b')
-
-        plt.xscale('log')
-        plt.xlabel("Integrated Flux Density (mJy/beam)")
-        plt.ylabel("Completeness")
-        plt.legend()
-        plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
-        plt.show()
 
     def get_completeness_estim(self):
         """

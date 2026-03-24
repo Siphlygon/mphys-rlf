@@ -1,4 +1,5 @@
 from astropy.io import fits
+from numpy.core.memmap import memmap
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
@@ -34,32 +35,44 @@ class CutoutPreprocessor:
         """
         self.logger.info("Loading Hardcastle dataset from FITS file...")
 
-        catalogue_data = []
-        # Get the information from the Hardcastle catalogue
-        with fits.open(dataset_file_path, memmap=False) as hdul:
-            # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
-            catalogue_info = hdul[1].data
+        def load_catalogue_data(memmap=True):
+            catalogue_data = []
+            # Get the information from the Hardcastle catalogue
+            with fits.open(dataset_file_path, memmap=memmap) as hdul:
+                # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
+                catalogue_info = hdul[1].data
 
-            # Remove the first two HDUs which are just Primary and the header table
-            hdul = hdul[2:]
+                # Remove the first two HDUs which are just Primary and the header table
+                hdul = hdul[2:]
 
-            # Extract the pixel values from each imageHDU
-            for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
-                try:
-                    if isinstance(hdu.data, np.ndarray):
-                        catalogue_data.append({'index': idx, 'pixel_values': hdu.data, 'has_image': True})
-                    else:
-                        self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
+                # Extract the pixel values from each imageHDU
+                for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
+                    try:
+                        if isinstance(hdu.data, np.ndarray):
+                            # n.b., max pixel value is ~40, so float16 is appropriate
+                            catalogue_data.append({'index': idx, 'pixel_values': hdu.data.astype(np.float32), 'has_image': True})
+                        else:
+                            self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
+                            catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
+                    except Exception as e:
+                        self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
                         catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
-                except Exception as e:
-                    self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
-                    catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
+
+            return catalogue_info, catalogue_data
+
+        # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
+        # we can disable memmap
+        try:
+            catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
+        except Exception as e:
+            self.logger.error(f"Error loading catalogue data with memmap: {e}. Retrying without memmap...")
+            catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
 
         # Initialise all other columns to default right now
         catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'S/N_sigma', 'edge_max']  # Add more columns as needed for header information
+        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'S/N_sigma', 'edge_max']
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset, catalogue_info
@@ -112,7 +125,14 @@ class CutoutPreprocessor:
         return apply_src_threshold(threshold)
 
     def identify_incomplete_image(self, image: np.ndarray) -> bool:
-        pass
+        """
+        Identifies whether there is incomplete coverage in the target cutout, which is categorised by an array size
+        that is not the standard (80x80)
+
+        :param image: The image to calculate the S/N_sigma ratio for.
+        :return: Whether the image is incomplete or not.
+        """
+        return image.shape != (80, 80)
 
     def identify_broken_source(self, image: np.ndarray) -> bool:
         """
@@ -157,23 +177,27 @@ class CutoutPreprocessor:
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
 
-        This is similar processesing to compute_iterative_flags, except it's vectorised, which is expected to be better
+        This is similar processing to compute_iterative_flags, except it's vectorised, which is expected to be better
         performing on high-memory nodes.
 
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
         """
         # Before we can do vectorise check, need to check for incomplete images
-        dataset = dataset[dataset['has_image'] == True]
+        has_image_mask = dataset['has_image']
+        incomplete_mask = np.zeros(len(dataset), dtype=bool)
         for i, img in enumerate(tqdm(dataset['pixel_values'].values, desc="Checking for incomplete coverage...")):
-            if isinstance(img, np.ndarray):
-                if img.shape != (80, 80):
+            if has_image_mask.iloc[i]:
+                if not isinstance(img, np.ndarray) or img.shape != (80, 80):
                     self.logger.warning(f"Image {i} has unexpected shape {img.shape}. Marking as incomplete.")
-                    dataset.at[i, 'incomplete'] = True
+                    incomplete_mask[i] = True
+
+        dataset['incomplete'] = incomplete_mask
 
         # Filter out the indices with incomplete coverage
         self.logger.info("Building image lists for vectorised computation...")
-        image_lists = dataset[dataset['incomplete'] == False]['pixel_values'].values
+        valid_mask = has_image_mask & (~dataset['incomplete'])
+        image_lists = dataset.loc[valid_mask, 'pixel_values'].values
 
         # Stack for numpy
         images = np.stack(image_lists, axis=0)
@@ -210,13 +234,17 @@ class CutoutPreprocessor:
         #    if broken[i]:
         #        snr_list.append(-99)
         #    else:
-        #        snr_list.append(self.calculate_SNR_sigma(arr))
+        #        try:
+        #            snr_list.append(self.calculate_SNR_sigma(arr))
+        #        except RecursionError as e:
+        #            self.logger.error(f"Could not calculate SNR for image {i}. Recursion error: {e}")
+        #            snr_list.append(-99)
         snr_list = self.calculate_SNR_sigma( images )
 
         # write back results
-        dataset['broken'] = broken
-        dataset['edge_max'] = edge_ratio
-        dataset['S/N_sigma'] = snr_list
+        dataset.loc[valid_mask, 'broken'] = broken
+        dataset.loc[valid_mask, 'edge_max'] = edge_ratio
+        dataset.loc[valid_mask, 'S/N_sigma'] = snr_list
 
         return dataset
 
@@ -230,32 +258,44 @@ class CutoutPreprocessor:
         :param dataset: The dataset containing the pixel values and other information for each source.
         :return: The dataset with the new flags computed.
         """
+        incomplete = []
         broken = []
         snr_sigma = []
         edge_max = []
 
         # Compute flags for each image
-        for arr in tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset"):
+        for idx, img in enumerate(tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset")):
+            # Guard clause to test for incomplete images
+            if self.identify_incomplete_image(img):
+                self.logger.warning(f"Incomplete sky coverage found in image {idx}.")
+                incomplete.append(True)
+                broken.append(False)
+                snr_sigma.append(-99)
+                edge_max.append(-99)
+                continue
+            incomplete.append(False)
 
             # Guard clause here to check for NaN values before any other processing
-            if np.isnan(arr).any():
-                self.logger.warning("NaN values found in image. Marking as broken.")
+            if np.isnan(img).any():
+                self.logger.warning(f"NaN values found in image {idx}. Marking as broken.")
                 broken.append(True)
                 snr_sigma.append(-99)
                 edge_max.append(-99)
                 continue
 
-            broken.append(self.identify_broken_source(arr))
-            snr_sigma.append(self.calculate_SNR_sigma(arr))
-            edge_max.append(self.calculate_edge_max(arr))
+            broken.append(self.identify_broken_source(img))
+            snr_sigma.append(self.calculate_SNR_sigma(img))
+            edge_max.append(self.calculate_edge_max(img))
 
         # Apply flags to the dataset
+        dataset["incomplete"] = incomplete
         dataset["broken"] = broken
         dataset["S/N_sigma"] = snr_sigma
         dataset["edge_max"] = edge_max
 
         return dataset
 
+    # ---------- FINAL PRODUCT ----------
     def save_clean_dataset(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
