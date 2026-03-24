@@ -6,6 +6,7 @@ import pandas as pd
 from astropy.stats import sigma_clipped_stats
 import logging
 import time
+import matplotlib.pyplot as plt
 
 import utils.logging
 import utils.paths as pths
@@ -69,25 +70,30 @@ class CutoutPreprocessor:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
     """
     def calculate_SNR_sigma(self,
-                            image : np.ndarray,
+                            images : np.ndarray,
                             threshold : float = 5) -> float:
         """
         Identifies a source and background region based on a threshold with the median pixel value in a region and the
         standard deviation of the pixel values in that region. The S/N is then calculated as the ratio of average pixel
         values in both regions.
 
-        :param image: The image to calculate the S/N_sigma ratio for.
+        :param images: The image(s) to calculate the S/N_sigma ratio for, either shape (N_images, N_xpix, N_ypix) or (N_xpix, N_ypix)
         :param threshold: The sigma threshold value to use for identifying source and background regions.
         :return: The S/N_sigma ratio for the image, or -1 if no source region is identified.
         """
-        _, median, stddev = sigma_clipped_stats(image)
+
+        # make (n_x, n_y) into (1, n_x, n_y) if passed as such
+        if images.ndim == 2:
+            images = images[ np.newaxis, :, : ]
+
+        _, medians, stddevs = sigma_clipped_stats( images, axis=(1, 2) )
 
         # n.b. deliberate structure of a nested function here so that we don't need to run sigma_clipped_stats every
         # single time on every single source. It's just faster
 
         def apply_src_threshold(thresh):
             # Apply the threshold to identify source and background regions
-            mask = image > median + thresh * stddev
+            mask = images > medians[ :, np.newaxis, np.newaxis ] + thresh[ :, np.newaxis, np.newaxis ] * stddevs[ :, np.newaxis, np.newaxis ]
 
             # No source region identified; lower threshold and try again
             if mask.sum() == 0:
@@ -199,12 +205,13 @@ class CutoutPreprocessor:
         self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
         # S/N_sigma checks done per-image, as it's a recursive and changing threshold
-        snr_list = []
-        for i, arr in enumerate(tqdm(images, desc="Calculating S/N_sigma per image...")):
-            if broken[i]:
-                snr_list.append(-99)
-            else:
-                snr_list.append(self.calculate_SNR_sigma(arr))
+        #snr_list = []
+        #for i, arr in enumerate(tqdm(images, desc="Calculating S/N_sigma per image...")):
+        #    if broken[i]:
+        #        snr_list.append(-99)
+        #    else:
+        #        snr_list.append(self.calculate_SNR_sigma(arr))
+        snr_list = self.calculate_SNR_sigma( images )
 
         # write back results
         dataset['broken'] = broken
@@ -252,7 +259,7 @@ class CutoutPreprocessor:
     def save_clean_dataset(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
-                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.hdf5'):
         """
         Saves the cleaned dataset to a FITS file.
 
@@ -309,6 +316,12 @@ class CutoutPreprocessor:
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)
 
+        snsigma = dataset[ "S/N_sigma" ]
+        plt.hist( snsigma )
+        plt.xscale( 'log' )
+        plt.yscale( 'log' )
+        plt.savefig( 'snsigma_dist.png' )
+
         # Filter the dataset based on the flags
         clean_dataset = dataset[dataset["has_image"]
                                 & ~dataset["incomplete"]
@@ -335,9 +348,10 @@ class CutoutPreprocessor:
         clean_cat_info = cat_info[indices]
 
         # Save the cleaned dataset to a FITS file
-        self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
+        #self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
+        clean_dataset.to_hdf( output_file_path, key='catalog' )
 
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing()
+    preprocessor.apply_preprocessing( vectorised=True )
