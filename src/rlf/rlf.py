@@ -272,7 +272,7 @@ class RLF:
             return -2.5 * np.log10( k_corr_lum_space )
 
     # ---------- RADIO LUMINOSITY FUNCTION ----------
-    def calculate_rlf( self, 
+    def calculate_rlf( self,
                             fluxes,
                             redshifts = None, 
                             luminosities = None,
@@ -462,7 +462,7 @@ def mag_to_flux_w2( mag, default_spectral_index = -1 ):
 if __name__ == "__main__":
     rlf_calculator = RLF()
     vmax_rlf = RLF()
-    catalog = HardcastleCatalogue( resolved_only=False )
+    catalog = HardcastleCatalogue( resolved_only=True )
 
     rlf_calculator.logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
@@ -501,7 +501,7 @@ if __name__ == "__main__":
         sfg_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
         rqq_lum_cutoff = 10**( -( wise_3_linspace_below_27 - rqq_xpt ) / 3.4844629455909923 + rqq_ypt )
         plt.figure( figsize=(8,8) )
-        plt.scatter( wise_3_absmag[ wise_3_absmag < -19 ], luminosities[ wise_3_absmag < -19 ], s=0.0001 )
+        plt.hexbin( wise_3_absmag[ wise_3_absmag < -19 ], luminosities[ wise_3_absmag < -19 ], gridsize=50, yscale='log' )
         plt.plot( wise_3_linspace, sfg_lum_cutoff, color='r' )
         plt.plot( wise_3_linspace_below_27, rqq_lum_cutoff, color='m' )
         plt.xlabel( 'wise 3 absolute magnitude' )
