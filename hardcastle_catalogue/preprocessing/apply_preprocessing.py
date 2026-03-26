@@ -8,6 +8,7 @@ from astropy.stats import sigma_clipped_stats
 import logging
 import time
 import matplotlib.pyplot as plt
+import h5py
 
 import utils.logging
 import utils.paths as pths
@@ -18,12 +19,13 @@ class CutoutPreprocessor:
     select images suitable for training the diffusion model on.
     """
 
-    def __init__(self):
+    def __init__(self, dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         self.logger = utils.logging.get_logger('CutoutPreprocessor', logging.DEBUG)
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         self.snr_threshold = 5
         self.edge_max_threshold = 0.8
+        self.dataset, self.cat_info = self.load_initial_dataset( dataset_file_path )
 
     def load_initial_dataset(self,
                              dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
@@ -63,10 +65,10 @@ class CutoutPreprocessor:
         # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
         # we can disable memmap
         try:
-            catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
-        except Exception as e:
-            self.logger.error(f"Error loading catalogue data with memmap: {e}. Retrying without memmap...")
             catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
+        except Exception as e:
+            self.logger.error(f"Error loading catalogue data w/o memmap: {e}. Retrying with memmap...")
+            catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
 
         # Initialise all other columns to default right now
         catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
@@ -84,6 +86,7 @@ class CutoutPreprocessor:
     """
     def calculate_SNR_sigma(self,
                             images : np.ndarray,
+                            broken : np.ndarray,
                             threshold : float = 5) -> float:
         """
         Identifies a source and background region based on a threshold with the median pixel value in a region and the
@@ -99,30 +102,56 @@ class CutoutPreprocessor:
         if images.ndim == 2:
             images = images[ np.newaxis, :, : ]
 
-        _, medians, stddevs = sigma_clipped_stats( images, axis=(1, 2) )
 
         # n.b. deliberate structure of a nested function here so that we don't need to run sigma_clipped_stats every
         # single time on every single source. It's just faster
 
-        def apply_src_threshold(thresh):
+        # this mask determines which images should continue with recursion - all false indicates recursion should end
+        snr = np.full( images.shape[ 0 ], np.nan )
+        thresh = np.repeat( float( threshold ), images.shape[ 0 ] )
+
+        snr[ broken ] = -99
+        min_max_images = ( images - images.min( axis=(1,2) )[ :, np.newaxis, np.newaxis ] ) \
+                         / ( images.max( axis=(1,2) ) - images.min( axis=(1,2) ) )[ :, np.newaxis, np.newaxis ]
+
+        self.logger.info( 'sigma clipped stats - this might take a while' )
+        means, medians, stddevs = sigma_clipped_stats( min_max_images, axis=(1, 2) )
+        self.logger.info( 'sigma clipped stats done' )
+
+        while np.isnan( snr ).any() and not ( thresh <= 0 ).any():
             # Apply the threshold to identify source and background regions
-            mask = images > medians[ :, np.newaxis, np.newaxis ] + thresh[ :, np.newaxis, np.newaxis ] * stddevs[ :, np.newaxis, np.newaxis ]
+            detected_pix_mask = min_max_images > ( medians + thresh * stddevs )[ :, np.newaxis, np.newaxis ] #shape (n_images, n_x, n_y)
 
-            # No source region identified; lower threshold and try again
-            if mask.sum() == 0:
-                return apply_src_threshold(thresh - 0.5)
-
-            # The whole region is a source region -- pretty bad but doesn't occur in the data
-            if image[~mask].sum() == 0:
-                self.logger.error("No pixels below threshold.")
-                return -1
+            # Get the SNR for any images with a found region in this stage with no found region prior - aka snr is nan
+            region_mask = detected_pix_mask.sum( axis=(1,2) ) > 0 #shape (n_images)
+            new_region_mask = region_mask & np.isnan( snr ) #shape (n_images)
+            self.logger.debug( f'items with regions: {region_mask.sum()}, new regions at thresh {np.min( thresh )}: {new_region_mask.sum()}' )
 
             # Calculate the S/N as the ratio of average pixel values in the source and background regions, weighted by
             # the number of pixels in each region
-            return image[mask].sum() / image[~mask].sum() * (~mask).sum() / mask.sum()
+            self.logger.debug( f'count of pixels in newly detected regions: {detected_pix_mask[ new_region_mask ].sum( axis=(1,2) )}' )
+            self.logger.debug( f'count of pixels not in newly detected regions: {(~detected_pix_mask[ new_region_mask ]).sum( axis=(1,2) )}' )
+            snr[ new_region_mask ] = ( min_max_images[ new_region_mask ] * detected_pix_mask[ new_region_mask ] ).sum( axis=(1,2) ) \
+                                     / ( min_max_images[ new_region_mask ] * ~detected_pix_mask[ new_region_mask ] ).sum( axis=(1,2) ) \
+                                     * (~detected_pix_mask[ new_region_mask ]).sum( axis=(1,2) ) / detected_pix_mask[ new_region_mask ].sum( axis=(1,2) )
 
-        # Apply the recursive threshold
-        return apply_src_threshold(threshold)
+            if np.isnan( snr[ new_region_mask ] ).any():
+                self.logger.error( 'failed to set snr - nan result' )
+                raise ValueError( 'nan snr' )
+
+            # The whole region is a source region -- pretty bad but doesn't occur in the data
+            # Only check for newly detected regions
+            image_only_source = (~detected_pix_mask).sum( axis=(1,2) ) == 0
+            if image_only_source[ new_region_mask ].any():
+                self.logger.error( 'umm so it was found in the data...' )
+                snr[ image_only_source & new_region_mask ] = -1
+
+            # Images with no source region identified; lower threshold and try again
+            self.logger.debug( 'Images with no source region identified; lower threshold and try again' )
+            thresh[ np.isnan( snr ) ] = thresh[ np.isnan( snr ) ] - 0.5
+            
+
+        return snr
 
     def identify_incomplete_image(self, image: np.ndarray) -> bool:
         """
@@ -239,7 +268,9 @@ class CutoutPreprocessor:
         #        except RecursionError as e:
         #            self.logger.error(f"Could not calculate SNR for image {i}. Recursion error: {e}")
         #            snr_list.append(-99)
-        snr_list = self.calculate_SNR_sigma( images )
+        start_time = time.time()
+        snr_list = self.calculate_SNR_sigma( images, broken )
+        self.logger.info(f"SNR list created in {time.time() - start_time} seconds")
 
         # write back results
         dataset.loc[valid_mask, 'broken'] = broken
@@ -284,7 +315,7 @@ class CutoutPreprocessor:
                 continue
 
             broken.append(self.identify_broken_source(img))
-            snr_sigma.append(self.calculate_SNR_sigma(img))
+            snr_sigma.append(self.calculate_SNR_sigma(img, np.array( broken[ -1 ] )))
             edge_max.append(self.calculate_edge_max(img))
 
         # Apply flags to the dataset
@@ -347,19 +378,24 @@ class CutoutPreprocessor:
 
     def apply_preprocessing(self,
                             vectorised: bool = False,
-                            output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+                            output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.hdf5'):
         """
         Applies the pre-processing steps in this class, and filters out sources which do not pass.
         """
-        dataset, cat_info = self.load_initial_dataset()
+        #dataset, cat_info = self.load_initial_dataset()
+        dataset = self.dataset
+        cat_info = self.cat_info
 
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)
 
         snsigma = dataset[ "S/N_sigma" ]
-        plt.hist( snsigma )
-        plt.xscale( 'log' )
+        plt.hist( snsigma, range=(-1,200) )
+        plt.xlim( -1, 200 )
         plt.yscale( 'log' )
+        plt.xlabel( 'S/N_sigma' )
+        plt.ylabel( 'Counts' )
+        plt.title( 'Counts of signal to noise proxy' )
         plt.savefig( 'snsigma_dist.png' )
 
         # Filter the dataset based on the flags
@@ -389,9 +425,11 @@ class CutoutPreprocessor:
 
         # Save the cleaned dataset to a FITS file
         #self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
-        clean_dataset.to_hdf( output_file_path, key='catalog' )
+        with h5py.File(output_file_path, 'w') as f:
+            f.create_dataset( 'images', data=clean_dataset[ 'pixel_values' ], compression='gzip', chunks=True )
 
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
     preprocessor.apply_preprocessing( vectorised=True )
+    preprocessor.logger.info( 'done' )
