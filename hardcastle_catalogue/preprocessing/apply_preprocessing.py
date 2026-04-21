@@ -27,47 +27,70 @@ class CutoutPreprocessor:
         self.edge_max_threshold = 0.8
 
     def load_initial_dataset(self,
-                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
         """
-        Loads the initial dataset from a FITS file into a pandas dataframe for future use.
+        Loads the initial dataset from a HDF5 or FITS file into a pandas dataframe for future use.
 
-        :param dataset_file_path: The path to the FITS file containing the initial dataset with header information and pixel values.
+        :param dataset_file_path: The path to the HDF5 or FITS file containing the initial dataset with header information and pixel values.
         :return: A pandas DataFrame containing the initial dataset with header information and pixel values.
         """
-        self.logger.info("Loading Hardcastle dataset from FITS file...")
+        catalogue_data = []
+        
+        if dataset_file_path.suffix == '.h5':
+            self.logger.info("Loading Hardcastle data from H5 file...")
+            # Extract the data from the h5 file
+            with h5py.File(dataset_file_path, 'r') as h5file:
+                catalogue_info = h5file['cat_info'][:]
+                images = h5file['images'][:]
+                      
+        elif dataset_file_path.suffix == '.fits':
+            def load_catalogue_data(memmap=True):
+                catalogue_data = []
+                # Get the information from the Hardcastle catalogue
+                self.logger.info("Loading Hardcastle dataset from FITS file...")
+                with fits.open(dataset_file_path, memmap=memmap) as hdul:
+                    # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
+                    catalogue_info = hdul[1].data
 
-        def load_catalogue_data(memmap=True):
-            catalogue_data = []
-            # Get the information from the Hardcastle catalogue
-            with fits.open(dataset_file_path, memmap=memmap) as hdul:
-                # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
-                catalogue_info = hdul[1].data
+                    # Remove the first two HDUs which are just Primary and the header table
+                    hdul = hdul[2:]
 
-                # Remove the first two HDUs which are just Primary and the header table
-                hdul = hdul[2:]
+                    images = []
+                    # Extract the pixel values from each imageHDU
+                    for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
+                        try:
+                            images.append(hdu.data.astype(np.float32))
 
-                # Extract the pixel values from each imageHDU
-                for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
-                    try:
-                        if isinstance(hdu.data, np.ndarray):
-                            # n.b., max pixel value is ~40, so float16 is appropriate
-                            catalogue_data.append({'index': idx, 'pixel_values': hdu.data.astype(np.float32), 'has_image': True})
-                        else:
+                        except Exception as e:
                             self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
-                            catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
-                    except Exception as e:
-                        self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
-                        catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
+                            images.append(np.full((80, 80), np.nan))
+                
+                return catalogue_info, images
 
-            return catalogue_info, catalogue_data
-
-        # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
-        # we can disable memmap
-        try:
-            catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
-        except Exception as e:
-            self.logger.error(f"Error loading catalogue data w/o memmap: {e}. Retrying with memmap...")
-            catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
+            # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
+            # we can disable memmap
+            try:
+                catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
+            except Exception as e:
+                self.logger.error(f"Error loading catalogue data without memmap: {e}. Retrying with memmap...")
+                catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
+    
+        else:
+            self.logger.error(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
+            raise ValueError(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
+    
+        # Extract the pixel values from images and put into dataframe
+        for idx, image in enumerate(tqdm(images, desc="Extracting pixel values from Hardcastle dataset")):
+            try:
+                if isinstance(image, np.ndarray):
+                    # n.b., max pixel value is ~40, so float16 is appropriate
+                    catalogue_data.append({'index': idx, 'pixel_values': image.astype(np.float32), 'has_image': True})
+                else:
+                    self.logger.error(f"Unexpected data type for image {idx}: {type(image)}. Expected numpy array.")
+                    catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
+            except Exception as e:
+                self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
+                catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
 
         # Initialise all other columns to default right now
         catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
@@ -188,12 +211,13 @@ class CutoutPreprocessor:
     def identify_incomplete_image_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether there is incomplete coverage in the target cutout, which is categorised by an array size
-        that is not the standard (80x80)
+        that is not the standard (80x80). This is handled early in the pre-processing chain and results in a 80x80
+        grid full of NaNs.
 
         :param image: The image to calculate the S/N_sigma ratio for.
         :return: Whether the image is incomplete or not.
         """
-        return image.shape != (80, 80)
+        return image.shape != (80, 80) or np.isnan(image).any()
 
     def identify_broken_source_single(self, image: np.ndarray) -> bool:
         """
@@ -209,7 +233,7 @@ class CutoutPreprocessor:
 
         # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
 
-        return (image == -99).any() or (image == 0).all()
+        return (image == -99).any() or (image == 0).all() or np.isnan(image).all()
 
     """
     Code below modified from the original LOFAR-diffusion repository, found here:
@@ -249,8 +273,9 @@ class CutoutPreprocessor:
         incomplete_mask = np.zeros(len(dataset), dtype=bool)
         for i, img in enumerate(tqdm(dataset['pixel_values'].values, desc="Checking for incomplete coverage...")):
             if has_image_mask.iloc[i]:
-                if not isinstance(img, np.ndarray) or img.shape != (80, 80):
-                    self.logger.warning(f"Image {i} has unexpected shape {img.shape}. Marking as incomplete.")
+                # if not isinstance(img, np.ndarray) or img.shape != (80, 80):
+                if not isinstance(img, np.ndarray) or self.identify_incomplete_image_single(img):
+                    self.logger.warning(f"Image {i} has or originally had unexpected shape. Marking as incomplete.")
                     incomplete_mask[i] = True
 
         dataset['incomplete'] = incomplete_mask
@@ -421,6 +446,7 @@ class CutoutPreprocessor:
     def apply_preprocessing(self,
                             vectorised: bool = False,
                             save_hdf5: bool = True,
+                            dataset_file_path: Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5',
                             output_file_path: Path | None = None):
         """
         Applies the pre-processing steps in this class, and filters out sources which do not pass.
@@ -428,7 +454,7 @@ class CutoutPreprocessor:
         if output_file_path is None:
             output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5' if save_hdf5 else pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
         
-        dataset, cat_info = self.load_initial_dataset()
+        dataset, cat_info = self.load_initial_dataset(dataset_file_path)
         
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)

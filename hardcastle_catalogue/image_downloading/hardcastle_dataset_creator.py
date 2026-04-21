@@ -129,15 +129,42 @@ class HardcastleDatasetCreator:
     
         return padded
     
+    def clean_cutout_images(self, hardcastle_catalogue : list[dict]) -> np.ndarray:
+        """
+        Cleans the cutout images in the Hardcastle catalogue by filling missing or incomplete images with NaNs.
+
+         - If an item is missing pixel values, it fills the 'pixel_values' field with an 80x80 array of NaNs.
+         - If an item has pixel values that are not of shape (80, 80), it pads the existing pixel values with NaNs to make it 80x80.
+
+         This ensures that all items in the catalogue have a consistent shape for their pixel values, and that missing or incomplete data is clearly marked with NaNs.
+
+         :param hardcastle_catalogue: The list of dictionaries representing the Hardcastle catalogue, where each dictionary should contain a 'pixel_values' field.
+         :return: The cleaned Hardcastle catalogue with consistent pixel value shapes and NaN-filled entries for missing or incomplete data.
+        """
+        data = np.empty((len(hardcastle_catalogue), 80, 80), dtype=np.float32)
+        for idx, item in enumerate(tqdm(hardcastle_catalogue, desc="Cleaning & compacting pixel values")):
+            # Some cutouts are missing, and so no matching pixel values
+            if 'pixel_values' not in item:
+                self.logger.warning(f"Item {idx} is missing pixel values. Recording as NaNs.")
+                item['pixel_values'] = np.full((80, 80), np.nan)
+            # Some cutouts are incomplete and are not of 80 x 80 shape, empty spaces are filled by NaNs
+            elif item['pixel_values'].shape != (80, 80):
+                self.logger.warning(f"Item {idx} has incomplete pixel values of shape {item['pixel_values'].shape}. Filling with NaNs.")
+                item['pixel_values'] = self.pad_to_80x80(item['pixel_values'])
+            # Assign the cleaned pixel values to the data array
+            data[idx] = item['pixel_values']
+        return data
+    
     # NOTE - NOT RECOMMENDED. Saving FITS files with many HDUs is very slow, the .h5 method is recommended
     def save_to_fits(self,
                      hardcastle_header : list,
-                     hardcastle_catalogue : list[dict],
+                     data : np.ndarray,
                      save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
         Saves the full Hardcastle catalogue with pixel values to a FITS file.
 
-        :param hardcastle_catalogue: The full Hardcastle catalogue with pixel values.
+        :param hardcastle_header: The header information for the Hardcastle catalogue.
+        :param data: The list of pixel value arrays for each image.
         :param file_path: The path to the input FITS file.
         :param save_path: The path to save the FITS file.
         """
@@ -160,9 +187,9 @@ class HardcastleDatasetCreator:
 
         # Create extension HDUs as ImageHDUs for each cutout image
         self.logger.info("Creating ImageHDUs for each cutout image...")
-        for idx, item in enumerate(tqdm(hardcastle_catalogue, desc="Creating ImageHDUs")):
+        for idx, item in enumerate(tqdm(data, desc="Creating ImageHDUs")):
             try:
-                hdu = fits.ImageHDU(data=item['pixel_values'], name=f"CUTOUT_IMAGE{idx}")
+                hdu = fits.ImageHDU(data=item, name=f"CUTOUT_IMAGE{idx}")
             except KeyError as e:
                 self.logger.error(f"Missing pixel values for item {idx}: {e}. Not saving this to file.")
                 continue
@@ -186,26 +213,15 @@ class HardcastleDatasetCreator:
 
     def save_to_h5(self,
                    hardcastle_header : list,
-                   hardcastle_catalogue : list[dict],
+                   data : np.ndarray,
                    save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
         """
         Saves the full Hardcastle catalogue with pixel values to an HDF5 file.
 
-        :param hardcastle_catalogue: The full Hardcastle catalogue with pixel values.
+        :param hardcastle_header: The header information for the Hardcastle catalogue.
+        :param data: The list of pixel value arrays for each image.
         :param save_path: The path to save the HDF5 file.
         """
-        self.logger.info(f"Cleaning pixel values")
-        for idx, item in enumerate(tqdm(hardcastle_catalogue, desc="Cleaning pixel values")):
-            # Some cutouts are missing, and so no matching pixel values
-            if 'pixel_values' not in item:
-                self.logger.warning(f"Item {idx} is missing pixel values. Recording as NaNs.")
-                item['pixel_values'] = np.full((80, 80), np.nan)
-            # Some cutouts are incomplete and are not of 80 x 80 shape, empty spaces are filled by NaNs
-            elif item['pixel_values'].shape != (80, 80):
-                self.logger.warning(f"Item {idx} has incomplete pixel values of shape {item['pixel_values'].shape}. Filling with NaNs.")
-                item['pixel_values'] = self.pad_to_80x80(item['pixel_values'])
-        data = [item['pixel_values'] for item in hardcastle_catalogue]        
-        
         self.logger.info(f"Saving Hardcastle catalogue to {save_path} in HDF5 format...")
         with h5py.File(save_path, 'w') as f:
             f.create_dataset( 'images', data=data, compression='gzip', chunks=True )
@@ -228,13 +244,16 @@ class HardcastleDatasetCreator:
         list_of_dicts = [{} for _ in range(len(hardcastle_header))]
         hardcastle_catalogue = self.load_cutout_images(list_of_dicts, folder_path)
 
+        # Clean the cutout images by filling missing or incomplete images with NaNs
+        clean_catalogue = self.clean_cutout_images(hardcastle_catalogue)
+
         # Save file
-        self.save_to_h5(hardcastle_header, hardcastle_catalogue, save_path) if save_hdf5 else self.save_to_fits(hardcastle_header, hardcastle_catalogue, save_path)
+        self.save_to_h5(hardcastle_header, clean_catalogue, save_path) if save_hdf5 else self.save_to_fits(hardcastle_header, clean_catalogue, save_path)
 
 
 if __name__ == "__main__":
-    occ = HardcastleDatasetCreator()
-    occ.create_hardcastle_dataset()
+    hcdc = HardcastleDatasetCreator()
+    hcdc.create_hardcastle_dataset()
 
     # # Test loading the created catalogue
     # with fits.open('hardcastle_catalogue/hardcastle_catalogue_with_images.fits') as hdul:
