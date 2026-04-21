@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime
 from inputimeout import inputimeout, TimeoutOccurred
+import math
 
 import torch
 
@@ -154,7 +155,8 @@ class OutputManager:
         if results_folder.exists():
             i = 1
             while results_folder.exists():
-                model_name = f"{model_name if i==1 else model_name[:-2]}_{i}"
+                length_of_i = math.ceil( math.log10( i + 1 ) )
+                model_name = f"{model_name if i==1 else model_name[:-( 1 + length_of_i ]}_{i}"
                 results_folder = self.parent_dir.joinpath(model_name)
                 i += 1
             self.logger.warning(

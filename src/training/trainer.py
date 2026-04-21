@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 
 import torch
@@ -98,8 +99,6 @@ class DiffusionTrainer:
     def __init__(
         self,
         *,
-        rank,
-        world_size,
         config,
         dataset,
         device=None,
@@ -191,8 +190,20 @@ class DiffusionTrainer:
             self.logger.info(f"Starting training at iteration {self.iter_start}.")
 
         # Initialize device
-        device_ids_by_space = visible_gpus_by_space()
-        self.device = rank #device or torch.device("cuda", device_ids_by_space[0])
+        try:
+            self.local_rank = int(os.environ["LOCAL_RANK"])
+            self.global_rank = int(os.environ["RANK"])
+            self.device = torch.device( "cuda", self.local_rank )
+            self.distributed = True
+            self.logger.info( "Distributed" )
+        except KeyError as e:
+            self.logger.info(f"Falling back to single-node: {e}")  
+            device_ids_by_space = visible_gpus_by_space()
+            self.device = device or torch.device("cuda", device_ids_by_space[0])
+            self.distributed = False
+            self.logger.info( "Single-Node" )
+
+
         self.logger.info(f"Working on: {self.device}")
 
         # Initialize Model
@@ -212,11 +223,10 @@ class DiffusionTrainer:
         self.model.to(self.device)
 
         # Initialize parallel training
-        if self.config.n_devices > 1:
-            dev_ids = device_ids_by_space[: self.config.n_devices]
-            self.logger.info(f"Parallel training on multiple GPUs: {rank}/{world_size}.")
-            self.model.to(f"cuda:{dev_ids[0]}")  # Necessary for DataParallel
-            self.model = DistributedDataParallel(self.model, device_ids=[rank])
+        if self.distributed:
+            self.logger.info(f"Parallel training on multiple GPUs - local rank {self.local_rank}, global rank {self.global_rank}")
+            self.model.to(f"cuda:{self.local_rank}")  # Necessary for DataParallel
+            self.model = DistributedDataParallel(self.model, device_ids=[self.local_rank])
             self.inner_model = self.model.module
 
         # EMA Model is initialized after 500 iterations in the training loop

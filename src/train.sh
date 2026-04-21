@@ -7,8 +7,7 @@
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=4
-#SBATCH --ntasks-per-node=2
-#SBATCH --exclude=compute-0-9,compute-0-1,compute-0-11,compute-0-14,compute-0-15,compute-0-17
+#SBATCH --exclude=compute-0-9,compute-0-1,compute-0-11,compute-0-14,compute-0-15,compute-0-17,compute-0-5,compute-0-8
 
 set -e
 
@@ -16,16 +15,26 @@ pwd;
 
 echo ">>>activating venv"
 source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
-echo "Array Index:"
-echo $SLURM_ARRAY_TASK_ID
-echo "Array Count:"
-echo $SLURM_ARRAY_TASK_COUNT
-echo "World Size:"
-echo $SLURM_NTASKS
 echo "Nodes:"
 echo $SLURM_JOB_NUM_NODES
-echo ">>>starting program"
-export N_CPUS=$SLURM_CPUS_PER_TASK
+export MASTER_PORT=12365
 export HDF5_USE_FILE_LOCKING='FALSE'
-python /share/nas2_3/lgreen/mphys-rlf/src/training/train.py
+
+## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
+nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
+nodes_array=($nodes)
+head_node=${nodes_array[0]}
+head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
+
+echo Node IP: $head_node_ip
+export LOGLEVEL=INFO
+
+echo ">>>starting program via torchrun"
+srun torchrun \
+    --nnodes 4 \
+    --nproc_per_node 2 \
+    --rdzv_id $RANDOM \
+    --rdzv_backend c10d \
+    --rdzv_endpoint $head_node_ip:$MASTER_PORT \
+    /share/nas2_3/lgreen/mphys-rlf/src/training/train.py
 
