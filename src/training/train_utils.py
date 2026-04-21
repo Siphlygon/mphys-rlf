@@ -141,7 +141,7 @@ class use_ema:
         self.model_state = deepcopy(self.model.state_dict())
         self.model.load_state_dict(self.ema_model.module.state_dict())
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         """
         Restore the original model parameters.
         """

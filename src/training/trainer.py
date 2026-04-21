@@ -4,7 +4,7 @@ from datetime import datetime
 import torch
 from torch import Tensor
 from torch import optim
-from torch.nn.parallel import DataParallel
+from torch.nn.parallel import DistributedDataParallel
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, random_split
 
@@ -98,6 +98,8 @@ class DiffusionTrainer:
     def __init__(
         self,
         *,
+        rank,
+        world_size,
         config,
         dataset,
         device=None,
@@ -190,7 +192,7 @@ class DiffusionTrainer:
 
         # Initialize device
         device_ids_by_space = visible_gpus_by_space()
-        self.device = device or torch.device("cuda", device_ids_by_space[0])
+        self.device = rank #device or torch.device("cuda", device_ids_by_space[0])
         self.logger.info(f"Working on: {self.device}")
 
         # Initialize Model
@@ -212,9 +214,9 @@ class DiffusionTrainer:
         # Initialize parallel training
         if self.config.n_devices > 1:
             dev_ids = device_ids_by_space[: self.config.n_devices]
-            self.logger.info(f"Parallel training on multiple GPUs: {dev_ids}.")
+            self.logger.info(f"Parallel training on multiple GPUs: {rank}/{world_size}.")
             self.model.to(f"cuda:{dev_ids[0]}")  # Necessary for DataParallel
-            self.model = DataParallel(self.model, device_ids=dev_ids)
+            self.model = DistributedDataParallel(self.model, device_ids=[rank])
             self.inner_model = self.model.module
 
         # EMA Model is initialized after 500 iterations in the training loop
