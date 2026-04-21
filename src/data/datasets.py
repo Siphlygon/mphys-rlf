@@ -96,6 +96,8 @@ class ImagePathDataset(torch.utils.data.Dataset):
             i = np.where(self.names == i)[0][0]
 
         img = self.data[i]
+        if img.ndim == 2:
+            img = torch.unsqueeze( img, 0 )
         if self.transforms is not None:
             img = self.transforms(img)
         context = [getattr(self, attr)[i] for attr in self._context]
@@ -191,7 +193,7 @@ class ImagePathDataset(torch.utils.data.Dataset):
 
             # Add variable attributes depending on keys in file
             for key in f.keys():
-                if key not in ["images", "names", "catalog"]:
+                if key not in ["images", "names", "catalog", "cat_info"]:
                     setattr(self, key, torch.tensor(f[key][idxs], dtype=torch.float32))
 
             # Load selected attributes if catalog is available

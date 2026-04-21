@@ -218,7 +218,7 @@ def load_data(dataset, batch_size, shuffle=True):
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=4,
+        num_workers=1,
         drop_last=True,
         pin_memory=True,
     )

@@ -19,7 +19,8 @@ from astropy.coordinates import SkyCoord
 from torchvision.datasets.utils import download_url
 
 import utils.logging
-from utils.paths import FIRST_DATA_PARENT
+from utils.paths import IMG_DATA_PARENT
+FIRST_DATA_PARENT = IMG_DATA_PARENT/"FIRST"
 
 
 def label_to_class_dict(definition="literature"):

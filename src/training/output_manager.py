@@ -191,7 +191,7 @@ class OutputManager:
         csv.writer
             Writer object for the file.
         """
-        return csv.writer(f, delimiter="", quoting=csv.QUOTE_NONE)
+        return csv.writer(f, delimiter=",", quoting=csv.QUOTE_NONE)
 
     def _init_loss_file(self, file, columns=["iteration", "loss"]):
         """

@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 import torch
+from torch import Tensor
 from torch import optim
 from torch.nn.parallel import DataParallel
 from torch.cuda.amp import autocast, GradScaler
@@ -14,6 +15,7 @@ from training.output_manager import OutputManager
 from utils.device_utils import visible_gpus_by_space
 from model.model_utils import load_parameters
 from model.config import ModelConfig
+from typing import Any, cast, Literal, Union
 
 
 class DiffusionTrainer:
@@ -309,10 +311,15 @@ class DiffusionTrainer:
         self.train_set = self.dataset
         # Split dataset into train and validation sets
         if split:
+            # B/c of downgraded pytorch we need to set sizes manually
+            proportions = [.9, .1]
+            lengths = [int(p * len(self.dataset)) for p in proportions]
+            lengths[-1] = len(self.dataset) - sum(lengths[:-1])
+
             # Manual seed for reproducibility of results
             generator = torch.Generator().manual_seed(42)
             self.train_set, self.val_set = random_split(
-                self.dataset, [0.9, 0.1], generator=generator
+                self.dataset, lengths, generator=generator
             )
             assert (
                 len(self.val_set) >= self.config.batch_size
@@ -581,7 +588,7 @@ class DiffusionTrainer:
             if self.ema_model is None:
                 self.ema_model = torch.optim.swa_utils.AveragedModel(
                     self.inner_model,
-                    multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(
+                    avg_fn=get_ema_avg_fn(
                         self.config.ema_rate
                     ),
                 )
@@ -724,3 +731,37 @@ class DiffusionTrainer:
             )
         OM.save_config(self.config.param_dict, iterations=i + 1)
         loss_buffer.clear()
+
+## compat fn from https://github.com/pytorch/pytorch/blob/v2.11.0/torch/optim/swa_utils.py#L37 ##
+def get_ema_avg_fn(decay=0.999):
+    """Get the function applying exponential moving average (EMA) across multiple params.
+
+    The EMA is computed as:
+
+    .. math::
+        W_0^{\\text{EMA}} = W_0^{\\text{model}}
+
+    .. math::
+        W_{t+1}^{\\text{EMA}} = \\text{decay} \\times W_t^{\\text{EMA}} + (1 - \\text{decay}) \\times W_{t+1}^{\\text{model}}
+
+    where :math:`W_t^{\\text{EMA}}` is the EMA parameter at step :math:`t`,
+    :math:`W_t^{\\text{model}}` is the model parameter at step :math:`t`,
+    and :math:`\\text{decay}` is the decay rate (default: 0.999).
+
+    Args:
+        decay (float): Decay rate for EMA. Must be in the range [0, 1]. Default: 0.999
+
+    Returns:
+        Callable: A function that updates EMA parameters given current model parameters
+    """
+
+    if decay < 0.0 or decay > 1.0:
+        raise ValueError(
+            f"Invalid decay value {decay} provided. Please provide a value in [0,1] range."
+        )
+
+    @torch.no_grad()
+    def ema_update(ema_param: Tensor, current_param: Tensor, num_averaged):
+        return decay * ema_param + (1 - decay) * current_param
+
+    return ema_update

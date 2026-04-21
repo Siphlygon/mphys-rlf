@@ -11,7 +11,7 @@ if __name__ == "__main__":
 
     # Set model preset:
     # (i.e. name of the json file in the model_configs directory)
-    model_preset = ""
+    model_preset = "LOFAR_retrained"
 
     # Hyperparameters
     conf = ModelConfig.from_preset(model_preset)
@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # conf.model_name = "Alternative_Name"
 
     # Load dataset:
-    dataset = datasets.TrainDatasetFIRST()
+    dataset = datasets.ImagePathDataset( "hardcastle_catalogue/clean_hardcastle_catalogue.hdf5" )
 
     # Initialize trainer
     trainer = DiffusionTrainer(config=conf, dataset=dataset)

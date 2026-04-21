@@ -422,11 +422,14 @@ class CutoutPreprocessor:
         # Filter the catalogue information to only include the sources in the clean dataset
         indices = clean_dataset["index"].values
         clean_cat_info = cat_info[indices]
+        images = np.stack(clean_dataset['pixel_values'].values, axis=0)
 
         # Save the cleaned dataset to a FITS file
         #self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
         with h5py.File(output_file_path, 'w') as f:
-            f.create_dataset( 'images', data=clean_dataset[ 'pixel_values' ], compression='gzip', chunks=True )
+            f.create_dataset( 'images', data=images, compression='gzip', chunks=True )
+            f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
+            f.create_dataset( 'cat_info', data=clean_cat_info, compression='gzip', chunks=True )
 
 
 if __name__ == "__main__":
