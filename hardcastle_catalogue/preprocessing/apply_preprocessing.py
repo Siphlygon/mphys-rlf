@@ -474,7 +474,7 @@ class CutoutPreprocessor:
         else:
             self.save_clean_dataset_to_fits(clean_dataset, clean_cat_info, output_file_path)
 
-e
+
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
     preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
