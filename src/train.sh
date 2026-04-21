@@ -20,6 +20,10 @@ echo "Array Index:"
 echo $SLURM_ARRAY_TASK_ID
 echo "Array Count:"
 echo $SLURM_ARRAY_TASK_COUNT
+echo "World Size:"
+echo $SLURM_NTASKS
+echo "Nodes:"
+echo $SLURM_JOB_NUM_NODES
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 export HDF5_USE_FILE_LOCKING='FALSE'

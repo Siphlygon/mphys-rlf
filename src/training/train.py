@@ -5,14 +5,13 @@ from model.config import ModelConfig
 from training.trainer import DiffusionTrainer
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import os
 
 
 if __name__ == "__main__":
     # Limit visible GPUs if you want:
     #device_utils.set_visible_devices(1)
-    nodes = int(os.environ["SLURM_JOB_NUM_NODES"])
-    tasks_per_node = int(os.environ["SLURM_NTASKS_PER_NODE"])
-    world_size = nodes * tasks_per_node
+    world_size = int(os.environ["SLURM_NTASKS"])
 
     # Set model preset:
     # (i.e. name of the json file in the model_configs directory)
