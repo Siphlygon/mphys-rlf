@@ -233,7 +233,7 @@ class HardcastleDatasetCreator:
                                   save_hdf5: bool = True,
                                   file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
                                   folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/',
-                                  save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+                                  save_path : Path | None = None):
         """
         Creates the Hardcastle dataset by loading the header and images, then combining them.
         """
@@ -248,6 +248,8 @@ class HardcastleDatasetCreator:
         clean_catalogue = self.clean_cutout_images(hardcastle_catalogue)
 
         # Save file
+        if save_path is None:
+            save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5' if save_hdf5 else pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
         self.save_to_h5(hardcastle_header, clean_catalogue, save_path) if save_hdf5 else self.save_to_fits(hardcastle_header, clean_catalogue, save_path)
 
 
