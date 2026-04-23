@@ -488,11 +488,13 @@ class DiffusionTrainer:
         # Initialise wandb logging
         #wandb.login(key=os.environ.get("WANDB_KEY"))
         if self.is_primary():
+            wandb.login(key=os.environ.get("WANDB_KEY"))
             wandb.init(
                 entity="amparr-stellarium",
                 project="diffusion-radio-galaxies",
                 config=self.config.pretrained_model
             )
+            self.logger.info("Initialized Weights & Biases logging.")
         # wandb.login()
         # run = wandb.init(
         #     entity="amparr-stellarium",
