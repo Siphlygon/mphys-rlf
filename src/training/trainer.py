@@ -492,7 +492,7 @@ class DiffusionTrainer:
             wandb.init(
                 entity="amparr-stellarium",
                 project="diffusion-radio-galaxies",
-                config=self.config.pretrained_model
+                config=self.config
             )
             self.logger.info("Initialized Weights & Biases logging.")
 
