@@ -495,12 +495,6 @@ class DiffusionTrainer:
                 config=self.config.pretrained_model
             )
             self.logger.info("Initialized Weights & Biases logging.")
-        # wandb.login()
-        # run = wandb.init(
-        #     entity="amparr-stellarium",
-        #     project="diffusion-radio-galaxies",
-        #     config=self.config,
-        # )
 
         # Training loop
         for i in range(self.iter_start, iterations):
@@ -530,13 +524,16 @@ class DiffusionTrainer:
                 # Write output
                 if write_output:
                     OM.write_val_losses([[i + 1, *val_loss]])
-                
-                # Log to wandb
-                wandb.log({"loss": loss, "val_loss": val_loss[0]})
-            else:
-                # Log training loss to wandb
-                wandb.log({"loss": loss})
-
+                    
+            # Log to wandb if primary process
+            if self.is_primary():
+                wandb.log(
+                    {
+                        "train_loss": loss
+                    },
+                    step=i + 1,
+                )
+            
             # Save snapshot at snapshot interval if desired
             if (
                 self.config.snapshot_interval
@@ -555,7 +552,6 @@ class DiffusionTrainer:
                 OM.save_power_ema(self.power_ema_models, i + 1, self.power_ema_gammas)
 
         self.logger.info(f"Training time {dt()} - Done!")
-        run.finish()
 
     def unpack_batch(self, batch):
         """
