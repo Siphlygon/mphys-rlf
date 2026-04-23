@@ -9,6 +9,9 @@ import os
 import torch
 
 def ddp_setup():
+    """
+    Set up Distributed Data Parallel (DDP) for multi-GPU training.
+    """
     local_rank = os.environ[ "LOCAL_RANK" ]
     rank = os.environ[ "RANK" ]
     print( f"Local rank/Global rank: {local_rank}/{rank}" )
@@ -16,12 +19,21 @@ def ddp_setup():
     dist.init_process_group(backend="nccl")
 
 def ddp_cleanup():
+    """
+    Clean up the DDP process group after training is complete.
+    """
     dist.destroy_process_group()
 
 
 
 if __name__ == "__main__":
-    ddp_setup()
+    # Initialise DDP
+    try:
+        ddp_setup()
+    except KeyError as e:
+        print(f"Error occurred while setting up DDP: {e}")
+        print("Using single GPU mode instead.")
+
     # Limit visible GPUs if you want:
     #device_utils.set_visible_devices(1)
 
@@ -44,5 +56,6 @@ if __name__ == "__main__":
     # Start training
     trainer.training_loop()
 
+    # Clean up DDP
     ddp_cleanup()
 

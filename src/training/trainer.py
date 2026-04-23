@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime
+import wandb
 
 import torch
 from torch import Tensor
@@ -422,6 +423,17 @@ class DiffusionTrainer:
             for gamma, model in zip(self.power_ema_gammas, self.power_ema_models):
                 model.load_state_dict(self.read_parameters(f"power_ema_{gamma}"))
 
+    def is_primary(self):
+        """
+        Check if the current process is the primary process in distributed training.
+
+        Returns
+        -------
+        bool
+            True if the current process is the primary process, False otherwise.
+        """
+        return self.primary
+
     def training_loop(
         self,
         iterations=None,
@@ -473,6 +485,21 @@ class DiffusionTrainer:
             f"Remaining iterations {iterations - self.iter_start:_}"
         )
 
+        # Initialise wandb logging
+        #wandb.login(key=os.environ.get("WANDB_KEY"))
+        if self.is_primary():
+            wandb.init(
+                entity="amparr-stellarium",
+                project="diffusion-radio-galaxies",
+                config=self.config.pretrained_model
+            )
+        # wandb.login()
+        # run = wandb.init(
+        #     entity="amparr-stellarium",
+        #     project="diffusion-radio-galaxies",
+        #     config=self.config,
+        # )
+
         # Training loop
         for i in range(self.iter_start, iterations):
 
@@ -501,6 +528,12 @@ class DiffusionTrainer:
                 # Write output
                 if write_output:
                     OM.write_val_losses([[i + 1, *val_loss]])
+                
+                # Log to wandb
+                wandb.log({"loss": loss, "val_loss": val_loss[0]})
+            else:
+                # Log training loss to wandb
+                wandb.log({"loss": loss})
 
             # Save snapshot at snapshot interval if desired
             if (
@@ -520,6 +553,7 @@ class DiffusionTrainer:
                 OM.save_power_ema(self.power_ema_models, i + 1, self.power_ema_gammas)
 
         self.logger.info(f"Training time {dt()} - Done!")
+        run.finish()
 
     def unpack_batch(self, batch):
         """
