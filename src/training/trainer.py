@@ -503,6 +503,15 @@ class DiffusionTrainer:
             loss = self.training_step(scaler, i)
             loss_buffer.append([i + 1, loss.item()])
 
+            # Log to wandb if primary process
+            if self.is_primary():
+                wandb.log(
+                    {
+                        "train_loss": loss
+                    },
+                    step=i + 1,
+                )
+
             # Log & write output at log interval
             if (i + 1) % self.config.log_interval == 0:
 
@@ -524,15 +533,16 @@ class DiffusionTrainer:
                 # Write output
                 if write_output:
                     OM.write_val_losses([[i + 1, *val_loss]])
-                    
-            # Log to wandb if primary process
-            if self.is_primary():
-                wandb.log(
-                    {
-                        "train_loss": loss
-                    },
-                    step=i + 1,
-                )
+                
+                # Log to wandb if primary process
+                if self.is_primary():
+                    wandb.log(
+                        {
+                            "val_loss": val_loss[0],
+                            "val_loss_ema": val_loss[1]
+                        },
+                        step=i + 1,
+                    )
             
             # Save snapshot at snapshot interval if desired
             if (
