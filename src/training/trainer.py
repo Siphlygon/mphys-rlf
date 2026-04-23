@@ -183,25 +183,28 @@ class DiffusionTrainer:
         )
         self.logger = logging.getLogger(self.OM.__class__.__name__)
 
-        # Initialize iteration count
-        self.iter_start = 0
-        if pickup:
-            self.iter_start = self.OM.read_iter_count()
-            self.logger.info(f"Starting training at iteration {self.iter_start}.")
-
         # Initialize device
         try:
             self.local_rank = int(os.environ["LOCAL_RANK"])
             self.global_rank = int(os.environ["RANK"])
             self.device = torch.device( "cuda", self.local_rank )
             self.distributed = True
+            self.primary = self.global_rank == 0
             self.logger.info( "Distributed" )
         except KeyError as e:
             self.logger.info(f"Falling back to single-node: {e}")  
             device_ids_by_space = visible_gpus_by_space()
             self.device = device or torch.device("cuda", device_ids_by_space[0])
             self.distributed = False
+            self.primary = True
             self.logger.info( "Single-Node" )
+
+        # Initialize iteration count
+        self.iter_start = 0
+        if pickup:
+            self.iter_start = self.OM.read_iter_count()
+            self.logger.info(f"Starting training at iteration {self.iter_start}.")
+
 
 
         self.logger.info(f"Working on: {self.device}")
@@ -340,7 +343,7 @@ class DiffusionTrainer:
                 self.val_set,
                 batch_size=self.config.batch_size,
                 shuffle=False,
-                num_workers=1,
+                num_workers=0,
                 drop_last=True,
             )
 
@@ -590,8 +593,10 @@ class DiffusionTrainer:
 
         # Backward pass & optimizer step
         scaler.scale(loss).backward()
+        scaler.unscale_(self.optimizer)
         scaler.step(self.optimizer)
         scaler.update()
+
 
         # Start updating EMA model after 500 it or at first val. interval.
         if (it + 1) >= min(self.val_every, 500):
@@ -612,6 +617,9 @@ class DiffusionTrainer:
         if self.power_ema:
             for power_ema_model in self.power_ema_models:
                 power_ema_model.update_parameters(self.inner_model)
+
+        if self.primary:
+            self.logger.info( f"iteration {it} complete" )
 
         return loss
 

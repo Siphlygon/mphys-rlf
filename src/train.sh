@@ -6,7 +6,7 @@
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
-#SBATCH --nodes=4
+#SBATCH --nodes=1
 #SBATCH --exclude=compute-0-9,compute-0-1,compute-0-11,compute-0-14,compute-0-15,compute-0-17,compute-0-5,compute-0-8
 
 set -e
@@ -28,10 +28,12 @@ head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
 
 echo Node IP: $head_node_ip
 export LOGLEVEL=INFO
+export NCCL_SOCKET_IFNAME=em1
+export GLOO_SOCKET_IFNAME=em1
 
 echo ">>>starting program via torchrun"
 srun torchrun \
-    --nnodes 4 \
+    --nnodes 1 \
     --nproc_per_node 2 \
     --rdzv_id $RANDOM \
     --rdzv_backend c10d \

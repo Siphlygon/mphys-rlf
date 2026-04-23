@@ -156,7 +156,7 @@ class OutputManager:
             i = 1
             while results_folder.exists():
                 length_of_i = math.ceil( math.log10( i + 1 ) )
-                model_name = f"{model_name if i==1 else model_name[:-( 1 + length_of_i ]}_{i}"
+                model_name = f"{model_name if i==1 else model_name[:-( length_of_i ) ]}_{i}"
                 results_folder = self.parent_dir.joinpath(model_name)
                 i += 1
             self.logger.warning(
