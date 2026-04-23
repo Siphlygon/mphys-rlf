@@ -25,50 +25,72 @@ class CutoutPreprocessor:
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         self.snr_threshold = 5
         self.edge_max_threshold = 0.8
-        self.dataset, self.cat_info = self.load_initial_dataset( dataset_file_path )
 
     def load_initial_dataset(self,
-                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
         """
-        Loads the initial dataset from a FITS file into a pandas dataframe for future use.
+        Loads the initial dataset from a HDF5 or FITS file into a pandas dataframe for future use.
 
-        :param dataset_file_path: The path to the FITS file containing the initial dataset with header information and pixel values.
+        :param dataset_file_path: The path to the HDF5 or FITS file containing the initial dataset with header information and pixel values.
         :return: A pandas DataFrame containing the initial dataset with header information and pixel values.
         """
-        self.logger.info("Loading Hardcastle dataset from FITS file...")
+        catalogue_data = []
+        
+        if dataset_file_path.suffix == '.h5':
+            self.logger.info("Loading Hardcastle data from H5 file...")
+            # Extract the data from the h5 file
+            with h5py.File(dataset_file_path, 'r') as h5file:
+                catalogue_info = h5file['cat_info'][:]
+                images = h5file['images'][:]
+                      
+        elif dataset_file_path.suffix == '.fits':
+            def load_catalogue_data(memmap=True):
+                catalogue_data = []
+                # Get the information from the Hardcastle catalogue
+                self.logger.info("Loading Hardcastle dataset from FITS file...")
+                with fits.open(dataset_file_path, memmap=memmap) as hdul:
+                    # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
+                    catalogue_info = hdul[1].data
 
-        def load_catalogue_data(memmap=True):
-            catalogue_data = []
-            # Get the information from the Hardcastle catalogue
-            with fits.open(dataset_file_path, memmap=memmap) as hdul:
-                # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
-                catalogue_info = hdul[1].data
+                    # Remove the first two HDUs which are just Primary and the header table
+                    hdul = hdul[2:]
 
-                # Remove the first two HDUs which are just Primary and the header table
-                hdul = hdul[2:]
+                    images = []
+                    # Extract the pixel values from each imageHDU
+                    for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
+                        try:
+                            images.append(hdu.data.astype(np.float32))
 
-                # Extract the pixel values from each imageHDU
-                for idx, hdu in enumerate(tqdm(hdul, desc="Extracting pixel values from Hardcastle dataset")):
-                    try:
-                        if isinstance(hdu.data, np.ndarray):
-                            # n.b., max pixel value is ~40, so float16 is appropriate
-                            catalogue_data.append({'index': idx, 'pixel_values': hdu.data.astype(np.float32), 'has_image': True})
-                        else:
+                        except Exception as e:
                             self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
-                            catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
-                    except Exception as e:
-                        self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
-                        catalogue_data.append({'index': idx, 'pixel_values': np.nan, 'has_image': False})
+                            images.append(np.full((80, 80), np.nan))
+                
+                return catalogue_info, images
 
-            return catalogue_info, catalogue_data
-
-        # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
-        # we can disable memmap
-        try:
-            catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
-        except Exception as e:
-            self.logger.error(f"Error loading catalogue data w/o memmap: {e}. Retrying with memmap...")
-            catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
+            # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
+            # we can disable memmap
+            try:
+                catalogue_info, catalogue_data = load_catalogue_data(memmap=False)
+            except Exception as e:
+                self.logger.error(f"Error loading catalogue data without memmap: {e}. Retrying with memmap...")
+                catalogue_info, catalogue_data = load_catalogue_data(memmap=True)
+    
+        else:
+            self.logger.error(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
+            raise ValueError(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
+    
+        # Extract the pixel values from images and put into dataframe
+        for idx, image in enumerate(tqdm(images, desc="Extracting pixel values from Hardcastle dataset")):
+            try:
+                if isinstance(image, np.ndarray):
+                    # n.b., max pixel value is ~40, so float16 is appropriate
+                    catalogue_data.append({'index': idx, 'pixel_values': image.astype(np.float32), 'has_image': True})
+                else:
+                    self.logger.error(f"Unexpected data type for image {idx}: {type(image)}. Expected numpy array.")
+                    catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
+            except Exception as e:
+                self.logger.error(f"Error loading Hardcastle dataset item {idx}: {e}")
+                catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
 
         # Initialise all other columns to default right now
         catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
@@ -84,10 +106,10 @@ class CutoutPreprocessor:
     Code below modified from the original LOFAR-diffusion repository, found here:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
     """
-    def calculate_SNR_sigma(self,
+    def calculate_SNR_sigma_vectorised(self,
                             images : np.ndarray,
                             broken : np.ndarray,
-                            threshold : float = 5) -> float:
+                            threshold : float = 5) -> np.ndarray:
         """
         Identifies a source and background region based on a threshold with the median pixel value in a region and the
         standard deviation of the pixel values in that region. The S/N is then calculated as the ratio of average pixel
@@ -97,14 +119,9 @@ class CutoutPreprocessor:
         :param threshold: The sigma threshold value to use for identifying source and background regions.
         :return: The S/N_sigma ratio for the image, or -1 if no source region is identified.
         """
-
         # make (n_x, n_y) into (1, n_x, n_y) if passed as such
         if images.ndim == 2:
             images = images[ np.newaxis, :, : ]
-
-
-        # n.b. deliberate structure of a nested function here so that we don't need to run sigma_clipped_stats every
-        # single time on every single source. It's just faster
 
         # this mask determines which images should continue with recursion - all false indicates recursion should end
         snr = np.full( images.shape[ 0 ], np.nan )
@@ -115,7 +132,7 @@ class CutoutPreprocessor:
                          / ( images.max( axis=(1,2) ) - images.min( axis=(1,2) ) )[ :, np.newaxis, np.newaxis ]
 
         self.logger.info( 'sigma clipped stats - this might take a while' )
-        means, medians, stddevs = sigma_clipped_stats( min_max_images, axis=(1, 2) )
+        _, medians, stddevs = sigma_clipped_stats( min_max_images, axis=(1, 2) )
         self.logger.info( 'sigma clipped stats done' )
 
         while np.isnan( snr ).any() and not ( thresh <= 0 ).any():
@@ -152,18 +169,57 @@ class CutoutPreprocessor:
             
 
         return snr
+    
+    """
+    Code below modified from the original LOFAR-diffusion repository, found here:
+    https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
+    """
+    def calculate_SNR_sigma_single(self,
+                            image : np.ndarray,
+                            threshold : float = 5) -> float:
+        """
+        Identifies a source and background region based on a threshold with the median pixel value in a region and the
+        standard deviation of the pixel values in that region. The S/N is then calculated as the ratio of average pixel
+        values in both regions.
 
-    def identify_incomplete_image(self, image: np.ndarray) -> bool:
+        :param image: The image to calculate the S/N_sigma ratio for.
+        :param threshold: The sigma threshold value to use for identifying source and background regions.
+        :return: The S/N_sigma ratio for the image, or -1 if no source region is identified.
+        """
+        _, median, stddev = sigma_clipped_stats(image)
+
+        def apply_src_threshold(thresh):
+            # Apply the threshold to identify source and background regions
+            mask = image > median + thresh * stddev
+
+            # No source region identified; lower threshold and try again
+            if mask.sum() == 0:
+                return apply_src_threshold(thresh - 0.5)
+
+            # The whole region is a source region -- pretty bad but doesn't occur in the data
+            if image[~mask].sum() == 0:
+                self.logger.error("No pixels below threshold.")
+                return -1
+
+            # Calculate the S/N as the ratio of average pixel values in the source and background regions, weighted by
+            # the number of pixels in each region
+            return image[mask].sum() / image[~mask].sum() * (~mask).sum() / mask.sum()
+
+        # Apply the recursive threshold
+        return apply_src_threshold(threshold)
+
+    def identify_incomplete_image_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether there is incomplete coverage in the target cutout, which is categorised by an array size
-        that is not the standard (80x80)
+        that is not the standard (80x80). This is handled early in the pre-processing chain and results in a 80x80
+        grid full of NaNs.
 
         :param image: The image to calculate the S/N_sigma ratio for.
         :return: Whether the image is incomplete or not.
         """
-        return image.shape != (80, 80)
+        return image.shape != (80, 80) or np.isnan(image).any()
 
-    def identify_broken_source(self, image: np.ndarray) -> bool:
+    def identify_broken_source_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether an image is a "broken source" based on the presence of blank values or -99 values.
 
@@ -177,13 +233,13 @@ class CutoutPreprocessor:
 
         # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
 
-        return (image == -99).any() or (image == 0).all()
+        return (image == -99).any() or (image == 0).all() or np.isnan(image).all()
 
     """
     Code below modified from the original LOFAR-diffusion repository, found here:
     https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
     """
-    def calculate_edge_max(self, image: np.ndarray) -> float:
+    def calculate_edge_max_single(self, image: np.ndarray) -> float:
         """
         Calculates the maximum pixel value among the edge pixels of the image.
 
@@ -217,8 +273,9 @@ class CutoutPreprocessor:
         incomplete_mask = np.zeros(len(dataset), dtype=bool)
         for i, img in enumerate(tqdm(dataset['pixel_values'].values, desc="Checking for incomplete coverage...")):
             if has_image_mask.iloc[i]:
-                if not isinstance(img, np.ndarray) or img.shape != (80, 80):
-                    self.logger.warning(f"Image {i} has unexpected shape {img.shape}. Marking as incomplete.")
+                # if not isinstance(img, np.ndarray) or img.shape != (80, 80):
+                if not isinstance(img, np.ndarray) or self.identify_incomplete_image_single(img):
+                    self.logger.warning(f"Image {i} has or originally had unexpected shape. Marking as incomplete.")
                     incomplete_mask[i] = True
 
         dataset['incomplete'] = incomplete_mask
@@ -257,19 +314,9 @@ class CutoutPreprocessor:
             edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
         self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
-        # S/N_sigma checks done per-image, as it's a recursive and changing threshold
-        #snr_list = []
-        #for i, arr in enumerate(tqdm(images, desc="Calculating S/N_sigma per image...")):
-        #    if broken[i]:
-        #        snr_list.append(-99)
-        #    else:
-        #        try:
-        #            snr_list.append(self.calculate_SNR_sigma(arr))
-        #        except RecursionError as e:
-        #            self.logger.error(f"Could not calculate SNR for image {i}. Recursion error: {e}")
-        #            snr_list.append(-99)
+        # Vectorised SNR/sigma calculation
         start_time = time.time()
-        snr_list = self.calculate_SNR_sigma( images, broken )
+        snr_list = self.calculate_SNR_sigma_vectorised( images, broken )
         self.logger.info(f"SNR list created in {time.time() - start_time} seconds")
 
         # write back results
@@ -297,7 +344,7 @@ class CutoutPreprocessor:
         # Compute flags for each image
         for idx, img in enumerate(tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset")):
             # Guard clause to test for incomplete images
-            if self.identify_incomplete_image(img):
+            if self.identify_incomplete_image_single(img):
                 self.logger.warning(f"Incomplete sky coverage found in image {idx}.")
                 incomplete.append(True)
                 broken.append(False)
@@ -314,9 +361,9 @@ class CutoutPreprocessor:
                 edge_max.append(-99)
                 continue
 
-            broken.append(self.identify_broken_source(img))
-            snr_sigma.append(self.calculate_SNR_sigma(img, np.array( broken[ -1 ] )))
-            edge_max.append(self.calculate_edge_max(img))
+            broken.append(self.identify_broken_source_single(img))
+            snr_sigma.append(self.calculate_SNR_sigma_single(img))
+            edge_max.append(self.calculate_edge_max_single(img))
 
         # Apply flags to the dataset
         dataset["incomplete"] = incomplete
@@ -327,10 +374,11 @@ class CutoutPreprocessor:
         return dataset
 
     # ---------- FINAL PRODUCT ----------
-    def save_clean_dataset(self,
+    # NOTE - NOT RECOMMENDED. Fits files with many HDUs are inefficient compared to HDF5 
+    def save_clean_dataset_to_fits(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
-                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.hdf5'):
+                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
         """
         Saves the cleaned dataset to a FITS file.
 
@@ -376,19 +424,42 @@ class CutoutPreprocessor:
         hdul.writeto(output_file_path, overwrite=True)
         self.logger.info(f'Final dataset saved to {output_file_path}.')
 
+    def save_clean_dataset_to_hdf5(self,
+                                  clean_dataset: pd.DataFrame,
+                                  clean_cat_info: list,
+                                  indices: list,
+                                  output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'):
+        """
+        Saves the cleaned dataset to an HDF5 file.
+
+        :param clean_dataset: The cleaned dataset to save, as a pandas DataFrame.
+        :param output_file_path: The path to save the cleaned dataset HDF5 file.
+        """
+        images = np.stack(clean_dataset['pixel_values'].values, axis=0)
+        
+        with h5py.File(output_file_path, 'w') as f:
+            f.create_dataset( 'images', data=images, compression='gzip', chunks=True )
+            f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
+            f.create_dataset( 'cat_info', data=clean_cat_info, compression='gzip', chunks=True )
+    
+    # ---------- MAIN FUNCTION ----------
     def apply_preprocessing(self,
                             vectorised: bool = False,
-                            output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.hdf5'):
+                            save_hdf5: bool = True,
+                            dataset_file_path: Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5',
+                            output_file_path: Path | None = None):
         """
         Applies the pre-processing steps in this class, and filters out sources which do not pass.
         """
-        #dataset, cat_info = self.load_initial_dataset()
-        dataset = self.dataset
-        cat_info = self.cat_info
-
+        if output_file_path is None:
+            output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5' if save_hdf5 else pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+        
+        dataset, cat_info = self.load_initial_dataset(dataset_file_path)
+        
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)
 
+        # Plot the distribution of the S/N_sigma values for verification
         snsigma = dataset[ "S/N_sigma" ]
         plt.hist( snsigma, range=(-1,200) )
         plt.xlim( -1, 200 )
@@ -400,10 +471,10 @@ class CutoutPreprocessor:
 
         # Filter the dataset based on the flags
         clean_dataset = dataset[dataset["has_image"]
-                                & ~dataset["incomplete"]
-                                & ~dataset["broken"]
-                                & (dataset["S/N_sigma"] >= self.snr_threshold)
-                                & (dataset["edge_max"] <= self.edge_max_threshold)]
+                                      & ~dataset["incomplete"]
+                                      & ~dataset["broken"]
+                                      & (dataset["S/N_sigma"] >= self.snr_threshold)
+                                      & (dataset["edge_max"] <= self.edge_max_threshold)]
 
         # Log the number of sources removed by each flag
         num_no_images = len(dataset) - dataset["has_image"].sum()
@@ -422,17 +493,15 @@ class CutoutPreprocessor:
         # Filter the catalogue information to only include the sources in the clean dataset
         indices = clean_dataset["index"].values
         clean_cat_info = cat_info[indices]
-        images = np.stack(clean_dataset['pixel_values'].values, axis=0)
 
-        # Save the cleaned dataset to a FITS file
-        #self.save_clean_dataset(clean_dataset, clean_cat_info, output_file_path)
-        with h5py.File(output_file_path, 'w') as f:
-            f.create_dataset( 'images', data=images, compression='gzip', chunks=True )
-            f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
-            f.create_dataset( 'cat_info', data=clean_cat_info, compression='gzip', chunks=True )
+        # Save the cleaned dataset to a chosen file format
+        if save_hdf5:
+            self.save_clean_dataset_to_hdf5(clean_dataset, clean_cat_info, indices, output_file_path)
+        else:
+            self.save_clean_dataset_to_fits(clean_dataset, clean_cat_info, output_file_path)
 
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing( vectorised=True )
+    preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
     preprocessor.logger.info( 'done' )
