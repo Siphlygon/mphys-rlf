@@ -16,21 +16,22 @@
     "dropout": 0.1,
     "pretrained_model": null,
     "batch_size": 64,
-    "iterations": 200000,
+    "iterations": 50000,
     "learning_rate": 2e-05,
     "ema_rate": 0.9999,
     "sigma_data": 0.5,
     "P_mean": -2.5,
     "P_std": 1.8,
-    "log_interval": 1000,
-    "snapshot_interval": 20000,
-    "val_every": 2500,
+    "log_interval": 100,
+    "snapshot_interval": 2000,
+    "val_every": 250,
     "validate_ema": true,
     "write_output": true,
     "override_files": false,
     "n_devices": 2,
     "context": [
-        "max_values_tr"
+        "max_values_tr",
+        "las"
     ],
     "context_dropout": 0.1,
     "context_dim": 1
