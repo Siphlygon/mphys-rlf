@@ -357,7 +357,7 @@ class Sampler:
             imgs = torch.concat(batch_list).cpu().numpy()
 
         # Scale images from [-1, 1] to [0, 1]
-        imgs = (imgs + 1) / 2
+        #imgs = (imgs + 1) / 2
 
         # Release GPU memory
         del model, batch_list

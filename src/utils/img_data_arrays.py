@@ -108,7 +108,7 @@ class ImageDataArrays:
             peak_fluxes_mjy = pt.inverse_transform( peak_fluxes_transformed ) * 1000
             image_scale_factors = peak_fluxes_mjy / np.max( images, axis=(1,2) ) #Scale from current image maxes (~1) to what the values should be as per peak fluxes
             unscaled_sigma_clipped_rmsds = sigma_clipped_rmsds * image_scale_factors
-            unscaled_sigma_clipped_means = sigma_clipped_rmsds * image_scale_factors
+            unscaled_sigma_clipped_means = sigma_clipped_means * image_scale_factors
             model_fluxes = normalized_model_fluxes * image_scale_factors
             unscaled_images = images * image_scale_factors[ :, np.newaxis, np.newaxis ]
             unscaled_residual_images = np.array( residual_images ) * image_scale_factors[ :, np.newaxis, np.newaxis ]
