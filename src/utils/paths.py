@@ -21,7 +21,7 @@ DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
 MAXVALS = NP_ARRAY_PARENT / "maxvals.npy"
 
 # Folders for creating the training dataset
-IMAGE_DOWNLOADING = DATASET_PARENT / "image_downloading"
+INITIAL_DATASET = DATASET_PARENT / "initial_dataset"
 
 # Model configuration presets
 CONFIG_PARENT = BASE_PARENT / "src/model/configs"
