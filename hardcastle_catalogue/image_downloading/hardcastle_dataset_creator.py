@@ -1,17 +1,3 @@
-"""
-As a step of pre-processing before dataset creation, this script creates the Hardcastle catalogue by combining the header
-information from the FITS file with the pixel values from the cutout files downloaded separately. This is then saved to
-a new file, with possible aims to have this be downloadable and avoid the many hours of cutout downloading.
-"""
-
-"""
-Please note - there is a deliberate choice in design here to not store the 'header' information from the Hardcastle catalogue
-as proper FITS headers in the output file. This is because I would need to find the FITS standard for each keyword (e.g.,
-Source_name breaks because it's above 8 characters. I would need to rename it to SOURCE_N or similar). There are like 
-40+ key words. Rather than sinking a bunch of time into it, I have chosen to duplicate the primary table of the Hardcastle
-catalogue and include a field in the header for each ImageHDU with an index linking back to the catalogue.
-"""
-
 import os
 import numpy as np
 from astropy.io import fits
@@ -28,8 +14,8 @@ import h5py
 
 class HardcastleDatasetCreator:
     """
-    A class to create the full Hardcastle dataset by combining header information  from the Hardcastle catalogue with
-    pixel values from downloaded cutout files.
+    A class to create the full initial Hardcastle dataset by combining information from the Hardcastle catalogue
+    with pixel values from downloaded cutout files.
     """
 
     def __init__(self):
@@ -47,7 +33,7 @@ class HardcastleDatasetCreator:
     # ---------- FILE INPUT ----------
     def load_hardcastle_header(self,
                                file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits") \
-            -> list[tuple] | tuple[list[tuple], fits.column.ColDefs]:
+            -> tuple[list[tuple], fits.Header] | tuple[list[tuple], fits.column.ColDefs]:
         """
         Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items, extracting all data.
 
@@ -56,30 +42,31 @@ class HardcastleDatasetCreator:
         """
         # Get the header information for the resolved items from the Hardcastle catalogue
         self.logger.info(f"Loading Hardcastle catalogue information from {file_path}")
-        with fits.open(file_path, memmap=False) as hdul:  # memmap=False to avoid memory issues with large files  
+        with fits.open(file_path) as hdul:
             # Get information for resolved items
-            header_data = hdul[1].data
-            resolved_items = header_data[header_data['Resolved'] == True]
+            cat_data = hdul[1].data
+            resolved_items = cat_data[cat_data['Resolved'] == True]
 
             # Get the ColDef objects for creating output files later
             if self.save_hdf5:
                 columns = hdul[1].columns
                 return resolved_items, columns
-
-        return resolved_items
+            else:
+                header = hdul[1].header
+                return resolved_items, header
 
     def load_single_cutout(self,
                            file : Path) -> tuple[int, np.ndarray]:
         """
         Loads a single cutout image from a FITS file.
 
-        :param file: The FITS file.
+        :param file: The path to the FITS file.
         :return: The pixel values of the cutout image.
         """
         # Extract numerical index from end of cutout name
         idx = int(file.stem.replace("cutout", ""))
         try:
-            with fits.open(file, memmap=False) as hdul:
+            with fits.open(file) as hdul:
                 return idx, hdul[0].data
         except Exception as e:
             self.logger.error(f"Error loading cutout file {file}: {e}. Returning NaNs for this item.")
@@ -116,7 +103,7 @@ class HardcastleDatasetCreator:
                 for idx, data in tqdm(executor.map(self.load_single_cutout, files), desc=f"Loading cutouts from {folder}", total=len(files)):
                     try:
                         pixel_values[idx] = data
-                    except ValueError as e:
+                    except ValueError:
                         self.logger.warning(f"Item {idx} has incomplete pixel values of shape {pixel_values[idx].shape}. Filling with NaNs.")
                         pixel_values[idx] = self.pad_to_80x80(pixel_values[idx])
 
@@ -170,22 +157,22 @@ class HardcastleDatasetCreator:
     
     # NOTE - NOT RECOMMENDED. Saving FITS files with many HDUs is very slow, the .h5 method is recommended
     def save_to_fits(self,
-                     hardcastle_header : list,
-                     data : np.ndarray,
+                     cat_info : list[tuple],
+                     cat_header : fits.Header,
+                     pixel_values : np.ndarray,
                      save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
         Saves the full Hardcastle catalogue with pixel values to a FITS file.
 
-        :param hardcastle_header: The header information for the Hardcastle catalogue.
-        :param data: The list of pixel value arrays for each image.
-        :param file_path: The path to the input FITS file.
+        :param cat_info: The catalogue information for the Hardcastle catalogue.
+        :param cat_header: The header information for the Hardcastle catalogue.
+        :param pixel_values: The list of pixel value arrays for each image.
         :param save_path: The path to save the FITS file.
         """
-        # There are two sources of information, the hardcastle release which contains the header information, and the 
+        # There are two sources of information, the hardcastle release which contains the catalogue information, and the 
         # cutout files which contain the pixel values.
-        # In the hardcastle release, the header is the name of the columns, and the data is the actual header info.
-        # These are combined here into one BinTableHDU for the header information, and then one ImageHDU per cutout image,
-        # with an index in the header linking back to the original header information.
+        # These are combined here into one BinTableHDU for the catalogue information, and then one ImageHDU per cutout image,
+        # with an index in the header linking back to the original catalogue information.
         self.logger.info(f"Saving Hardcastle catalogue to {save_path}")
         hdu_list = []
 
@@ -194,13 +181,13 @@ class HardcastleDatasetCreator:
         primary_hdu = fits.PrimaryHDU()
         hdu_list.append(primary_hdu)
 
-        # Create BinTableHDU with the header information from the Hardcastle catalogue
+        # Create BinTableHDU with the catalogue information from the Hardcastle release
         self.logger.info("Creating BinTableHDU from Hardcastle catalogue...")
-        hdu_list.append(fits.BinTableHDU(data=hardcastle_header, header=hdul[1].header, name="HARDCASTLE_HEADERS"))
+        hdu_list.append(fits.BinTableHDU(data=cat_info, header=cat_header, name="HARDCASTLE_HEADERS"))
 
         # Create extension HDUs as ImageHDUs for each cutout image
         self.logger.info("Creating ImageHDUs for each cutout image...")
-        for idx, item in enumerate(tqdm(data, desc="Creating ImageHDUs")):
+        for idx, item in enumerate(tqdm(pixel_values, desc="Creating ImageHDUs")):
             try:
                 hdu = fits.ImageHDU(data=item, name=f"CUTOUT_IMAGE{idx}")
             except KeyError as e:
@@ -226,20 +213,21 @@ class HardcastleDatasetCreator:
 
     def save_to_h5(self,
                    hardcastle_header : list[tuple],
-                   data : np.ndarray,
                    columns : fits.column.ColDefs,
+                   pixel_values : np.ndarray,
                    save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
         """
         Saves the full Hardcastle catalogue with pixel values to an HDF5 file.
 
         :param hardcastle_header: The header information for the Hardcastle catalogue.
-        :param data: The list of pixel value arrays for each image.
         :param columns: The names of the columns in the Hardcastle catalogue.
+        :param pixel_values: The list of pixel value arrays for each image.
         :param save_path: The path to save the HDF5 file.
         """
         self.logger.info(f"Creating custom dtype for Hardcastle header to save to HDF5...")
         target_dtype = self.build_custom_dtype(columns)
         
+        # Convert to new dtype for saving to HDF5
         self.logger.info(f"Creating structured array for Hardcastle header information with new dtype")
         struct_arr = np.empty(hardcastle_header.shape, dtype=target_dtype)
         for name in hardcastle_header.dtype.names:
@@ -247,7 +235,7 @@ class HardcastleDatasetCreator:
 
         self.logger.info(f"Saving Hardcastle catalogue to {save_path} in HDF5 format...")
         with h5py.File(save_path, 'w') as f:
-            f.create_dataset( 'images', data=data, compression='gzip', chunks=True )
+            f.create_dataset( 'images', data=pixel_values, compression='gzip', chunks=True )
             f.create_dataset( 'cat_info', data=struct_arr, compression='gzip', chunks=True )
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
 
@@ -299,12 +287,13 @@ class HardcastleDatasetCreator:
         self.save_hdf5 = save_hdf5
         
         # Load the Hardcastle catalogue headers
-        hardcastle_header = self.load_hardcastle_header(file_path)
+        hardcastle_release = self.load_hardcastle_header(file_path)
         if self.save_hdf5:
-            hardcastle_header, column_names = hardcastle_header  # Unpack the tuple if we are saving to HDF5, as we need the column names for that
-        
+            catalogue_info, columns = hardcastle_release  # Unpack the tuple if we are saving to HDF5, as we need the column names for that
+        else:
+            catalogue_info, hardcastle_header = hardcastle_release  # Unpack the tuple if we are saving to FITS, we need header info
         # Get the pixel values from the cutout images
-        pixel_values = np.empty((len(hardcastle_header), 80, 80), dtype=np.float32)
+        pixel_values = np.empty((len(catalogue_info), 80, 80), dtype=np.float32)
         hardcastle_catalogue = self.load_cutout_images(pixel_values, folder_path)
 
         # Clean the cutout images by filling missing or incomplete images with NaNs
@@ -313,7 +302,7 @@ class HardcastleDatasetCreator:
         # Save file
         if save_path is None:
             save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5' if save_hdf5 else pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
-        self.save_to_h5(hardcastle_header, clean_catalogue, column_names, save_path) if save_hdf5 else self.save_to_fits(hardcastle_header, clean_catalogue, save_path)
+        self.save_to_h5(catalogue_info, columns, clean_catalogue, save_path) if save_hdf5 else self.save_to_fits(catalogue_info, hardcastle_header, clean_catalogue, save_path)
 
 
 if __name__ == "__main__":
