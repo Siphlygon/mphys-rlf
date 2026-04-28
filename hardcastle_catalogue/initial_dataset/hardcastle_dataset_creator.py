@@ -144,7 +144,7 @@ class HardcastleDatasetCreator:
         """
         for idx in tqdm(range(len(pixel_values)), desc="Cleaning cutout images"):
             # Some cutouts are missing, and so no matching pixel values
-            if pixel_values[idx] is None:
+            if np.array_equiv(pixel_values[idx], np.zeros((80, 80), dtype=np.float32)):
                 self.logger.warning(f"Item {idx} is missing pixel values. Recording as NaNs.")
                 pixel_values[idx] = np.full((80, 80), np.nan)
             # Some cutouts are incomplete and are not of 80 x 80 shape, empty spaces are filled by NaNs
@@ -293,7 +293,7 @@ class HardcastleDatasetCreator:
         else:
             catalogue_info, hardcastle_header = hardcastle_release  # Unpack the tuple if we are saving to FITS, we need header info
         # Get the pixel values from the cutout images
-        pixel_values = np.empty((len(catalogue_info), 80, 80), dtype=np.float32)
+        pixel_values = np.zeros((len(catalogue_info), 80, 80), dtype=np.float32)
         hardcastle_catalogue = self.load_cutout_images(pixel_values, folder_path)
 
         # Clean the cutout images by filling missing or incomplete images with NaNs
