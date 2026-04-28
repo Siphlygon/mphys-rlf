@@ -1,9 +1,3 @@
-"""
-Originally, we were going to use the Hardcastle catalogue as a method of obtaining sources, with also encoded position
-information so we can sanity check that these sources do exist and nothing has gone wrong in our image processing.
-However, the catalogue contains enough extra information that is useful for our project I'm also coding a full wrapper here
-"""
-
 from astropy.io import fits
 import logging
 from tqdm import tqdm
@@ -34,7 +28,7 @@ class Source(Enum):
 class HardcastleCatalogue:
     """
     A class to handle and extracting information from the Hardcastle catalogue. This may be used in other parts of the
-    program hence it's separation from the downloader an dataset creator.
+    program hence it's separation from the downloader and dataset creator.
     """
     def __init__(self,
                  resolved_only: bool = True,
@@ -55,8 +49,8 @@ class HardcastleCatalogue:
                 raise ValueError("Invalid catalogue")
 
     def load_hardcastle_catalogue(self,
-                                  file_path : Path = pths.IMAGE_DOWNLOADING / "combined-release-v1.2-LM_opt_mass.fits")\
-            -> list[dict]:
+                                  file_path : Path = pths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits")\
+            -> list[tuple]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
         LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
@@ -70,6 +64,7 @@ class HardcastleCatalogue:
                 catalogue_data = hdul[1].data
         except Exception as e:
             self.logger.error(f"Error loading Catalogue file: {e}.")
+            raise Exception("Error loading Catalogue file")
 
         # Get the headers of resolved sources
         if self.resolved_only:
