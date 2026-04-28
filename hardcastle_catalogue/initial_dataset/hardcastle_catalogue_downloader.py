@@ -1,9 +1,3 @@
-"""
-This script downloads 314,769 files from the LOFAR cut-out server if they do not already exist. These files are needed
-in the construction of a catalogue that matches the pre-processed LOFAR data given with their actual headers provided
-by the Hardcastle et al. 2023 paper.
-"""
-
 import os
 import requests
 import logging
@@ -26,7 +20,7 @@ class HardcastleCatalogueDownloader:
         self.logger = utils.logging.get_logger("hardcastle catalogue downloader", logging.DEBUG)
 
     def download_hardcastle_catalogue(self,
-                                      save_path : Path = paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits"):
+                                      save_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
         """
         Downloads the Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -49,7 +43,7 @@ class HardcastleCatalogueDownloader:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
     def load_hardcastle_catalogue(self,
-                                  file_path : Path =paths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits")\
+                                  file_path : Path =paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits")\
             -> list[dict]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
@@ -70,6 +64,7 @@ class HardcastleCatalogueDownloader:
                 self.download_hardcastle_catalogue()
             except Exception as del_e:
                 self.logger.error(f"Error deleting corrupted file at {file_path}: {del_e}")
+                raise Exception(f"Failed to load or delete corrupted catalogue file at {file_path}. Please check the file and try again: {del_e}")
 
         # Get the headers of resolved sources
         resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
@@ -94,7 +89,7 @@ class HardcastleCatalogueDownloader:
 
     def write_positions_to_file(self,
                                 positions : list[tuple[float, float]],
-                                file_path : Path = paths.IMAGE_DOWNLOADING/"resolved_positions.txt"):
+                                file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
         """
         Writes the list of positions (RA, DEC) to a text file for future use.
 

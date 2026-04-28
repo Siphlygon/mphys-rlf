@@ -49,7 +49,7 @@ class CutoutDownloader:
 
     # ---------- SET UP ----------
     def read_positions(self,
-                       file_path : Path = paths.IMAGE_DOWNLOADING/"resolved_positions.txt")\
+                       file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt")\
             -> list[tuple[float, float]]:
         """
         Reads the RA and DEC positions from a text file.
@@ -176,7 +176,7 @@ class CutoutDownloader:
             return i, str(e)
 
     def download_all_cutouts(self,
-                             custom_positions : list[tuple[float, float]] = None):
+                             custom_positions : list[tuple[float, float]] | None = None):
         """
         Downloads all cutouts from the LOFAR cutout server based on the Hardcastle catalogue positions.
 
@@ -197,7 +197,7 @@ class CutoutDownloader:
             os.makedirs(target_directory)
 
         # Clean the error log file for this run
-        error_log_path = paths.IMAGE_DOWNLOADING / "download_errors.log"
+        error_log_path = paths.INITIAL_DATASET / "download_errors.log"
         if os.path.exists(error_log_path):
             self.logger.info(f'Cleaning existing error log file {error_log_path}...')
             os.remove(error_log_path)
@@ -239,7 +239,7 @@ class CutoutDownloader:
                 i, err = f.result()
 
                 if err and err != "exists":
-                    with open(paths.IMAGE_DOWNLOADING / "download_errors.log", "a") as log:
+                    with open(paths.INITIAL_DATASET / "download_errors.log", "a") as log:
                         log.write(f"{i}: {err}\n")
 
 if __name__ == "__main__":

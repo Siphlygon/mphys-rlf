@@ -32,7 +32,7 @@ class HardcastleDatasetCreator:
 
     # ---------- FILE INPUT ----------
     def load_hardcastle_header(self,
-                               file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits") \
+                               file_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits") \
             -> tuple[list[tuple], fits.Header] | tuple[list[tuple], fits.column.ColDefs]:
         """
         Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items, extracting all data.
@@ -277,7 +277,7 @@ class HardcastleDatasetCreator:
     # ---------- MAIN ----------
     def create_hardcastle_dataset(self,
                                   save_hdf5: bool = True,
-                                  file_path : Path = pths.IMAGE_DOWNLOADING/"combined-release-v1.2-LM_opt_mass.fits",
+                                  file_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
                                   folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/',
                                   save_path : Path | None = None):
         """
