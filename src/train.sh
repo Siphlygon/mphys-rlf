@@ -7,7 +7,8 @@
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
-#SBATCH --exclude=compute-0-9,compute-0-1,compute-0-11,compute-0-14,compute-0-15,compute-0-17,compute-0-5,compute-0-8
+#SBATCH --nodelist=compute-0-9
+#SBATCH --exclude=compute-0-6,compute-0-1,compute-0-14,compute-0-15,compute-0-17
 
 set -e
 
@@ -19,6 +20,7 @@ echo "Nodes:"
 echo $SLURM_JOB_NUM_NODES
 export MASTER_PORT=12365
 export HDF5_USE_FILE_LOCKING='FALSE'
+export WANDB_API_KEY="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"
 
 ## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
 nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )

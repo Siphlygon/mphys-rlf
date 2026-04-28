@@ -32,14 +32,16 @@ PROGRAM_CONFIG = BASE_PARENT / "src/config.ini"
 config = configparser.ConfigParser()
 config.read( PROGRAM_CONFIG )
 
-# Model Names
-MODEL_NAMES = [ "LOFAR", "FIRST" ]
+# Model Names of models to download and copy
+MODEL_NAMES = [ "LOFAR_model", "FIRST_model" ]
 
 # Folders for different kinds of fits image data
 SUBDIRS = [ config[ 'DEFAULT' ][ 'vm_dataset_subdir' ], 
             config[ 'dataset_distribution' ][ 'generated_subdir'],
-            config[ 'loguniform_distribution' ][ 'generated_subdir' ] ]
-COLOURS = [ 'b', 'g', 'm' ]
+            config[ 'loguniform_distribution' ][ 'generated_subdir' ],
+            config[ 'retrained_model_loguniform' ][ 'generated_subdir' ],
+            'dr2_cutouts_download' ]
+COLOURS = [ 'b', 'g', 'm', 'k', 'c' ]
 PYBDSF_EXPORT_IMAGE_PARENT = PYBDSF_PARENT / "images"
 PYBDSF_LOG_PARENT = PYBDSF_PARENT / "logs"
 PYBDSF_CATALOG_PARENT = PYBDSF_PARENT / "catalogs"

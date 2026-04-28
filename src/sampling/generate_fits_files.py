@@ -71,7 +71,7 @@ def sample( args ):
     while sample_generated_count < n_samples_to_generate:
         batch_size = min( args.batch_size, n_samples_to_generate - sample_generated_count ) #to not double-generate at the borders
         fpeak_model_values = fpeak_model_dist( batch_size )[ :, np.newaxis ]
-        samples = model_sampler.quick_sample( f"{args.model_name}_model", context=torch.from_numpy( fpeak_model_values ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
+        samples = model_sampler.quick_sample( f"{args.model_name}", context=torch.from_numpy( fpeak_model_values ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
         sample_generated_count += batch_size
 
         for i in range( samples.shape[ 0 ] ):
