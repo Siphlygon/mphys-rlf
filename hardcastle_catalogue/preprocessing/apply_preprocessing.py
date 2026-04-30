@@ -395,7 +395,7 @@ class CutoutPreprocessor:
         noise_levels = np.array([info['Isl_rms'] for info in cat_info])[valid_mask]
         # peak_fluxes = np.array([info['Peak_flux'] for info in cat_info])[valid_mask]
         peak_fluxes = images.max(axis=(1, 2)) * 1000 # convert from Jy/beam to mJy/beam
-        snr_list = np.where(~broken, self.calculate_SNR_vectorised(noise_levels, images), -99)
+        snr_list = np.where(~broken, self.calculate_SNR_vectorised(noise_levels, peak_fluxes), -99)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
         self.logger.info(f"Creating vectorised flags for RLAGN selection...")
