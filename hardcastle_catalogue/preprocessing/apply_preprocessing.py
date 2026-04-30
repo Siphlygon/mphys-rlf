@@ -24,24 +24,25 @@ class CutoutPreprocessor:
         self.logger = utils.logging.get_logger('CutoutPreprocessor', logging.DEBUG)
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
-        self.snr_threshold = 5
+        # self.snr_sigma_threshold = 5
+        self.snr_threshold = 7
         self.edge_max_threshold = 0.8
 
     def load_initial_dataset(self,
-                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
+                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
+                            -> tuple[pd.DataFrame, list[tuple]]:
         """
-        Loads the initial pixel values from a HDF5 or FITS file into a pandas dataframe for future use.
+        Loads the initial dataset from a HDF5 or FITS file into a pandas dataframe for future use.
 
-        :param dataset_file_path: The path to the HDF5 or FITS file containing the initial dataset with pixel values.
-        :return: A pandas DataFrame containing the initial dataset with pixel values.
-        """
-        catalogue_data = []
-        
+        :param dataset_file_path: The path to the HDF5 or FITS file containing the initial dataset with pixel values and catalogue information.
+        :return: A pandas DataFrame containing the initial dataset with pixel values and catalogue information.
+        """        
         if dataset_file_path.suffix == '.h5':
             self.logger.info("Loading Hardcastle data from H5 file...")
             # Extract the data from the h5 file
             with h5py.File(dataset_file_path, 'r') as h5file:
                 images = h5file['images'][:]
+                cat_info = h5file['cat_info'][:]
                       
         elif dataset_file_path.suffix == '.fits':
             def load_catalogue_data(memmap=True):
@@ -49,6 +50,8 @@ class CutoutPreprocessor:
                 self.logger.info("Loading Hardcastle dataset from FITS file...")
                 with fits.open(dataset_file_path, memmap=memmap) as hdul:
                     # The first HDU is the PrimaryHDU which is empty, the second HDU is the BinTableHDU which contains catalogue information
+                    cat_info = hdul[1].data
+                    
                     # Remove the first two HDUs which are just Primary and the header table
                     hdul = hdul[2:]
 
@@ -62,15 +65,15 @@ class CutoutPreprocessor:
                             self.logger.error(f"Unexpected data type for HDU {idx}: {type(hdu.data)}. Expected numpy array.")
                             images.append(np.full((80, 80), np.nan))
                 
-                return images
+                return cat_info, images
 
             # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
             # we can disable memmap
             try:
-                images = load_catalogue_data(memmap=False)
+                cat_info, images = load_catalogue_data(memmap=False)
             except Exception as e:
                 self.logger.error(f"Error loading catalogue data without memmap: {e}. Retrying with memmap...")
-                images = load_catalogue_data(memmap=True)
+                cat_info, images = load_catalogue_data(memmap=True)
     
         else:
             self.logger.error(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
@@ -81,8 +84,12 @@ class CutoutPreprocessor:
         for idx, image in enumerate(tqdm(images, desc="Extracting pixel values from Hardcastle dataset")):
             try:
                 if isinstance(image, np.ndarray):
-                    # n.b., max pixel value is ~40, so float32 is appropriate
-                    catalogue_data.append({'index': idx, 'pixel_values': image.astype(np.float32), 'has_image': True})
+                    if np.isnan(image).all():
+                        self.logger.warning(f"Image {idx} is a missing image (all values NAN). Marking as no image.")
+                        catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
+                    else:
+                        # n.b., max pixel value is ~40, so float32 is appropriate
+                        catalogue_data.append({'index': idx, 'pixel_values': image.astype(np.float32), 'has_image': True})
                 else:
                     self.logger.error(f"Unexpected data type for image {idx}: {type(image)}. Expected numpy array.")
                     catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
@@ -97,30 +104,7 @@ class CutoutPreprocessor:
         columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'S/N_sigma', 'edge_max']
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
-        return dataset
-
-    def load_catalogue_information(self, dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
-        """
-        Loads the catalogue information from a HDF5 or FITS file.
-
-        :param dataset_file_path: The path to the HDF5 or FITS file containing the initial dataset with header information and pixel values.
-        :return: A numpy array containing the catalogue information from the Hardcastle catalogue.
-        """
-        if dataset_file_path.suffix == '.h5':
-            self.logger.info("Loading Hardcastle catalogue information from H5 file...")
-            with h5py.File(dataset_file_path, 'r') as h5file:
-                catalogue_info = h5file['cat_info'][:]
-        
-        elif dataset_file_path.suffix == '.fits':
-            self.logger.info("Loading Hardcastle catalogue information from FITS file...")
-            with fits.open(dataset_file_path) as hdul:
-                catalogue_info = hdul[1].data
-        
-        else:
-            self.logger.error(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
-            raise ValueError(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
-
-        return catalogue_info
+        return dataset, cat_info
 
     # ---------- FLAGS ----------
     """
@@ -229,18 +213,20 @@ class CutoutPreprocessor:
         # Apply the recursive threshold
         return apply_src_threshold(threshold)
 
-    def calculate_SNR_vectorised(self, images: np.ndarray) -> np.ndarray:
+    def calculate_SNR_vectorised(self, noise_levels: np.ndarray, peak_fluxes: np.ndarray) -> np.ndarray:
         """
+        Calculates the S/N ratio for multiple images based on their noise levels and peak fluxes.
         """
-        pass
-    
-    def calculate_SNR_single(self, image: np.ndarray) -> float:
+        return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
+
+    def calculate_SNR_single(self, noise_level: float, peak_flux: float) -> float:
         """
-        """
-        peak_flux = image.max()
-        # Estimate the noise level as the standard deviation of the pixel values in the image
-        noise_level = image.std()
+        Calculates the S/N ratio for a given image based on the noise level and peak flux.
         
+        :param noise_level: The noise level of the image, typically represented by the RMS value.
+        :param peak_flux: The peak flux of the source in the image.
+        :return: The S/N ratio for the image, or -1 if the noise level is zero.
+        """
         # Calculate the S/N ratio
         if noise_level == 0:
             self.logger.warning("Noise level is zero, cannot calculate S/N ratio. Returning -1.")
@@ -273,7 +259,7 @@ class CutoutPreprocessor:
 
         # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
 
-        return (image == -99).any() or (image == 0).all() or np.isnan(image).all()
+        return (image == -99).any() or (image == 0).all()
 
     """
     Code below modified from the original LOFAR-diffusion repository, found here:
@@ -297,7 +283,9 @@ class CutoutPreprocessor:
         return edge_max / image.max()
 
     # ---------- MAIN PROCESSING ----------
-    def compute_vectorised_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
+    def compute_vectorised_flags(self, 
+                                 dataset: pd.DataFrame,
+                                 cat_info: list) -> pd.DataFrame:
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
@@ -306,6 +294,7 @@ class CutoutPreprocessor:
         performing on high-memory nodes.
 
         :param dataset: The dataset containing the pixel values and other information for each source.
+        :param cat_info: The catalogue information for each source.
         :return: The dataset with the new flags computed.
         """
         # Before we can do vectorise check, need to check for incomplete images
@@ -354,19 +343,30 @@ class CutoutPreprocessor:
             edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
         self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
-        # Vectorised SNR/sigma calculation
+        # # Vectorised SNR/sigma calculation
+        # start_time = time.time()
+        # snr_list_sigma = self.calculate_SNR_sigma_vectorised( images, broken )
+        # self.logger.info(f"SNR list created in {time.time() - start_time} seconds")
+        
+        # Vectorised SNR calculation using catalogue information
+        self.logger.info(f"Creating vectorised flags for S/N ratio...")
         start_time = time.time()
-        snr_list = self.calculate_SNR_sigma_vectorised( images, broken )
-        self.logger.info(f"SNR list created in {time.time() - start_time} seconds")
+        noise_levels = np.array([info['Isl_rms'] for info in cat_info])[valid_mask]
+        peak_fluxes = np.array([info['Peak_flux'] for info in cat_info])[valid_mask]
+        snr_list = np.where(~broken, self.calculate_SNR_vectorised(noise_levels, peak_fluxes), -99)
+        self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
         # write back results
         dataset.loc[valid_mask, 'broken'] = broken
         dataset.loc[valid_mask, 'edge_max'] = edge_ratio
-        dataset.loc[valid_mask, 'S/N_sigma'] = snr_list
+        # dataset.loc[valid_mask, 'S/N_sigma'] = snr_sigma_list
+        dataset.loc[valid_mask, 'S/N'] = snr_list
 
         return dataset
 
-    def compute_iterative_flags(self, dataset: pd.DataFrame) -> pd.DataFrame:
+    def compute_iterative_flags(self, 
+                                dataset: pd.DataFrame,
+                                cat_info: list) -> pd.DataFrame:
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
@@ -374,6 +374,7 @@ class CutoutPreprocessor:
         This is similar processing to compute_vectorised_flags, but is expected to be faster on low-memory nodes.
 
         :param dataset: The dataset containing the pixel values and other information for each source.
+        :param cat_info: The catalogue information for each source.
         :return: The dataset with the new flags computed.
         """
         incomplete = []
@@ -406,7 +407,11 @@ class CutoutPreprocessor:
 
             broken.append(self.identify_broken_source_single(img))
             # snr_sigma.append(self.calculate_SNR_sigma_single(img))
-            snr.append(self.calculate_SNR_single(img))
+            
+            noise = cat_info[idx]['Isl_rms']
+            peak_flux = cat_info[idx]['Peak_flux']
+            snr.append(self.calculate_SNR_single(noise, peak_flux))
+            
             edge_max.append(self.calculate_edge_max_single(img))
 
         # Apply flags to the dataset
@@ -482,6 +487,8 @@ class CutoutPreprocessor:
         """
         images = np.stack(clean_dataset['pixel_values'].values, axis=0)
         
+        self.logger.info(f"Saving cleaned dataset to {output_file_path}.")
+        self.logger.info("This will take a long time due to the size of the dataset and the use of compression")
         with h5py.File(output_file_path, 'w') as f:
             f.create_dataset( 'images', data=images, compression='gzip', chunks=True )
             f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
@@ -500,10 +507,10 @@ class CutoutPreprocessor:
             output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5' if save_hdf5 else pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
         
         # Load the initial dataset with pixel values
-        dataset = self.load_initial_dataset(dataset_file_path)
+        dataset, cat_info = self.load_initial_dataset(dataset_file_path)
         
         # Compute the flags for each image in the dataset
-        self.compute_vectorised_flags(dataset) if vectorised else self.compute_iterative_flags(dataset)
+        self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
 
         # # Plot the distribution of the S/N_sigma values for verification
         # snsigma = dataset[ "S/N_sigma" ]
@@ -522,26 +529,29 @@ class CutoutPreprocessor:
         clean_dataset = dataset[dataset["has_image"]
                                       & ~dataset["incomplete"]
                                       & ~dataset["broken"]
-                                      & (dataset["S/N_sigma"] >= self.snr_threshold)
+                                      #& (dataset["S/N_sigma"] >= self.snr_threshold)
+                                      & (dataset["S/N"] >= self.snr_threshold)
                                       & (dataset["edge_max"] <= self.edge_max_threshold)]
 
         # Log the number of sources removed by each flag
         num_no_images = len(dataset) - dataset["has_image"].sum()
         num_incomplete = dataset["incomplete"].sum()
         num_broken = dataset["broken"].sum()
-        num_low_snr = (dataset["S/N_sigma"] < self.snr_threshold).sum()
+        # num_low_snr_sigma = (dataset["S/N_sigma"] < self.snr_sigma_threshold).sum()
+        num_low_snr = (dataset["S/N"] < self.snr_threshold).sum()
         num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
         self.logger.info(f"Found {num_no_images} missing images.")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as broken: {num_broken}")
+        # self.logger.info(f"Number of sources removed as low S/N_sigma: {num_low_snr_sigma}")
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
+        # self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr_sigma + num_edge_max}")
         self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr + num_edge_max}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
         # Filter the catalogue information to only include the sources in the clean dataset
-        indices = clean_dataset["index"].values
-        cat_info = self.load_catalogue_information(dataset_file_path)
+        indices = clean_dataset["index"].array
         clean_cat_info = cat_info[indices]
 
         # Save the cleaned dataset to a chosen file format
@@ -553,5 +563,5 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing( vectorised=False, save_hdf5=True )
+    preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
     preprocessor.logger.info( 'done' )
