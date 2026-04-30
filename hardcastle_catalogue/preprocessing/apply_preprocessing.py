@@ -29,7 +29,7 @@ class CutoutPreprocessor:
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         # self.snr_sigma_threshold = 5
-        self.snr_threshold = 10
+        self.snr_threshold = 20
         self.edge_max_threshold = 0.8
 
         config = configparser.ConfigParser()
@@ -581,7 +581,9 @@ class CutoutPreprocessor:
         # for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
         for snr_range in [(4,5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), 
                           (10, 11), (11, 12), (12, 13), (13, 14), (14, 15),
-                          (15, 16), (16, 17), (17, 18), (18, 19), (19, 20)]:
+                          (15, 16), (16, 17), (17, 18), (18, 19), (19, 20),
+                          (21, 22), (22, 23), (23, 24), (24, 25), (25, 26), 
+                          (26, 27), (27, 28), (28, 29), (29, 30), (30, 31)]:
             subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
             if len(subset) > 0:
                 plt.figure(figsize=(10, 10))
