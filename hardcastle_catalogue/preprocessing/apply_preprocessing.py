@@ -29,12 +29,13 @@ class CutoutPreprocessor:
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         # self.snr_sigma_threshold = 5
-        self.snr_threshold = 7
+        self.snr_threshold = 5
         self.edge_max_threshold = 0.8
 
         config = configparser.ConfigParser()
         config.read(pths.PROGRAM_CONFIG)
         lu_config = config['loguniform_distribution']
+
         # Cosmological Parameters
         self.h = float(lu_config['h']) # hubble constant = h * 100 km/s/Mpc
         self.Tcmb0 = float(lu_config['Tcmb0']) # temp of the CMB at z=0 in K
@@ -43,7 +44,7 @@ class CutoutPreprocessor:
 
     def load_initial_dataset(self,
                              dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
-                            -> tuple[pd.DataFrame, list[tuple]]:
+                            -> tuple[pd.DataFrame, np.ndarray] | tuple[pd.DataFrame, list[tuple]]:
         """
         Loads the initial dataset from a HDF5 or FITS file into a pandas dataframe for future use.
 
@@ -111,10 +112,10 @@ class CutoutPreprocessor:
                 catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N_sigma': 0, 'edge_max': 0} for item in catalogue_data]
+        catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N': 0, 'edge_max': 0} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'S/N_sigma', 'edge_max']
+        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'size', 'S/N', 'edge_max', 'rlagn']
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset, cat_info
@@ -319,7 +320,7 @@ class CutoutPreprocessor:
     # ---------- MAIN PROCESSING ----------
     def compute_vectorised_flags(self, 
                                  dataset: pd.DataFrame,
-                                 cat_info: list) -> pd.DataFrame:
+                                 cat_info: np.ndarray | list[tuple]) -> pd.DataFrame:
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
@@ -377,6 +378,12 @@ class CutoutPreprocessor:
             edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
         self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
+        # Vectorised size flags
+        self.logger.info(f"Creating vectorised flags for source size...")
+        start_time = time.time()
+        sizes = np.array([info['LAS'] for info in cat_info])[valid_mask]
+        self.logger.info(f"Size flags created in {time.time() - start_time} seconds")
+
         # # Vectorised SNR/sigma calculation
         # start_time = time.time()
         # snr_list_sigma = self.calculate_SNR_sigma_vectorised( images, broken )
@@ -390,6 +397,7 @@ class CutoutPreprocessor:
         snr_list = np.where(~broken, self.calculate_SNR_vectorised(noise_levels, peak_fluxes), -99)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
+        self.logger.info(f"Creating vectorised flags for RLAGN selection...")
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
@@ -400,9 +408,10 @@ class CutoutPreprocessor:
         # write back results
         dataset.loc[valid_mask, 'broken'] = broken
         dataset.loc[valid_mask, 'edge_max'] = edge_ratio
+        dataset.loc[valid_mask, 'size'] = sizes
         # dataset.loc[valid_mask, 'S/N_sigma'] = snr_sigma_list
         dataset.loc[valid_mask, 'S/N'] = snr_list
-        dataset.loc[valid_mask, 'RLAGN'] = rlagn_mask
+        dataset.loc[valid_mask, 'rlagn'] = rlagn_mask
 
         return dataset
 
@@ -421,6 +430,7 @@ class CutoutPreprocessor:
         """
         incomplete = []
         broken = []
+        size = []
         # snr_sigma = []
         snr = []
         edge_max = []
@@ -433,9 +443,11 @@ class CutoutPreprocessor:
                 self.logger.warning(f"Incomplete sky coverage found in image {idx}.")
                 incomplete.append(True)
                 broken.append(False)
+                size.append(-99)
                 # snr_sigma.append(-99)
                 snr.append(-99)
                 edge_max.append(-99)
+                rlagn.append(False)
                 continue
             incomplete.append(False)
 
@@ -443,28 +455,32 @@ class CutoutPreprocessor:
             if np.isnan(img).any():
                 self.logger.warning(f"NaN values found in image {idx}. Marking as broken.")
                 broken.append(True)
+                size.append(-99)
                 # snr_sigma.append(-99)
                 snr.append(-99)
                 edge_max.append(-99)
+                rlagn.append(False)
                 continue
 
             broken.append(self.identify_broken_source_single(img))
             # snr_sigma.append(self.calculate_SNR_sigma_single(img))
-            
+            size.append(cat_info[idx]['LAS'])
             noise = cat_info[idx]['Isl_rms']
             peak_flux = cat_info[idx]['Peak_flux']
+            # peak_flux = img.max() * 1000
             snr.append(self.calculate_SNR_single(noise, peak_flux))
             
             edge_max.append(self.calculate_edge_max_single(img))
-            rlagn.append(self.select_RLAGN(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L144'], cat_info[idx]['z_best']))
+            rlagn.append(self.select_RLAGN(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best']))
 
         # Apply flags to the dataset
         dataset["incomplete"] = incomplete
         dataset["broken"] = broken
+        dataset["size"] = size
         # dataset["S/N_sigma"] = snr_sigma
         dataset["S/N"] = snr
         dataset["edge_max"] = edge_max
-        dataset["RLAGN"] = rlagn
+        dataset["rlagn"] = rlagn
 
         return dataset
 
@@ -554,6 +570,8 @@ class CutoutPreprocessor:
         # Load the initial dataset with pixel values
         dataset, cat_info = self.load_initial_dataset(dataset_file_path)
         
+        print(type(cat_info))
+        
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
 
@@ -570,10 +588,26 @@ class CutoutPreprocessor:
         # Save the SNR values to a txt file for plotting
         np.savetxt('snr_values.txt', dataset["S/N"].values)
         
+        # Plot some pixel values for certain S/N ranges for verification
+        for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
+            subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
+            if len(subset) > 0:
+                plt.figure(figsize=(10, 10))
+                for i in range(min(25, len(subset))):
+                    plt.subplot(5, 5, i + 1)
+                    plt.imshow(subset.iloc[i]["pixel_values"], origin='lower', cmap='viridis')
+                    plt.title(f"S/N: {subset.iloc[i]['S/N']:.2f}")
+                    plt.axis('off')
+                plt.suptitle(f"Pixel values for S/N range {snr_range[0]}-{snr_range[1]}")
+                plt.tight_layout()
+                plt.savefig(f'pixel_values_snr_{snr_range[0]}_{snr_range[1]}.png')
+                plt.close()
+        
         # Filter the dataset based on the flags
         clean_dataset = dataset[dataset["has_image"]
                                       & ~dataset["incomplete"]
                                       & ~dataset["broken"]
+                                      & (dataset["size"] <= 120) # max size of a cutout
                                       #& (dataset["S/N_sigma"] >= self.snr_threshold)
                                       & (dataset["S/N"] >= self.snr_threshold)
                                       & (dataset["edge_max"] <= self.edge_max_threshold)
@@ -583,6 +617,7 @@ class CutoutPreprocessor:
         num_no_images = len(dataset) - dataset["has_image"].sum()
         num_incomplete = dataset["incomplete"].sum()
         num_broken = dataset["broken"].sum()
+        num_too_large = (dataset["size"] > 120).sum()
         # num_low_snr_sigma = (dataset["S/N_sigma"] < self.snr_sigma_threshold).sum()
         num_low_snr = (dataset["S/N"] < self.snr_threshold).sum()
         num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
@@ -590,12 +625,13 @@ class CutoutPreprocessor:
         self.logger.info(f"Found {num_no_images} missing images.")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as broken: {num_broken}")
+        self.logger.info(f"Number of sources removed as too large: {num_too_large}")
         # self.logger.info(f"Number of sources removed as low S/N_sigma: {num_low_snr_sigma}")
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
         # self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr_sigma + num_edge_max}")
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
-        self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr + num_edge_max}")
+        self.logger.info(f"Total number of sources removed: {num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
         # Filter the catalogue information to only include the sources in the clean dataset
@@ -611,5 +647,5 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
+    preprocessor.apply_preprocessing( vectorised=False, save_hdf5=True )
     preprocessor.logger.info( 'done' )
