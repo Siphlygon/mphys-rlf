@@ -29,7 +29,7 @@ class CutoutPreprocessor:
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         # self.snr_sigma_threshold = 5
-        self.snr_threshold = 5
+        self.snr_threshold = 10
         self.edge_max_threshold = 0.8
 
         config = configparser.ConfigParser()
@@ -466,8 +466,8 @@ class CutoutPreprocessor:
             # snr_sigma.append(self.calculate_SNR_sigma_single(img))
             size.append(cat_info[idx]['LAS'])
             noise = cat_info[idx]['Isl_rms']
-            peak_flux = cat_info[idx]['Peak_flux']
-            # peak_flux = img.max() * 1000
+            # peak_flux = cat_info[idx]['Peak_flux']
+            peak_flux = img.max() * 1000
             snr.append(self.calculate_SNR_single(noise, peak_flux))
             
             edge_max.append(self.calculate_edge_max_single(img))
@@ -569,27 +569,18 @@ class CutoutPreprocessor:
         
         # Load the initial dataset with pixel values
         dataset, cat_info = self.load_initial_dataset(dataset_file_path)
-        
-        print(type(cat_info))
-        
+                
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
-
-        # # Plot the distribution of the S/N_sigma values for verification
-        # snsigma = dataset[ "S/N_sigma" ]
-        # plt.hist( snsigma, range=(-1,200) )
-        # plt.xlim( -1, 200 )
-        # plt.yscale( 'log' )
-        # plt.xlabel( 'S/N_sigma' )
-        # plt.ylabel( 'Counts' )
-        # plt.title( 'Counts of signal to noise proxy' )
-        # plt.savefig( 'snsigma_dist.png' )
         
         # Save the SNR values to a txt file for plotting
         np.savetxt('snr_values.txt', dataset["S/N"].values)
         
         # Plot some pixel values for certain S/N ranges for verification
-        for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
+        # for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
+        for snr_range in [(4,5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), 
+                          (10, 11), (11, 12), (12, 13), (13, 14), (14, 15),
+                          (15, 16), (16, 17), (17, 18), (18, 19), (19, 20)]:
             subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
             if len(subset) > 0:
                 plt.figure(figsize=(10, 10))
@@ -647,5 +638,5 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing( vectorised=False, save_hdf5=True )
+    preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
     preprocessor.logger.info( 'done' )
