@@ -5,7 +5,7 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 
 
-img_directory = pth.FITS_PARENT / 'model_test'
+img_directory = pth.FITS_PARENT / 'retrained_loguniform'
 power_transformer = PeakFluxPowerTransformer()
 
 peak_fluxes_conditioned = []
@@ -20,13 +20,14 @@ for img_path in img_directory.rglob( "*.fits" ):
     peak_fluxes_from_imgs.append( peak_flux_from_img )
     peak_fluxes_conditioned.append( peak_flux_conditioned )
 
-plt.scatter( peak_fluxes_conditioned, peak_fluxes_from_imgs )
+plt.scatter( peak_fluxes_conditioned, peak_fluxes_from_imgs, s=0.01 )
 
-min_peakflux = min( np.min( peak_fluxes_conditioned ), np.min( peak_fluxes_from_imgs ) )
-max_peakflux = max( np.max( peak_fluxes_conditioned ), np.max( peak_fluxes_from_imgs ) )
+min_peakflux = min( np.min( peak_fluxes_conditioned ), np.min( peak_fluxes_from_imgs ) ) if len( peak_fluxes_from_imgs ) > 0 else np.min( peak_fluxes_conditioned )
+max_peakflux = max( np.max( peak_fluxes_conditioned ), np.max( peak_fluxes_from_imgs ) ) if len( peak_fluxes_from_imgs ) > 0 else np.max( peak_fluxes_conditioned )
 
 x = np.geomspace( min_peakflux, max_peakflux )
 plt.plot( x, x, color='r' )
+plt.grid()
 
 plt.title( 'Peak flux from conditioning vs image' )
 plt.xlabel( 'Conditioned peak flux, Jy/beam' )

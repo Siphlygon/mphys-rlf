@@ -10,7 +10,7 @@ logger = get_logger( __name__ )
 def plot_flux_vs_residuals():
     pt = PeakFluxPowerTransformer()
     #for subdir, color in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
-    for subdir, color in zip( [ 'model_test', 'dataset' ], [ 'g', 'b' ] ):
+    for subdir, color in zip( [ 'retrained_loguniform', 'dataset' ], [ 'g', 'b' ] ):
         data_arrays = ImageDataArrays( subdir )
 
         #Select for peak flux >0.5 mJy
@@ -31,7 +31,7 @@ def plot_flux_vs_residuals():
 
         plt.scatter( scaled_flux, delta, label=subdir, 
                     color=color,
-                    s=10 )
+                    s=0.01 )
 
     plt.xlabel( 'Transformed peak flux, arbitrary units' )
     plt.ylabel( 'Summed positive residuals mJy/image' )

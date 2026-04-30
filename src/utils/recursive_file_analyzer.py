@@ -154,6 +154,7 @@ class RecursiveFileAnalyzer:
             kwargs = dict()
 
         files = self.get_unwrapped_list( self.path, pattern, numeric_range, return_nums )
+        self.logger.info( f'Read files from {self.path}, now iterating...' )
         return_values = [ None ] * len( files )
         if return_nums:
             return_numbers = np.empty( (len( files )), dtype=int )

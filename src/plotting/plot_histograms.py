@@ -31,12 +31,12 @@ class HistogramPlotter:
         axes = [ ax_flux, ax_mean, ax_rms, ax_pix ]
 
         for ax, title, range, xlabel, ylabel in zip( axes, titles, ranges, xlabels, ylabels ):
-            ax.legend()
+            #ax.legend()
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
             ax.set_yscale('log')
-            ax.set_xbound(range[0], range[1])
+            #ax.set_xbound(range[0], range[1])
 
         return fig, axes
 
@@ -46,10 +46,11 @@ class HistogramPlotter:
         xlabels = [ "Integrated Flux (arbitrary units)", "Image Mean (0-1)", "Image RMS (0-1)", "Pixel Value (0-1)" ]
         ranges = [ (0, 60), (0, 0.2), (0, 0.3), (0, 1) ]
         ylabels = [ "Relative Frequency" ] * 4
-        fig, axes = self.set_up_figure(titles, ranges, xlabels, ylabels)
 
         # Plot histograms for every subdir e.g., dataset, loguniform, etc
         for subdir, c in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
+            fig, axes = self.set_up_figure(titles, ranges, xlabels, ylabels)
+
             # -- Get model fluxes; will need to get them from PyBDSF if non-existing --
             fluxes_path = utils.paths.NP_ARRAY_PARENT / subdir / 'integrated_fluxes_normalized.npy'
             if fluxes_path.exists():
@@ -77,11 +78,14 @@ class HistogramPlotter:
                 self.hist.draw( ax_data,
                            ax=ax,
                            bins=self.bin_count,
-                           range=range,
+                           #range=range,
+                           range=None,
                            label=subdir,
                            color=c,
                            density=False,
                            relative=True )
+            for ax in axes:
+                ax.legend()
 
             plt.savefig( f"hist_{subdir}.png" )
             plt.show()
