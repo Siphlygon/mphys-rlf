@@ -94,7 +94,7 @@ class RLF:
     def get_completeness(self,
                          integ_fluxes : np.ndarray,
                          completeness_path : Path = None,
-                         step_completeness : bool = False,
+                         step_completeness : bool = True,
                          threshold : float = 1.1e-3):
         """
         Returns a value for the completeness correction for use in the RLF integral estimation. Can either return a
@@ -265,7 +265,7 @@ class RLF:
         """
         if spectral_index is None:
             spectral_index = self.spectral_index
-        k_corr_lum_space = ( 1 + redshift ) ** ( 1 + spectral_index )
+        k_corr_lum_space = ( 1 + redshift ) ** ( 1 - spectral_index )
         if not mag_space:
             return k_corr_lum_space
         else:
@@ -416,7 +416,8 @@ class RLF:
                   ax = None,
                   ylim: tuple = [ 1e-9, 3e-4 ],
                   xlim: tuple = [ 1e21, 1e29 ],
-                  output: str = 'rlf.png' ):
+                  output: str = 'rlf.png',
+                  draw_ylabel: bool = True ):
         self_contained = ax is None
         if self_contained:
             self.logger.info( "plotting self contained rlf" )
@@ -433,42 +434,42 @@ class RLF:
             ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
         ax.set_title( title )
         ax.set_xscale( 'log' )
-        ax.set_xlabel( 'L144 * Hz / W' )
+        ax.set_xlabel( '$L_{144}$  $( \\frac{W}{Hz} )$' )
         ax.set_yscale( 'log' )
-        ax.set_ylabel( 'phi * MPc^3 * log10( W / m^2 )' )
+        if draw_ylabel:
+            ax.set_ylabel( '$\\phi_{est}$  $( Mpc^{-3} (\\log_{10}( \\frac{W}{m^2} ))^{-1} )$' )
         ax.set_xlim( xlim )
         ax.set_ylim( ylim )
+        ax.grid()
+        ax.tick_params( which='both', right=True, top=True )
         ax.legend()
         if self_contained:
             plt.savefig( output )
             self.logger.info( f"saved figure to {output}" )
 
-def mag_to_flux_w3( mag, default_spectral_index = -1 ):
+def mag_to_flux_w3( mag ):
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
-    f_corr_table = [ 1.1344, 1.0088, 0.9393, 0.9169, 0.9373, 1.0000, 1.1081, 1.2687 ]
-    spectral_index_table = [ 3, 2, 1, 0, -1, -2, -3, -4 ]
-    f_corr = np.interp( default_spectral_index, spectral_index_table, f_corr_table )
-    Fstar_v0 = 29.045
-    return ( Fstar_v0 / f_corr ) * 10**(-mag / 2.5)
+    F_v0 = 31.674
+    return F_v0 * 10**(-mag / 2.5)
 
-def mag_to_flux_w2( mag, default_spectral_index = -1 ):
+def mag_to_flux_w2( mag ):
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
-    f_corr_table = [ 1.0206, 1.0066, 0.9976, 0.9935, 0.9943, 1.0000, 1.0107, 1.0265 ]
-    spectral_index_table = [ 3, 2, 1, 0, -1, -2, -3, -4 ]
-    f_corr = np.interp( default_spectral_index, spectral_index_table, f_corr_table )
-    Fstar_v0 = 170.663
-    return ( Fstar_v0 / f_corr ) * 10**(-mag / 2.5)
+    F_v0 = 171.787
+    return F_v0 * 10**(-mag / 2.5)
 
 if __name__ == "__main__":
+    plt.rcParams[ 'font.size' ] = 18
+
     rlf_calculator = RLF()
     vmax_rlf = RLF()
-    catalog = HardcastleCatalogue( resolved_only=True )
+    catalog = HardcastleCatalogue( resolved_only=False )
 
     rlf_calculator.logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
     fluxes = catalog.get_values( Source.TotalFlux ) / 1000
     luminosities = catalog.get_values( Source.Luminosity )
     wise_3_mag = catalog.get_values( Source.WISE3Mag )
+    wise_3_magerr = catalog.get_values( Source.WISE3MagErr )
     wise_2_mag = catalog.get_values( Source.WISE2Mag )
     rlf_calculator.logger.debug( "done" )
 
@@ -476,6 +477,7 @@ if __name__ == "__main__":
     redshifts = redshifts[ mask ]
     luminosities = luminosities[ mask ]
     wise_3_mag = wise_3_mag[ mask ]
+    wise_3_magerr = wise_3_magerr[ mask ]
     wise_2_mag = wise_2_mag[ mask ]
     fluxes = fluxes[ mask ]
 
@@ -490,20 +492,24 @@ if __name__ == "__main__":
     spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
     #logger.debug( f'spectral_inds: mean={np.average( spectral_inds )}, std={np.std( spectral_inds )}, max={np.max( spectral_inds )}, min={np.min( spectral_inds ) }, count={spectral_inds.shape[ 0 ]}' )
 
-    wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) - rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+    wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) + rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
     rqq_xpt = -27.923076923076923 #mag
     rqq_ypt = 25.563106796116504 #log10( lum )
     if True:
-        wise_3_linspace = np.linspace( -34, -18, 1000 )
-        wise_3_linspace_below_27 = np.linspace( -34, -27, 1000 )
-        sfg_lum_cutoff = 10**( 14 - wise_3_linspace / 2.5 )
-        rqq_lum_cutoff = 10**( -( wise_3_linspace_below_27 - rqq_xpt ) / 3.4844629455909923 + rqq_ypt )
+        wise_3_linspace_sfg = np.linspace( -27, -18, 1000 )
+        wise_3_linspace_rqq = np.linspace( -34, -27, 1000 )
+        sfg_lum_cutoff = 10**( 14 - wise_3_linspace_sfg / 2.5 )
+        rqq_lum_cutoff = 10**( -( wise_3_linspace_rqq - rqq_xpt ) / 3.4844629455909923 + rqq_ypt )
         plt.figure( figsize=(8,8) )
-        plt.hexbin( wise_3_absmag[ wise_3_absmag < -19 ], luminosities[ wise_3_absmag < -19 ], gridsize=50, yscale='log' )
-        plt.plot( wise_3_linspace, sfg_lum_cutoff, color='r' )
-        plt.plot( wise_3_linspace_below_27, rqq_lum_cutoff, color='m' )
+        hist2d, xedges, yedges = np.histogram2d( wise_3_absmag, np.log10( luminosities ), bins=50, range=[[-35, -17], [19+np.log10(4), 30]] )
+        xcenters = ( xedges[ 1: ] + xedges[ :-1 ] ) / 2
+        ycenters = ( yedges[ 1: ] + yedges[ :-1 ] ) / 2
+        plt.contourf( xcenters[ ::-1 ], 10**ycenters, np.sqrt( hist2d[ ::-1, : ].T ) )
+        plt.plot( wise_3_linspace_sfg, sfg_lum_cutoff, color='r' )
+        plt.plot( wise_3_linspace_rqq, rqq_lum_cutoff, color='m' )
+        plt.plot( [-27, -27], [1, rqq_lum_cutoff[ -1 ]], color='m' )
         plt.xlabel( 'wise 3 absolute magnitude' )
         plt.ylabel( 'L144' )
         plt.title( 'L144 vs W3 AbsMag Relation' )
@@ -515,11 +521,12 @@ if __name__ == "__main__":
         rlf_calculator.logger.debug( "saved lum_vs_w3.png" )
 
 
-    sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) )
-    rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 )
+    sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) ) & ~np.isnan( wise_3_magerr )
+    rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 ) & ~np.isnan( wise_3_magerr )
     agn_mask = ~sfg_mask & ~rqq_mask
 
     rlf_calculator.logger.info( f'# agn: {redshifts[ agn_mask ].shape[ 0 ]} - # sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - # rqq: {redshifts[ rqq_mask ].shape[ 0 ]} - total: {redshifts.shape[ 0 ]}' )
+    rlf_calculator.logger.info( f'{np.isnan( wise_3_magerr ).sum()} wise 3 values are upper limits' )
 
     redshifts = redshifts[ agn_mask ]
     fluxes = fluxes[ agn_mask ]
@@ -532,8 +539,8 @@ if __name__ == "__main__":
     rlf_calculator.calculate_rlf( fluxes, redshifts, luminosities, False, plot_rlf=False, vmax_method=False )
     vmax_rlf.calculate_rlf( fluxes, redshifts, luminosities, False, plot_rlf=False, vmax_method=True )
 
-    rlf_calculator.plot_rlf( f'Page & Carrera RLF - {rlf_calculator.n_mc_pts} pts per bin', colors, ax_pnc )
-    vmax_rlf.plot_rlf( f'1/Vmax RLF - {vmax_rlf.n_mc_pts} pts per bin', colors, ax_vmax )
+    rlf_calculator.plot_rlf( f'Page & Carrera RLF - {rlf_calculator.n_mc_pts} pts per bin', colors, ax_pnc, draw_ylabel=False )
+    vmax_rlf.plot_rlf( '$\\frac{1}{V_{max}}$ RLF - ' + str(vmax_rlf.n_mc_pts) + ' pts per source', colors, ax_vmax )
 
     plt.savefig( 'rlfs.png' )
     plt.show()

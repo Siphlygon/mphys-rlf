@@ -22,6 +22,7 @@ class Source(Enum):
     Redshift = "z_best"    # Best redshift (spectroscopic if available, otherwise photometric)
     RMS = "Isl_rms"    # RMS noise in the island containing the source in mJy/beam
     WISE3Mag = "mag_w3" # magnitude in the wise band 3
+    WISE3MagErr = "magerr_w3" # magnitude error in the wise band 3, or blank for upper lim
     WISE2Mag = "mag_w2" # magnitude in the wise band 2
 
 
