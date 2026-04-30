@@ -9,10 +9,14 @@ import logging
 import time
 import matplotlib.pyplot as plt
 import h5py
+import astropy.cosmology
+import astropy.units as u
+import configparser
 
 import utils.logging
 import utils.paths as pths
 from hardcastle_catalogue import HardcastleCatalogue
+from utils.functions import mag_to_flux_w2, mag_to_flux_w3, k_corr_factor
 
 class CutoutPreprocessor:
     """
@@ -27,6 +31,15 @@ class CutoutPreprocessor:
         # self.snr_sigma_threshold = 5
         self.snr_threshold = 7
         self.edge_max_threshold = 0.8
+
+        config = configparser.ConfigParser()
+        config.read(pths.PROGRAM_CONFIG)
+        lu_config = config['loguniform_distribution']
+        # Cosmological Parameters
+        self.h = float(lu_config['h']) # hubble constant = h * 100 km/s/Mpc
+        self.Tcmb0 = float(lu_config['Tcmb0']) # temp of the CMB at z=0 in K
+        self.Om0 = float(lu_config['Om0']) # matter density parameter at z=0
+        self.cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
 
     def load_initial_dataset(self,
                              dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
@@ -218,6 +231,27 @@ class CutoutPreprocessor:
         Calculates the S/N ratio for multiple images based on their noise levels and peak fluxes.
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
+    
+    def select_RLAGN(self, wise_2_mag: np.ndarray, wise_3_mag: np.ndarray, wise_3_magerr: np.ndarray, luminosities: np.ndarray, redshifts: np.ndarray) -> np.ndarray:
+        """
+        Calculates a boolean mask of whether or not objects are RLAGN (as opposed to SFGs or RQQs)
+        """
+        wise_3_flux = mag_to_flux_w3( wise_3_mag )
+        wise_2_flux = mag_to_flux_w2( wise_2_mag )
+        wise_3_freq = 3e8 / 12e-6
+        wise_2_freq = 3e8 / 4.6e-6
+        spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
+
+        wise_3_absmag = wise_3_mag - 5 * ( np.log10( self.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) + k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+
+        rqq_xpt = -27.923076923076923 #mag
+        rqq_ypt = 25.563106796116504 #log10( lum )
+
+        sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) ) & ~np.isnan( wise_3_magerr )
+        rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 ) & ~np.isnan( wise_3_magerr )
+        rlagn_mask = ~sfg_mask & ~rqq_mask
+
+        return rlagn_mask
 
     def calculate_SNR_single(self, noise_level: float, peak_flux: float) -> float:
         """
@@ -356,11 +390,19 @@ class CutoutPreprocessor:
         snr_list = np.where(~broken, self.calculate_SNR_vectorised(noise_levels, peak_fluxes), -99)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
+        wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
+        wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
+        wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
+        luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
+        redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
+        rlagn_mask = self.select_RLAGN( wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts )
+
         # write back results
         dataset.loc[valid_mask, 'broken'] = broken
         dataset.loc[valid_mask, 'edge_max'] = edge_ratio
         # dataset.loc[valid_mask, 'S/N_sigma'] = snr_sigma_list
         dataset.loc[valid_mask, 'S/N'] = snr_list
+        dataset.loc[valid_mask, 'RLAGN'] = rlagn_mask
 
         return dataset
 
@@ -382,6 +424,7 @@ class CutoutPreprocessor:
         # snr_sigma = []
         snr = []
         edge_max = []
+        rlagn = []
 
         # Compute flags for each image
         for idx, img in enumerate(tqdm(dataset["pixel_values"], desc="Computing flags for each image in the dataset")):
@@ -413,6 +456,7 @@ class CutoutPreprocessor:
             snr.append(self.calculate_SNR_single(noise, peak_flux))
             
             edge_max.append(self.calculate_edge_max_single(img))
+            rlagn.append(self.select_RLAGN(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L144'], cat_info[idx]['z_best']))
 
         # Apply flags to the dataset
         dataset["incomplete"] = incomplete
@@ -420,6 +464,7 @@ class CutoutPreprocessor:
         # dataset["S/N_sigma"] = snr_sigma
         dataset["S/N"] = snr
         dataset["edge_max"] = edge_max
+        dataset["RLAGN"] = rlagn
 
         return dataset
 
@@ -531,7 +576,8 @@ class CutoutPreprocessor:
                                       & ~dataset["broken"]
                                       #& (dataset["S/N_sigma"] >= self.snr_threshold)
                                       & (dataset["S/N"] >= self.snr_threshold)
-                                      & (dataset["edge_max"] <= self.edge_max_threshold)]
+                                      & (dataset["edge_max"] <= self.edge_max_threshold)
+                                      & (dataset["rlagn"]) ]
 
         # Log the number of sources removed by each flag
         num_no_images = len(dataset) - dataset["has_image"].sum()
@@ -540,6 +586,7 @@ class CutoutPreprocessor:
         # num_low_snr_sigma = (dataset["S/N_sigma"] < self.snr_sigma_threshold).sum()
         num_low_snr = (dataset["S/N"] < self.snr_threshold).sum()
         num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
+        num_rqqsfg = (~dataset["rlagn"]).sum()
         self.logger.info(f"Found {num_no_images} missing images.")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as broken: {num_broken}")
@@ -547,6 +594,7 @@ class CutoutPreprocessor:
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
         # self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr_sigma + num_edge_max}")
+        self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
         self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr + num_edge_max}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 

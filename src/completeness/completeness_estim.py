@@ -13,7 +13,7 @@ import configparser
 import utils.paths as pth
 import logging
 import utils.logging
-from utils.fitfunctions import sigmoid
+from utils.functions import sigmoid
 
 
 class CompletenessEstimator:

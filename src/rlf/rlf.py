@@ -8,7 +8,7 @@ from hardcastle_catalogue import Source, HardcastleCatalogue
 from utils.logging import get_logger
 import logging
 from tqdm import tqdm
-from utils.fitfunctions import sigmoid
+from utils.functions import sigmoid, mag_to_flux_w2, mag_to_flux_w3, k_corr_factor
 from pathlib import Path
 
 # from Hardcastle et al. 2022, https://github.com/mhardcastle/agn-selection/blob/main/plots.py
@@ -149,7 +149,7 @@ class RLF:
 
         # Find the luminosity distance & convert into flux with a k-correction
         d_l = self.cosmo.luminosity_distance(z).to(u.m).value
-        s = 1e26 * l / (4 * np.pi * d_l**2) * self.k_corr_factor( z )
+        s = 1e26 * l / (4 * np.pi * d_l**2) * k_corr_factor( z, spectral_index = self.spectral_index )
         return s
 
     # ---------- INTEGRALS ----------
@@ -254,22 +254,6 @@ class RLF:
 
         return bin_integrals
 
-    def k_corr_factor( self, redshift, mag_space: bool = False, spectral_index = None ):
-        """
-        Returns the k-correction factor for one or more objects at given redshifts
-
-        mag_space: bool = False
-        - whether or not to give the k correction in magnitude space (-2.5 * log10( k_corr_lum_space )), default lum space
-        spectral_index = None
-        - override for spectral index to use instead of self.spectral_index, broadcastable with redshift
-        """
-        if spectral_index is None:
-            spectral_index = self.spectral_index
-        k_corr_lum_space = ( 1 + redshift ) ** ( 1 - spectral_index )
-        if not mag_space:
-            return k_corr_lum_space
-        else:
-            return -2.5 * np.log10( k_corr_lum_space )
 
     # ---------- RADIO LUMINOSITY FUNCTION ----------
     def calculate_rlf( self,
@@ -299,13 +283,13 @@ class RLF:
         # use the redshift to calculate luminosity distance and luminosity
         # because of errors on the margin, disregard passed luminosity
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / self.k_corr_factor( redshifts ) # W/Hz
+        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
 
         if debug_flux_lum_relation:
             #ensure luminosities and redshifts are consistent with total flux
             # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
             luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / self.k_corr_factor( redshifts ) # W/Hz
+            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
             self.logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
             residuals = flux_luminosities / luminosities
             plt.scatter( flux_luminosities, residuals, s=0.001 )
@@ -447,15 +431,6 @@ class RLF:
             plt.savefig( output )
             self.logger.info( f"saved figure to {output}" )
 
-def mag_to_flux_w3( mag ):
-    # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
-    F_v0 = 31.674
-    return F_v0 * 10**(-mag / 2.5)
-
-def mag_to_flux_w2( mag ):
-    # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
-    F_v0 = 171.787
-    return F_v0 * 10**(-mag / 2.5)
 
 if __name__ == "__main__":
     plt.rcParams[ 'font.size' ] = 18
@@ -492,7 +467,7 @@ if __name__ == "__main__":
     spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
     #logger.debug( f'spectral_inds: mean={np.average( spectral_inds )}, std={np.std( spectral_inds )}, max={np.max( spectral_inds )}, min={np.min( spectral_inds ) }, count={spectral_inds.shape[ 0 ]}' )
 
-    wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) + rlf_calculator.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+    wise_3_absmag = wise_3_mag - 5 * ( np.log10( rlf_calculator.cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) + k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
     rqq_xpt = -27.923076923076923 #mag
