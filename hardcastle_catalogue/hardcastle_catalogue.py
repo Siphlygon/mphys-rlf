@@ -4,6 +4,8 @@ from tqdm import tqdm
 import numpy as np
 from enum import Enum
 from pathlib import Path
+import os
+import requests
 
 import utils.paths as pths
 import utils.logging
@@ -41,15 +43,50 @@ class HardcastleCatalogue:
 
         # Choice of which catalogue to use; the hardcastle2023 catalogue, or the hardcastle2025 for AGN selection
         match cat:
+            case "hardcastle2019":
+                self.catalogue_data = self.load_hardcastle_catalogue(cat, pths.DATASET_PARENT / "agn_sample.fits")
             case "hardcastle2023":
                 self.catalogue_data = self.load_hardcastle_catalogue()
             case "hardcastle2025":
                 # todo: need to make sure this is downloaded first; maybe add a database downloading script?
-                self.catalogue_data = self.load_hardcastle_catalogue(pths.DATASET_PARENT / "agn-v1.1.fits")
+                self.catalogue_data = self.load_hardcastle_catalogue(cat, pths.DATASET_PARENT / "agn-v1.1.fits")
             case _:
                 raise ValueError("Invalid catalogue")
 
+    def download_hardcastle_catalogue(self,
+                                      cat : str = "hardcastle2023",
+                                      save_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
+        """
+        Downloads a Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
+
+        :param save_path: The path to save the downloaded FITS file.
+        """
+        if os.path.exists(save_path):
+            self.logger.info(f'Hardcastle catalogue already exists at {save_path}. Skipping download.')
+            return
+
+        match cat:
+            case "hardcastle2019":
+                url = "https://lofar-surveys.org/public/agn_sample.fits"
+            case "hardcastle2023":
+                url = "https://lofar-surveys.org/public/DR2/catalogues/combined-release-v1.2-LM_opt_mass.fits"
+            case "hardcastle2025":
+                url = "https://lofar-surveys.org/public/DR2/AGN_selection/agn-v1.1.fits"
+            case _:
+                raise ValueError("Invalid catalogue")
+        self.logger.info(f'Downloading Hardcastle catalogue from {url}. This will take a while...')
+        response = requests.get(url, stream=True)
+
+        if response.status_code == 200:
+            with open(save_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            self.logger.info(f'Hardcastle catalogue downloaded and saved to {save_path}.')
+        else:
+            self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
+
     def load_hardcastle_catalogue(self,
+                                  cat : str = "hardcastle2023",
                                   file_path : Path = pths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits")\
             -> list[tuple]:
         """
@@ -59,6 +96,7 @@ class HardcastleCatalogue:
         :param file_path: The path to the Hardcastle catalogue FITS file.
         :return: A list of resolved items from the catalogue.
         """
+        self.download_hardcastle_catalogue(cat, save_path=file_path)
         self.logger.info(f"Loading Hardcastle catalogue from {file_path}")
         try:
             with fits.open(file_path) as hdul:
@@ -100,7 +138,6 @@ class HardcastleCatalogue:
         key = value.value if isinstance(value, Source) else value
         return self.catalogue_data[key]
 
-
     def get_multiple_values(self,
                             *args : Source | str) -> np.ndarray:
         """
@@ -123,4 +160,3 @@ if __name__ == "__main__":
     print(f"Loaded {len(catalogue.catalogue_data)} resolved items from the Hardcastle catalogue.")
     # print(catalogue.get_values(Property.PeakFlux.value)[1])
     # print(catalogue.get_multiple_values("Source_Name", "Mosaic_ID", "S_Code", "objid")[1])
-    print(catalogue.get_multiple_values(Source.RA, Source.DEC)[1])
