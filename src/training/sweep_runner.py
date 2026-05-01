@@ -42,7 +42,7 @@ if __name__ == "__main__":
                 },
                 'parameters': {
                     'dropout': {'distribution': 'uniform', 'min': 0.05, 'max': 0.2},
-                    'batch_size': {'values': [16, 32, 64, 128]},
+                    'batch_size': {'values': [16, 32, 64]},
                     'learning_rate': {'distribution': 'uniform', 'min': 1e-5, 'max': 4e-5},
                     'iterations': {'value': 20000},
                     'ema_rate': {'values': [0.999, 0.9999, 0.99999]},
