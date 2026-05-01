@@ -141,92 +141,58 @@ class HyperparameterSweep(DiffusionTrainer):
 
         self.logger.info(f"Training time {dt()} - Done!")
 
-
-def main():
-    # Initialize the HyperparameterSweep class and run the sweep
-    config = ModelConfig.from_preset("LOFAR_retrained")
-    dataset = datasets.ImagePathDataset( "hardcastle_catalogue/clean_hardcastle_catalogue.h5" )
-    
-    # Get LAS values for the dataset context
-    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
-        las_values = f["cat_info"][:]["LAS"]
-        dataset.set_las_values(las_values)
-    
-    with wandb.init(project="radio_galaxy_diffusion") as run:
-        # Update the config with the sweep parameters
-        print(f"Updating config with sweep parameters: {run.config}")
-        config.update(dict(run.config))
-        sweep = HyperparameterSweep(config=config, dataset=dataset, run=run)
-        sweep.training_loop()
-
-
-if __name__ == "__main__":    
-    # Initialise DDP
+def setup_ddp():
     try:
-        local_rank = os.environ[ "LOCAL_RANK" ]
-        rank = os.environ[ "RANK" ]
+        local_rank = int(os.environ["LOCAL_RANK"])
+        rank = int(os.environ["RANK"])
         print( f"Local rank/Global rank: {local_rank}/{rank}" )
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+
+        torch.cuda.set_device(local_rank)
         dist.init_process_group(backend="nccl")
+
+        return rank, local_rank, True
     except KeyError as e:
         print(f"Error occurred while setting up DDP: {e}")
         print("Using single GPU mode instead.")
-    
-    # Set up sweep parameters
-    # Define the hyperparameters to sweep over
-    sweep_config = {
-            'name': 'hyperparameter_sweep',
-            'method': 'bayes',
-            'metric': {
-                'name': 'val_loss_ema',
-                'goal': 'minimize'
-            },
-            'parameters': {
-                'dropout': {
-                    'distribution': 'uniform',
-                    'min': 0.05,
-                    'max': 0.2
-                },
-                'batch_size': {
-                    'values': [16, 32, 64, 128]
-                },
-                'learning_rate': {
-                    'distribution': 'uniform',
-                    'min': 1e-5,
-                    'max': 4e-5
-                },
-                'iterations': {
-                    'value': 20000
-                },
-                'ema_rate': {
-                    'values': [0.999, 0.9999, 0.99999]
-                },
-                'P_mean': {
-                    'distribution': 'uniform',
-                    'min': -5,
-                    'max': -1.25
-                },
-                'P_std': {
-                    'distribution': 'uniform',
-                    'min': 0.9,
-                    'max': 3.6
-                },
-                'context_dropout': {
-                    'distribution': 'uniform',
-                    'min': 0.05,
-                    'max': 0.2
-                }
-            },
-            'early_terminate': {
-                'type': 'hyperband',
-                'min_iter': 1000
-            }
-        }
-    sweep_id = wandb.sweep(sweep_config, project="radio_galaxy_diffusion")
-    
-    # Initialise wandb logging
-    wandb.login(key=os.environ.get("WANDB_KEY"))
-    wandb.agent(sweep_id, function=main)  # Adjust count as needed for the number of runs
+        return 0, 0, False
 
-    # Clean up DDP
-    dist.destroy_process_group()
+    
+def main():
+    rank, local_rank, is_ddp = setup_ddp()
+    primary = (rank == 0)
+
+    # Load config & dataset
+    config = ModelConfig.from_preset("LOFAR_retrained")
+
+    dataset = datasets.ImagePathDataset(
+        "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
+    )
+
+    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
+        las_values = f["cat_info"][:]["LAS"]
+        dataset.set_las_values(las_values)
+
+    # WandB Logging
+    if primary:
+        run = wandb.init(project="radio_galaxy_diffusion")
+        sweep_config = dict(run.config)
+    else:
+        run = None
+        sweep_config = None
+
+    # Broadcast config to all ranks
+    if dist.is_initialized():
+        obj_list = [sweep_config]
+        dist.broadcast_object_list(obj_list, src=0)
+        sweep_config = obj_list[0]
+
+    # Apply config everywhere
+    config.update(sweep_config)
+
+    # Run training
+    sweep = HyperparameterSweep(config=config, dataset=dataset, run=run)
+    sweep.training_loop()
+
+    # Cleanup
+    if is_ddp:
+        dist.destroy_process_group()
