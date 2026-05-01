@@ -265,6 +265,9 @@ class ImagePathDataset(torch.utils.data.Dataset):
         self.box_cox_lambda = pt.lambdas_
         print(f"Max values transformed with Box-Cox transformation ({pt.lambdas_}).")
 
+    def set_las_values(self, las_values):
+        self.las_values = torch.tensor(las_values, dtype=torch.float32)
+
 
 class EvaluationDataset(ImagePathDataset):
     def __init__(self, path, img_size=80, **kwargs):
