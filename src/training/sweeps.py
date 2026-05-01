@@ -174,7 +174,7 @@ def main():
 
     # WandB Logging
     if primary:
-        run = wandb.init(project="radio_galaxy_diffusion")
+        run = wandb.init(resume="allow", id=os.environ.get("WANDB_RUN_ID"),)
         sweep_config = dict(run.config)
     else:
         run = None
@@ -191,8 +191,17 @@ def main():
 
     # Run training
     sweep = HyperparameterSweep(config=config, dataset=dataset, run=run)
-    sweep.training_loop()
+    try:
+        sweep.training_loop()
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            sweep.logger.error("OOM encountered, skipping run")
+        else:
+            raise
 
     # Cleanup
     if is_ddp:
         dist.destroy_process_group()
+
+if __name__ == "__main__":
+    main()
