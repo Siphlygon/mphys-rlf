@@ -176,7 +176,7 @@ def main():
     # WandB Logging
     if primary:
         wandb.teardown()
-        run = wandb.init(resume="allow", id=os.environ.get("WANDB_RUN_ID"),)
+        run = wandb.init(resume="allow")
         sweep_config = dict(run.config)
     else:
         run = None

@@ -13,11 +13,6 @@ def launch():
     master_port = os.environ.get("MASTER_PORT", "12365")
     env = os.environ.copy()
     
-    # Generate a new WANDB_RUN_ID for each run to ensure proper logging
-    alphanumeric = string.ascii_lowercase + string.digits
-    random = "".join(secrets.choice(alphanumeric) for _ in range(6))
-    env["WANDB_RUN_ID"] = f"{random}"
-    
     # Set the model name for this run to avoid FileExistsError in sweeps.py
     model_name = env["MODEL_NAME"]
     suffix = int(model_name.split("_")[-1])  # Get the current suffix number
