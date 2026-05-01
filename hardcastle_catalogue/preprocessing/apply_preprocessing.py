@@ -112,7 +112,7 @@ class CutoutPreprocessor:
                 catalogue_data.append({'index': idx, 'pixel_values': np.full((80, 80), np.nan), 'has_image': False})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'S/N': 0, 'edge_max': 0} for item in catalogue_data]
+        catalogue_data = [{**item, 'incomplete': False, 'broken': False, 'size': 0, 'S/N': 0, 'edge_max': 0, 'rlagn': True} for item in catalogue_data]
 
         # Set up DataFrame columns
         columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'size', 'S/N', 'edge_max', 'rlagn']
@@ -399,12 +399,14 @@ class CutoutPreprocessor:
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
         self.logger.info(f"Creating vectorised flags for RLAGN selection...")
+        start_time = time.time()
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
         luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
         redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
         rlagn_mask = self.select_RLAGN( wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts )
+        self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
         dataset.loc[valid_mask, 'broken'] = broken
@@ -413,7 +415,7 @@ class CutoutPreprocessor:
         # dataset.loc[valid_mask, 'S/N_sigma'] = snr_sigma_list
         dataset.loc[valid_mask, 'S/N'] = snr_list
         dataset.loc[valid_mask, 'rlagn'] = rlagn_mask
-
+        
         return dataset
 
     def compute_iterative_flags(self, 
@@ -575,27 +577,27 @@ class CutoutPreprocessor:
         self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
         
         # Save the SNR values to a txt file for plotting
-        np.savetxt('snr_values.txt', dataset["S/N"].values)
+        # np.savetxt('snr_values.txt', dataset["S/N"].values)
         
         # Plot some pixel values for certain S/N ranges for verification
         # for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
-        for snr_range in [(4,5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), 
-                          (10, 11), (11, 12), (12, 13), (13, 14), (14, 15),
-                          (15, 16), (16, 17), (17, 18), (18, 19), (19, 20),
-                          (21, 22), (22, 23), (23, 24), (24, 25), (25, 26), 
-                          (26, 27), (27, 28), (28, 29), (29, 30), (30, 31)]:
-            subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
-            if len(subset) > 0:
-                plt.figure(figsize=(10, 10))
-                for i in range(min(25, len(subset))):
-                    plt.subplot(5, 5, i + 1)
-                    plt.imshow(subset.iloc[i]["pixel_values"], origin='lower', cmap='viridis')
-                    plt.title(f"S/N: {subset.iloc[i]['S/N']:.2f}")
-                    plt.axis('off')
-                plt.suptitle(f"Pixel values for S/N range {snr_range[0]}-{snr_range[1]}")
-                plt.tight_layout()
-                plt.savefig(f'pixel_values_snr_{snr_range[0]}_{snr_range[1]}.png')
-                plt.close()
+        # for snr_range in [(4,5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), 
+        #                   (10, 11), (11, 12), (12, 13), (13, 14), (14, 15),
+        #                   (15, 16), (16, 17), (17, 18), (18, 19), (19, 20),
+        #                   (21, 22), (22, 23), (23, 24), (24, 25), (25, 26), 
+        #                   (26, 27), (27, 28), (28, 29), (29, 30), (30, 31)]:
+        #     subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
+        #     if len(subset) > 0:
+        #         plt.figure(figsize=(10, 10))
+        #         for i in range(min(25, len(subset))):
+        #             plt.subplot(5, 5, i + 1)
+        #             plt.imshow(subset.iloc[i]["pixel_values"], origin='lower', cmap='viridis')
+        #             plt.title(f"S/N: {subset.iloc[i]['S/N']:.2f}")
+        #             plt.axis('off')
+        #         plt.suptitle(f"Pixel values for S/N range {snr_range[0]}-{snr_range[1]}")
+        #         plt.tight_layout()
+        #         plt.savefig(f'pixel_values_snr_{snr_range[0]}_{snr_range[1]}.png')
+        #         plt.close()
         
         # Filter the dataset based on the flags
         clean_dataset = dataset[dataset["has_image"]
