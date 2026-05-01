@@ -163,6 +163,7 @@ def main():
 
     # Load config & dataset
     config = ModelConfig.from_preset("LOFAR_retrained")
+    config.__setattr__("model_name", os.environ.get("MODEL_NAME", "sweep_model"))
 
     dataset = datasets.ImagePathDataset(
         "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
@@ -174,6 +175,7 @@ def main():
 
     # WandB Logging
     if primary:
+        wandb.teardown()
         run = wandb.init(resume="allow", id=os.environ.get("WANDB_RUN_ID"),)
         sweep_config = dict(run.config)
     else:

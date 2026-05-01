@@ -18,6 +18,18 @@ def launch():
     random = "".join(secrets.choice(alphanumeric) for _ in range(6))
     env["WANDB_RUN_ID"] = f"{random}"
     
+    # Set the model name for this run to avoid FileExistsError in sweeps.py
+    model_name = env["MODEL_NAME"]
+    suffix = int(model_name.split("_")[-1])  # Get the current suffix number
+    base_name = "model_sweep"
+    new_model_name = f"{base_name}_{suffix}"
+    while os.path.exists(f"model_results/{new_model_name}"):
+        suffix += 1
+        new_model_name = f"{base_name}_{suffix}"
+    env["MODEL_NAME"] = new_model_name
+    print(f"Set MODEL_NAME to {new_model_name} for this run.")
+    
+    # Launch the training script using torchrun for DDP
     subprocess.run([
         "torchrun",
         "--nnodes=1",
@@ -62,4 +74,8 @@ if __name__ == "__main__":
     else:
         sweep_id = wandb.sweep(sweep_config, project=project)
         print("Created sweep:", sweep_id)
+    
+    # Initialise model name to avoid FileExistsError in sweeps.py
+    os.environ["MODEL_NAME"] = "sweep_model_0"    
+
     wandb.agent(sweep_id, function=launch)
