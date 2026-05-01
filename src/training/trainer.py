@@ -486,7 +486,6 @@ class DiffusionTrainer:
         )
 
         # Initialise wandb logging
-        #wandb.login(key=os.environ.get("WANDB_KEY"))
         if self.is_primary():
             wandb.login(key=os.environ.get("WANDB_KEY"))
             wandb.init(
@@ -659,9 +658,6 @@ class DiffusionTrainer:
         if self.power_ema:
             for power_ema_model in self.power_ema_models:
                 power_ema_model.update_parameters(self.inner_model)
-
-        if self.primary:
-            self.logger.info( f"iteration {it} complete" )
 
         return loss
 
