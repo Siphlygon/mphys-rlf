@@ -2,6 +2,7 @@
 
 #SBATCH --job-name=diff_sweep
 #SBATCH --constraint=A100
+#SBATCH --time=7-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
