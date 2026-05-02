@@ -17,17 +17,19 @@ class PeakFluxPowerTransformer:
     A utility class to easily power transform peak flux values based on the max values in the dataset, without
     having to constantly validate files exist
     """
-    def __init__( self ):
+    def __init__( self, subdir: str ):
         # Get a distribution of scaled max fluxes from the lofar data
         self.logger = get_logger( __name__ )
         self.du = DistributedUtils()
 
+        self.subdir = subdir
+        self.maxvals_path = pth.NP_ARRAY_PARENT / subdir / pth.MAXVALS
 
-        if not pth.MAXVALS.exists():
-            raise FileNotFoundError( f'Could not find {pth.MAXVALS} - please make sure all dependencies are satisfied' )
+        if not self.maxvals_path.exists():
+            raise FileNotFoundError( f'Could not find {self.maxvals_path} - please make sure all dependencies are satisfied' )
 
         self.pt = PowerTransformer( method="box-cox" )
-        self.pt.fit( np.load( pth.MAXVALS ).reshape(-1, 1) )
+        self.pt.fit( np.load( self.maxvals_path ).reshape(-1, 1) )
 
     def transform( self, array: np.ndarray ):
         return self.pt.transform( array.reshape( -1, 1 ) )[ :, 0 ]

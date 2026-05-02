@@ -66,7 +66,7 @@ def convert_LOFAR_h5_to_fits( lofar_data_h5: Path, subdir: str, cutoff: int | No
             upper_bound = int( math.ceil( ( i + 1 ) / bin_size ) * bin_size ) - 1
             postfix = postfix / f"{lower_bound}-{upper_bound}"
             postfix = postfix / f"image{i}.fits"
-            dataset_analyzer.save_image_to_FITS( image, postfix, flux_scaled )
+            dataset_analyzer.save_image_to_FITS( image, postfix, FXSCLD=flux_scaled )
 
 def validate_LOFAR_fits_images( subdir: str, cutoff: int | None, bin_size: int | None ):
     """

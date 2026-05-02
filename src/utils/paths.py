@@ -18,7 +18,7 @@ PYBDSF_PARENT = STORAGE_PARENT / "pybdsf"
 NP_ARRAY_PARENT = STORAGE_PARENT / "nparrays"
 DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
 
-MAXVALS = NP_ARRAY_PARENT / "maxvals.npy"
+MAXVALS = "maxvals.npy"
 
 # Folders for creating the training dataset
 INITIAL_DATASET = DATASET_PARENT / "initial_dataset"
@@ -40,8 +40,9 @@ SUBDIRS = [ config[ 'DEFAULT' ][ 'vm_dataset_subdir' ],
             config[ 'dataset_distribution' ][ 'generated_subdir'],
             config[ 'loguniform_distribution' ][ 'generated_subdir' ],
             config[ 'retrained_model_loguniform' ][ 'generated_subdir' ],
+            config[ 'snr15_loguniform' ][ 'generated_subdir' ],
             'dr2_cutouts_download' ]
-COLOURS = [ 'b', 'g', 'm', 'k', 'c' ]
+COLOURS = [ 'b', 'g', 'm', 'k', 'y', 'c' ]
 PYBDSF_EXPORT_IMAGE_PARENT = PYBDSF_PARENT / "images"
 PYBDSF_LOG_PARENT = PYBDSF_PARENT / "logs"
 PYBDSF_CATALOG_PARENT = PYBDSF_PARENT / "catalogs"

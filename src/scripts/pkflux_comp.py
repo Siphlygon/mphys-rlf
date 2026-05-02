@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 
 img_directory = pth.FITS_PARENT / 'retrained_loguniform'
-power_transformer = PeakFluxPowerTransformer()
+power_transformer = PeakFluxPowerTransformer( 'retrained_loguniform' )
 
 peak_fluxes_conditioned = []
 peak_fluxes_from_imgs = []

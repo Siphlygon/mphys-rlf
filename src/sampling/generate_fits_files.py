@@ -56,13 +56,14 @@ def sample( args ):
         return
 
     # Get the power transformer for the peak fluxes and the appropriate distribution function
-    pt = PeakFluxPowerTransformer()
+    pt = PeakFluxPowerTransformer( args.generated_subdir )
     if args.distribution == 'dataset':
-        fpeak_model_dist = model_sampler.get_fpeak_model_dist( None, pth.MAXVALS )
+        fpeak_model_dist = model_sampler.get_fpeak_model_dist( None, pth.NP_ARRAY_PARENT / args.generated_subdir / pth.MAXVALS )
     elif args.distribution == 'uniform':
         fpeak_model_dist = lambda n : pt.transform( scipy.stats.uniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
     elif args.distribution == 'loguniform':
         fpeak_model_dist = lambda n : pt.transform( scipy.stats.loguniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
+
 
     # Generate/Sample the samples
     sample_generated_count = 0
@@ -70,8 +71,12 @@ def sample( args ):
     image_analyzer = ImageAnalyzer( args.generated_subdir )
     while sample_generated_count < n_samples_to_generate:
         batch_size = min( args.batch_size, n_samples_to_generate - sample_generated_count ) #to not double-generate at the borders
-        fpeak_model_values = fpeak_model_dist( batch_size )[ :, np.newaxis ]
-        samples = model_sampler.quick_sample( f"{args.model_name}", context=torch.from_numpy( fpeak_model_values ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
+        context = fpeak_model_dist( batch_size )[ :, np.newaxis ]
+        # if las conditioning is enabled, add it to context
+        if args.las_conditioning_enabled:
+            context = np.concatenate( (context, scipy.stats.loguniform.rvs( 6, 120, size=batch_size )[ :, np.newaxis ]), axis=1 )
+
+        samples = model_sampler.quick_sample( f"{args.model_name}", context=torch.from_numpy( context ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
         sample_generated_count += batch_size
 
         for i in range( samples.shape[ 0 ] ):
@@ -87,13 +92,14 @@ def sample( args ):
                     image = np.where( image > 0, image, 0 )
                 image = ( image - im_min ) / ( im_max - im_min )
 
-            fscaled = fpeak_model_values[ i, 0 ]
+            fscaled = context[ i, 0 ]
+            las = context[ i, 1 ]
 
             full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
             while full_image_path.exists():
                 sample_index += 1
                 full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
-            image_analyzer.save_image_to_FITS( image, postfix, fscaled )
+            image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled, LASIZE=las )
 
             if sample_index > bin_end:
                 logger.error( 'Sample index %i has gone outside allowed value %i', sample_index, bin_end )
@@ -117,14 +123,15 @@ if __name__ == '__main__':
                  'model_name',
                  'upper_bound',
                  'lower_bound',
-                 'distribution' ]:
+                 'distribution',
+                 'las_conditioning_enabled' ]:
         setattr( args, arg, config.get( args.config, arg ) )
 
     for intarg in [ 'batch_size', 'n_samples', 'folder_size', 'timesteps' ]:
         setattr( args, intarg, int( getattr( args, intarg ) ) )
     for floatarg in [ 'upper_bound', 'lower_bound' ]:
         setattr( args, floatarg, float( getattr( args, floatarg ) ) )
-    for boolarg in [ 'use_cpu', 'preserve_values' ]:
+    for boolarg in [ 'use_cpu', 'preserve_values', 'las_conditioning_enabled' ]:
         setattr( args, boolarg, getattr( args, boolarg ) == 'True' )
 
     sample( args )

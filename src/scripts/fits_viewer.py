@@ -4,7 +4,6 @@ from pathlib import Path
 import math
 import argparse
 import utils.recursive_file_analyzer as rfa
-from utils.power_transform import PeakFluxPowerTransformer
 
 class FitsViewer:
     """
@@ -23,7 +22,6 @@ class FitsViewer:
 
     NO_SORTING = 0
     SORT_BY_FLUX_SCALED = 1
-    SORT_BY_FLUX = 2
 
     def show_image_grid( self,
                          rows: int = -1,
@@ -86,10 +84,6 @@ class FitsViewer:
                 files = self.files
             elif sorting == FitsViewer.SORT_BY_FLUX_SCALED:
                 files = sorted( self.files, key=lambda file : rfa.get_fits_primaryhdu_header( file, 'FXSCLD' ) )
-            elif sorting == FitsViewer.SORT_BY_FLUX:
-                # Sort by (peak) flux by unscaling the flux scaled values from the header with a PowerTransformer fit to the max values in the dataset
-                pt = PeakFluxPowerTransformer()
-                files = sorted( self.files, key=lambda file : pt.inverse_transform( np.array( [ rfa.get_fits_primaryhdu_header( file, 'FXSCLD' ) ] ) ) )
 
             data = [ rfa.get_fits_primaryhdu_data( files[ i ] ) for i in range( len( files ) ) ] # Order is important here, use index iter just in case
             self.__data_cache = data

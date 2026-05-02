@@ -8,9 +8,9 @@ from utils.img_data_arrays import ImageDataArrays
 logger = get_logger( __name__ )
 
 def plot_flux_vs_residuals():
-    pt = PeakFluxPowerTransformer()
     #for subdir, color in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
     for subdir, color in zip( [ 'retrained_loguniform', 'dataset' ], [ 'g', 'b' ] ):
+        pt = PeakFluxPowerTransformer( subdir )
         data_arrays = ImageDataArrays( subdir )
 
         #Select for peak flux >0.5 mJy

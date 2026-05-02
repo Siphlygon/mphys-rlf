@@ -2,6 +2,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 import utils.paths as pth
+import configparser
+import argparse
 
 def write_maxvals_of_h5_to_file( outfile: Path, infile: Path ):
     """
@@ -21,4 +23,19 @@ def write_maxvals_of_h5_to_file( outfile: Path, infile: Path ):
     np.save( outfile, max_vals )
 
 if __name__ == "__main__":
-    write_maxvals_of_h5_to_file( pth.MAXVALS, pth.LOFAR_DATA_PATH )
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "--config", help=f"Which config to use for obtaining training dataset maxvals, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    args = parser.parse_args()
+
+    config = configparser.ConfigParser()
+    config.read( pth.PROGRAM_CONFIG )
+    specific_config = config[ args.config ]
+
+    train_data_path = pth.LOFAR_DATA_PATH
+    if specific_config[ 'train_data_path' ] != "None":
+        train_data_path = specific_config[ 'train_data_path' ]
+
+    # if train_data_path is pth.LOFAR_DATA_PATH, we also want to make sure to update the dataset subdir
+    write_maxvals_of_h5_to_file( pth.NP_ARRAY_PARENT / 'dataset' / pth.MAXVALS, train_data_path )
+
+    write_maxvals_of_h5_to_file( pth.NP_ARRAY_PARENT / specific_config[ 'generated_subdir' ] / pth.MAXVALS, train_data_path )

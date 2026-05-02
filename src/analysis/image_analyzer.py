@@ -332,7 +332,7 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
             else:
                 self.logger.error( 'ERROR - Cannot analyze %s as fits file, is not fits file', str( path ) )
     
-    def save_image_to_FITS( self, image: np.ndarray, postfix: PurePath, fscaled: float, overwrite: bool = True ):
+    def save_image_to_FITS( self, image: np.ndarray, postfix: PurePath, overwrite: bool = True, **kwargs ):
         """
         Save a numpy 2d array to a fits file under "[fits_input_dir]/[subdir]/"
 
@@ -345,15 +345,18 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
             postfix for the fits file. Can either be the name of the fits file (e.g. "example.fits") or the name
             and location under "[fits_input_dir]/[subdir]/" to store it in (e.g. "example_bin/example.fits")
 
-        fscaled : float
-            the scaled max flux of the image, will be saved in a fits header
-
         overwrite : bool = True
             Whether or not to overwrite the file if it already exists
+
+        **kwargs
+            Various information to include in the FITS header. The dictionary will be
+            added to hdu.header such that the names in the header are the arguments
+            passed. This is usually to pass model context parameters, like
+            FXSCLD=fscaled
         """
         # HACK - add some random noise to the image so pybdsf doesn't fail
-        z = np.random.normal( 0, scale=1e-5, size=image.shape )
-        image += z
+        #z = np.random.normal( 0, scale=1e-5, size=image.shape )
+        #image += z
 
 
         hdu = fits.PrimaryHDU( image )
@@ -363,7 +366,8 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
         hdu.header[ "CDELT2" ] = 1.5 * 0.00027778
         hdu.header[ "CUNIT1" ] = "deg"
         hdu.header[ "CUNIT2" ] = "deg"
-        hdu.header[ "FXSCLD" ] = fscaled
+        for key, value in kwargs.items():
+            hdu.header[ key ] = value
         hdul = fits.HDUList( [ hdu ] )
         outfile = self.fits_input_dir / self.subdir / postfix
         outfile.parent.mkdir( parents=True, exist_ok=True )
@@ -387,5 +391,5 @@ class ImageAnalyzer( RecursiveFileAnalyzer ):
             postfix for the fits file. Can either be the name of the fits file (e.g. "example.fits") or the name
             and location under "[fits_input_dir]/[subdir]/" to store it in (e.g. "example_bin/example.fits")
         """
-        self.save_image_to_FITS( image, postfix, fscaled )
+        self.save_image_to_FITS( image, postfix, FXSCLD=fscaled )
         self.analyze_FITS_at_path( self.fits_input_dir / self.subdir / postfix )

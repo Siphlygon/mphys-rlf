@@ -104,7 +104,7 @@ class ImageDataArrays:
             model_images, = model_values
 
             # Get the unscaled fluxes and unscale everything accordingly
-            pt = PeakFluxPowerTransformer()
+            pt = PeakFluxPowerTransformer( subdir )
             peak_fluxes_mjy = pt.inverse_transform( peak_fluxes_transformed ) * 1000
             image_scale_factors = peak_fluxes_mjy / np.max( images, axis=(1,2) ) #Scale from current image maxes (~1) to what the values should be as per peak fluxes
             unscaled_sigma_clipped_rmsds = sigma_clipped_rmsds * image_scale_factors
