@@ -4,6 +4,8 @@
 *.zip
 *.png
 *.txt
+*.fits
+*.csv
 
 # IDE folders
 .vscode/
