@@ -36,7 +36,7 @@ config.read( PROGRAM_CONFIG )
 MODEL_NAMES = [ "LOFAR_model", "FIRST_model" ]
 
 # Folders for different kinds of fits image data
-SUBDIRS = [ config[ 'DEFAULT' ][ 'vm_dataset_subdir' ], 
+SUBDIRS = [ config[ 'DEFAULT' ][ 'dataset_subdir' ], 
             config[ 'dataset_distribution' ][ 'generated_subdir'],
             config[ 'loguniform_distribution' ][ 'generated_subdir' ],
             config[ 'retrained_model_loguniform' ][ 'generated_subdir' ],

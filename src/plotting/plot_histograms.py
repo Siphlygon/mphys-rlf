@@ -8,12 +8,17 @@ from analysis.log_analyzer import LogAnalyzer
 import analysis.log_analyzer as la
 import utils.recursive_file_analyzer as rfa
 import numpy as np
+import h5py
 
 
 class HistogramPlotter:
 
-    def __init__(self, bin_count=25):
+    def __init__(self, generated_subdir: str, dataset_subdir: str, config_name: str | None = None, train_data_path: str | None = None, bin_count=25):
         self.bin_count = bin_count
+        self.generated_subdir = generated_subdir
+        self.dataset_subdir = dataset_subdir
+        self.train_data_path = train_data_path
+        self.config_name = config_name
         self.logger = utils.logging.get_logger(__name__, logging.DEBUG)
 
         self.hist = HistogramErrorDrawer()
@@ -48,7 +53,7 @@ class HistogramPlotter:
         ylabels = [ "Relative Frequency" ] * 4
 
         # Plot histograms for every subdir e.g., dataset, loguniform, etc
-        for subdir, c in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
+        for subdir, c in zip( [ self.generated_subdir, self.dataset_subdir ], [ 'g', 'b' ] ):
             fig, axes = self.set_up_figure(titles, ranges, xlabels, ylabels)
 
             # -- Get model fluxes; will need to get them from PyBDSF if non-existing --
@@ -66,9 +71,15 @@ class HistogramPlotter:
             if data_path.exists():
                 data = np.load( data_path )
             else:
-                rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
-                data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
-                np.save( data_path, data )
+                if self.train_data_path is not None:
+                    with h5py.File( self.train_data_path, 'r' ) as h5file:
+                        data = h5file['images'][:]
+                        np.save( data_path, data )
+                else:
+                    rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
+                    data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
+                    np.save( data_path, data )
+
             means = np.mean( data, axis=(1,2) )
             rmsds = np.std( data, axis=(1,2) )
 
@@ -87,16 +98,25 @@ class HistogramPlotter:
             for ax in axes:
                 ax.legend()
 
-            plt.savefig( f"hist_{subdir}.png" )
-            plt.show()
+        if self.config_name is not None:
+            plt.savefig( f"hist_{self.config_name}.png" )
+        else:
+            plt.savefig( f"hist.png" )
+        plt.show()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument( "-v", "--verbose", help="Print a message to the console every time a file is read or a directory is entered", action='store_true' )
+    parser.add_argument( "--config", help="Config to use to get dataset/generated directories/paths", type=str )
     args = parser.parse_args()
     verbose = args.verbose
     log_level = logging.DEBUG if verbose else logging.INFO
 
-    hp = HistogramPlotter()
+    config = utils.paths.config[ args.config ]
+    generated_subdir = config[ 'generated_subdir' ]
+    dataset_subdir = config[ 'dataset_subdir' ]
+    train_data_path = None if config[ 'train_data_path' ] == 'None' else config[ 'train_data_path' ]
+
+    hp = HistogramPlotter( generated_subdir, dataset_subdir, config_name=args.config, train_data_path=train_data_path )
     hp.plot_histograms()

@@ -44,7 +44,7 @@ class RLF:
 
         # Dir names
         self.generated_subdir = lu_config['generated_subdir']
-        self.dataset_subdir = lu_config['vm_dataset_subdir']
+        self.dataset_subdir = lu_config['dataset_subdir']
 
         # Cosmological Parameters
         self.h = float(lu_config['h']) # hubble constant = h * 100 km/s/Mpc
