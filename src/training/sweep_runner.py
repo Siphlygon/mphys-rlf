@@ -71,6 +71,6 @@ if __name__ == "__main__":
         print("Created sweep:", sweep_id)
     
     # Initialise model name to avoid FileExistsError in sweeps.py
-    os.environ["MODEL_NAME"] = "sweep_model_0"    
+    os.environ["MODEL_NAME"] = f"sweep_{sweep_id}_0"    
 
     wandb.agent(sweep_id, function=launch)
