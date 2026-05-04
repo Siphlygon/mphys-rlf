@@ -20,6 +20,7 @@ class PeakFluxPowerTransformer:
     def __init__( self, subdir: str ):
         # Get a distribution of scaled max fluxes from the lofar data
         self.logger = get_logger( __name__ )
+        self.logger.info( 'Init PeakFluxPowerTransformer for subdir ' + subdir )
         self.du = DistributedUtils()
 
         self.subdir = subdir
@@ -30,6 +31,7 @@ class PeakFluxPowerTransformer:
 
         self.pt = PowerTransformer( method="box-cox" )
         self.pt.fit( np.load( self.maxvals_path ).reshape(-1, 1) )
+        self.logger.info( 'PeakFluxPowerTransformer for subdir ' + subdir + ' fit successfully' )
 
     def transform( self, array: np.ndarray ):
         return self.pt.transform( array.reshape( -1, 1 ) )[ :, 0 ]
