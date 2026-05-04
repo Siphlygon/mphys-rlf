@@ -12,7 +12,11 @@ import logging
 from utils.logging import get_logger
 from tqdm import tqdm
 import re
+import os
 from astropy.io import fits
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable
+import time
 
 # Utility functions for for_each
 def get_fits_primaryhdu_data( path: Path ):
@@ -51,132 +55,354 @@ class RecursiveFileAnalyzer:
         self.path = path
         self.logger = get_logger( self.__class__.__name__ )
         self.logger.setLevel( log_level )
-
-    def get_unwrapped_list( self,
-                            path: Path | None = None,
-                            pattern: str | None = None, 
-                            numeric_range: tuple[int,int] | None = None, 
-                            return_nums: bool = False ):
+    
+    def quick_scan( self, 
+            path: Path | str | None = None,
+            pattern: str | None = None,
+            return_nums: bool = False):
         """
-        Recurse through all files in path and unwrap all files into a single list,
-        useful for multiprocessing
+        A generator function to recursively scan through all files in a directory, 
+        yielding the path of each file. If a regex pattern is provided, only files matching the pattern are yielded.
 
-        Parameters
-        ----------
-        path: Path | None = None
-            The path to unwrap. None defaults to root (self.path).
-        pattern: str | None = None
-            The regex pattern to search for. Items not matching will not be returned. If None, return all.
-        numeric_range: int | None = None
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture
-            group into an integer. If the integer is within the numeric range (inclusive begin, exclusive end), 
-            match, otherwise don't match. None matches all.
-        return_nums: bool = False
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture
-            group into an integer. If return_nums is true, this will be returned with the path such that the return
-            type of this function is list[ (Path, int) ]
-
-        Returns
-        -------
-        list[ Path ] or list[ (Path, int) ]
-            An unwrapped list of all files in path, or the path itself if it is a fits file
+        :param path: The path to scan. If None, defaults to the root path of the RecursiveFileAnalyzer.
+        :param pattern: A regex pattern to filter files. If None, all files are yielded. If provided, only files whose names match the pattern are yielded.
+        :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
+        :return: A generator yielding paths of files that match the criteria.
         """
+        assert (pattern is None and not return_nums), "If return_nums is True, a regex pattern must be provided to extract the numbers"
         if path is None:
             path = self.path
-        if path.is_dir():
-            unwrapped_sublist = []
-            for iter_file in path.iterdir():
-                result = self.get_unwrapped_list( iter_file, pattern, numeric_range, return_nums )
-                if isinstance( result, list ):
-                    unwrapped_sublist = unwrapped_sublist + result
-                elif result is not None:
-                    unwrapped_sublist.append( result )
-            return unwrapped_sublist
-
-        # Check number is in numeric range if passed
-        elif ( pattern is None ) or ( re.match( pattern, str( path ) ) ):
-            return_value = path
-            if ( numeric_range is not None ) or ( return_nums ):
-                try:
-                    number_str = re.search( pattern, str( path ) ).group( 1 )
-                    number = int( number_str )
-                    if numeric_range is not None:
-                        if ( number >= numeric_range[ 1 ] ) or ( number < numeric_range[ 0 ] ):
-                            return None
+        with os.scandir(path) as it:
+            for entry in it:
+                if entry.is_dir(follow_symlinks=False):
+                    yield from self.quick_scan(entry.path, pattern=pattern, return_nums=return_nums)
+                elif pattern is None or re.match(pattern, entry.name):
                     if return_nums:
-                        return_value = ( path, number )
-                except IndexError:
-                    if numeric_range is not None:
-                        self.logger.warning( f'Numeric range ({numeric_range[ 0 ]},{numeric_range[ 1 ]}) provided but pattern {pattern} has no capture group' )
+                        # Extract file number using the first capture group in the regex pattern
+                        yield (entry.path, int(re.search(pattern, entry.name).group(1)))
                     else:
-                        self.logger.warning( f'Tried to return numbers for each file provided but pattern {pattern} has no capture group' )
-                except ValueError:
-                    self.logger.error( f'Captured {number_str} cannot be converted to an integer' )
-            return return_value
-        return None
-    
-    def for_each( self, function, pattern: str | None = None, progress_bar_desc: str | None = None, numeric_range: tuple[int,int] | None = None, return_nums: bool = False, args: list | None = None, kwargs: dict | None = None ):
+                        yield entry.path
+
+    def batcher(self, iterable : list, batch_size : int):
         """
-        A method to perform a generic function on all files within a directory given by path, or
-        to read path as a file and perform the generic function on its contents, with optional file extension filtering
-
-        Parameters
-        ----------
-        function : callable
-            The function which will be called on each file in path recursively
-        pattern : str | None = None
-            The regex pattern to search for. Items not matching will have the function operate on them. If None, operate on all.
-        progress_bar_desc : str | None = None
-            Description to give the progress bar, or none to not show a progress bar
-        numeric_range: int | None = None
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture
-            group into an integer. If the integer is within the numeric range (inclusive begin, exclusive end), 
-            match, otherwise don't match. None matches all.
-        return_nums: bool = False
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture
-            group into an integer.
-
-        args : list[ Any ] | None = None
-            arguments to pass on to the called function
-        kwargs : dict[ str, Any ] | None = None
-            keyword arguments to pass on to the called function
-
-        Returns
-        -------
-        list[ function( <b>: ) ]</b>
-            returns a list of the file return values within the path directory self.path, of length files
-        list[ int ] (optional)
-            if return_nums, also returns a list of integers for the values captured by the first capture group in pattern from the file path str
+        Batches an iterable into chunks of a specified size.
+        
+        :param iterable: An iterable to be batched.
+        :param batch_size: The size of each batch.
+        :return: A generator yielding batches of the iterable.
         """
-        if args is None:
-            args = []
-        if kwargs is None:
-            kwargs = dict()
+        batch = []
+        for item in iterable:
+            batch.append(item)
+            if len(batch) == batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
-        files = self.get_unwrapped_list( self.path, pattern, numeric_range, return_nums )
-        self.logger.info( f'Read files from {self.path}, now iterating...' )
-        return_values = [ None ] * len( files )
-        if return_nums:
-            return_numbers = np.empty( (len( files )), dtype=int )
-        i = 0
-        if progress_bar_desc is not None:
-            arr = tqdm( files, desc=progress_bar_desc, total=len( files ) )
+    def process_file(self, path : str | Path, function : Callable, *args, **kwargs):
+        """
+        Processes a single file with the given function.
+        
+        :param path: The path to the file to be processed.
+        :param function: The function to apply to the file.
+        :param args: Arguments to pass to the function.
+        :param kwargs: Keyword arguments to pass to the function.
+        :return: The result of applying the function to the file.
+        """
+        try:
+            result = function(path, *args, **kwargs)
+            return result
+        except Exception as e:
+            self.logger.warning("Error processing %s: %s", path, e)
+            return None
+
+    def process_batch(self, file_batch : list[str | Path], function : Callable, *args, **kwargs):
+        """     
+        Processes a batch of files with the given function.
+        
+        :param file_batch: A list of file paths to be processed.
+        :param function: The function to apply to each file.
+        :param args: Arguments to pass to the function.
+        :param kwargs: Keyword arguments to pass to the function.
+        :return: A list of results from applying the function to each file in the batch.
+        """
+        results = []
+        for path in file_batch:
+            try:
+                results.append(self.process_file(path, function, *args, **kwargs))
+            except Exception as e:
+                self.logger.warning("Error with %s: %s", path, e)
+        return results
+
+    def _run_file_mode(self,
+                       file_paths : list[str | Path],
+                       function : Callable,
+                       num_workers : int,
+                       output_file : str | Path | None = None,
+                       show_progress : bool = True):
+        """
+        Process files by scheduling one file per task.
+        
+        :param file_paths: A list of file paths to process.
+        :param function: The function to apply to each file.
+        :param num_workers: The number of worker threads to use for concurrent processing.
+        :param output_file: Optional path to a file where results will be written. If None, results are kept in memory.
+        :param show_progress: Whether to display a tqdm progress bar.
+        :return: A list of results if output_file is None, otherwise None.
+        """
+        results = []
+        out_handle = open(output_file, "a") if output_file else None
+
+        try:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                iterator = executor.map(self.process_file, file_paths, [function] * len(file_paths))
+                if show_progress:
+                    iterator = tqdm(iterator, total=len(file_paths),
+                        desc=f"Processing files (file mode, workers={num_workers})",
+                    )
+                for result in iterator:
+                    if out_handle:
+                        out_handle.write(f"{result}\n")
+                    else:
+                        results.append(result)
+        finally:
+            if out_handle:
+                out_handle.close()
+
+        return results if not output_file else None
+
+    def _run_batch_mode(self,
+                        file_paths : list[str | Path],
+                        num_workers : int,
+                        batch_size : int,
+                        function : Callable,
+                        output_file : str | Path | None = None,
+                        show_progress : bool = True):
+        """
+        Process files by scheduling one batch per task.
+        
+        :param file_paths: A list of file paths to process.
+        :param num_workers: The number of worker threads to use for concurrent processing.
+        :param batch_size: The number of files to process in each batch.
+        :param function: The function to apply to each file.
+        :param output_file: Optional path to a file where results will be written. If None, results are kept in memory.
+        :param show_progress: Whether to display a tqdm progress bar.
+        :return: A list of results if output_file is None, otherwise None.
+        """
+        results = []
+        batches = list(self.batcher(file_paths, batch_size))
+        out_handle = open(output_file, "a") if output_file else None
+
+        try:
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                iterator = executor.map(self.process_batch, batches, [function] * len(batches))
+                if show_progress:
+                    iterator = tqdm(iterator, total=len(batches),
+                        desc=(
+                            "Processing files "
+                            f"(batch mode, workers={num_workers}, batch size={batch_size})"
+                        ),
+                    )
+
+                for batch_results in iterator:
+                    if out_handle:
+                        for result in batch_results:
+                            out_handle.write(f"{result}\n")
+                    else:
+                        results.extend(batch_results)
+        finally:
+            if out_handle:
+                out_handle.close()
+
+        return results if not output_file else None
+
+    def run_pipeline(
+        self,
+        function : Callable,
+        return_nums : bool = False,
+        root_dir : Path | str | None = None,
+        pattern: str | None = r".*?\.fits$",
+        batch_size : int = 500,
+        num_workers : int = 8,
+        output_file : str | Path | None = None,
+        mode : str = "batch",
+        show_progress : bool = True,
+        file_paths_override : list[str | Path] | None = None,
+    ):
+        """
+        Runs the complete pipeline to process files in a directory with the specified function, using either file mode or batch mode for concurrent processing.
+        
+        :param function: The function to apply to each file.
+        :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
+        :param root_dir: The root directory to scan for files to process.
+        :param pattern: A regex pattern to filter files. Only files matching the pattern will be processed. Default is r".*?\.fits$" to match FITS files.
+        :param batch_size: The number of files to process in each batch.
+        :param num_workers: The number of worker threads to use for concurrent processing.
+        :param output_file: Optional path to a file where results will be written. If None, results are kept in memory.
+        :param mode: Either "file" (one file per task) or "batch" (one batch per task).
+        :param show_progress: Whether to display tqdm progress bars.
+        :param file_paths_override: Optional precomputed list of file paths.
+        :return: A list of results if output_file is None, otherwise None.
+        """
+        assert mode in ("file", "batch"), "Mode must be either 'file' or 'batch'"
+        
+        if root_dir is None:
+            root_dir = self.path
+        
+        if file_paths_override is not None:
+            self.logger.info("Using provided list of file paths with %d entries", len(file_paths_override))
+            file_paths = file_paths_override
         else:
-            arr = files
-        for file in arr:
+            file_paths = list(self.quick_scan(pattern=pattern, return_nums=return_nums))
             if return_nums:
-                return_values[ i ] = function( file[ 0 ], *args, **kwargs )
-                return_numbers[ i ] = file[ 1 ]
-                self.logger.debug( f"Reading file {file[ 1 ]}: {file[ 0 ]}" )
-            else:
-                return_values[ i ] = function( file, *args, **kwargs )
-                self.logger.debug( f"Reading file {file}" )
-            i += 1
+                file_paths, numbers = map(list, zip(*file_paths))
+            self.logger.info("Found %d files matching pattern '%s' in %s", len(file_paths), pattern, root_dir)
 
+        if mode == "file":
+            return_values = self._run_file_mode(
+                file_paths=file_paths,
+                function=function,
+                num_workers=num_workers,
+                output_file=output_file,
+                show_progress=show_progress,
+            )
+
+        if mode == "batch":
+            return_values = self._run_batch_mode(
+                file_paths=file_paths,
+                function=function,
+                num_workers=num_workers,
+                batch_size=batch_size,
+                output_file=output_file,
+                show_progress=show_progress,
+            )
+
+        return return_values, numbers if return_nums else return_values
+
+    def benchmark_pipeline(
+        self,
+        function : Callable,
+        return_nums : bool = False,
+        root_dir : Path | str | None = None,
+        pattern: str | None = r".*?\.fits$",
+        worker_options : tuple[int, ...] = (8, 16, 24, 32),
+        batch_size_options : tuple[int, ...] = (25, 50, 100, 250, 500),
+        sample_size : int | None = 5000,
+        repeats : int = 1,
+        output_csv : str | Path | None = None,
+        show_progress : bool = True,
+    ):
+        """
+        Benchmark throughput for different worker counts and batch sizes.
+
+        Includes:
+        - file mode: one file per task (batch_size recorded as None)
+        - batch mode: one batch per task for each batch size in batch_size_options
+
+        :param function: The function to apply to each file.
+        :param root_dir: Root directory containing files to process.
+        :param pattern: A regex pattern to filter files. Only files matching the pattern will be processed. Default is r".*?\.fits$" to match FITS files.
+        :param worker_options: Iterable of worker counts to test.
+        :param batch_size_options: Iterable of batch sizes to test in batch mode.
+        :param sample_size: Number of files to benchmark (None for all files).
+        :param repeats: Repetitions per config; best time is kept.
+        :param output_csv: Optional path to write benchmark results as CSV.
+        :param show_progress: Whether to display tqdm progress bars during benchmarking.
+        :return: Tuple (all_rows, best_row)
+        """
+        if root_dir is None:
+            root_dir = self.path
+        
+        # Limit files to a subset for benchmarking if specified
+        file_paths = list(self.quick_scan(pattern=pattern))
         if return_nums:
-            return return_values, return_numbers
-        else:
-            return return_values
+            # You can test performance of returning numbers, but it is not used in the return of this function.
+            file_paths, _ = map(list, zip(*file_paths))
+        
+        if sample_size is not None:
+            file_paths = file_paths[:sample_size]
+
+        if not file_paths:
+            raise ValueError("No FITS files found for benchmarking.")
+
+        rows = []
+        total_files = len(file_paths)
+
+        self.logger.info("Benchmarking %d files", total_files)
+
+        for workers in worker_options:
+            best_seconds = float("inf")
+            
+            # Running file mode benchmark
+            for _ in range(repeats):
+                t0 = time.perf_counter()
+                self.run_pipeline(
+                    root_dir=root_dir,
+                    num_workers=workers,
+                    mode="file",
+                    show_progress=show_progress,
+                    file_paths_override=file_paths,
+                    function=function,
+                )
+                elapsed = time.perf_counter() - t0
+                if elapsed < best_seconds:
+                    best_seconds = elapsed
+
+            rows.append(
+                {
+                    "mode": "file",
+                    "workers": workers,
+                    "batch_size": None,
+                    "seconds": best_seconds,
+                    "files_per_second": total_files / best_seconds,
+                }
+            )
+
+            # Running batch mode benchmarks for each batch size
+            for batch_size in batch_size_options:
+                best_seconds = float("inf")
+                for _ in range(repeats):
+                    t0 = time.perf_counter()
+                    self.run_pipeline(
+                        root_dir=root_dir,
+                        batch_size=batch_size,
+                        num_workers=workers,
+                        mode="batch",
+                        show_progress=show_progress,
+                        file_paths_override=file_paths,
+                        function=function,
+                    )
+                    elapsed = time.perf_counter() - t0
+                    if elapsed < best_seconds:
+                        best_seconds = elapsed
+
+                rows.append(
+                    {
+                        "mode": "batch",
+                        "workers": workers,
+                        "batch_size": batch_size,
+                        "seconds": best_seconds,
+                        "files_per_second": total_files / best_seconds,
+                    }
+                )
+
+        rows_sorted = sorted(rows, key=lambda x: x["seconds"])
+        best_row = rows_sorted[0]
+
+        if output_csv:
+            csv_path = Path(output_csv)
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(csv_path, "w", newline="") as f:
+                f.write("mode,workers,batch_size,seconds,files_per_second\n")
+                for row in rows_sorted:
+                    batch_value = "" if row["batch_size"] is None else row["batch_size"]
+                    f.write(
+                        f"{row['mode']},{row['workers']},{batch_value},"
+                        f"{row['seconds']:.6f},{row['files_per_second']:.3f}\n"
+                    )
+
+        return rows_sorted, best_row
 
 class HistogramErrorDrawer:
     """
