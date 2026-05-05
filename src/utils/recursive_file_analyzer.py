@@ -55,10 +55,25 @@ class RecursiveFileAnalyzer:
         self.path = path
         self.logger = get_logger( self.__class__.__name__ )
         self.logger.setLevel( log_level )
+
+    def get_unwrapped_list( self,
+                            path: Path | None = None,
+                            pattern: str | None = None,
+                            numeric_range: tuple[int,int] | None = None,
+                            return_nums: bool = False ):
+        if return_nums:
+            paths, idxs = map( list, zip( *self.quick_scan( path, pattern, numeric_range, return_nums ) ) )
+            return paths, idxs
+        else:
+            paths = list( self.quick_scan( path, pattern, numeric_range ) )
+            return paths
+
+
     
     def quick_scan( self, 
             path: Path | str | None = None,
             pattern: str | None = None,
+            numeric_range: tuple[int,int] | None = None,
             return_nums: bool = False):
         """
         A generator function to recursively scan through all files in a directory, 
@@ -66,21 +81,32 @@ class RecursiveFileAnalyzer:
 
         :param path: The path to scan. If None, defaults to the root path of the RecursiveFileAnalyzer.
         :param pattern: A regex pattern to filter files. If None, all files are yielded. If provided, only files whose names match the pattern are yielded.
+        :param numeric_range: Range on which to only return values if their index (from the capture group in pattern) is is within said range, or None to do no filtering
         :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
         :return: A generator yielding paths of files that match the criteria.
         """
-        assert (pattern is None and not return_nums), "If return_nums is True, a regex pattern must be provided to extract the numbers"
+        if return_nums:
+            assert (pattern is not None), "If return_nums is True, a regex pattern must be provided to extract the numbers"
         if path is None:
             path = self.path
         with os.scandir(path) as it:
             for entry in it:
                 if entry.is_dir(follow_symlinks=False):
-                    yield from self.quick_scan(entry.path, pattern=pattern, return_nums=return_nums)
+                    yield from self.quick_scan(entry.path, pattern=pattern, numeric_range=numeric_range, return_nums=return_nums)
                 elif pattern is None or re.match(pattern, entry.name):
                     if return_nums:
                         # Extract file number using the first capture group in the regex pattern
-                        yield (entry.path, int(re.search(pattern, entry.name).group(1)))
+                        idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                        if numeric_range is not None:
+                            if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
+                                continue
+                        yield (entry.path, idx)
                     else:
+                        # save some processing power by only doing regex match if numeric_range
+                        if numeric_range is not None:
+                            idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                            if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
+                                continue
                         yield entry.path
 
     def batcher(self, iterable : list, batch_size : int):
