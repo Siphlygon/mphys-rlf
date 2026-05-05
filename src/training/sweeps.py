@@ -55,7 +55,10 @@ class HyperparameterSweep(DiffusionTrainer):
             snapshot intervals. Default is True.
         """
         # Prepare output handling
-        write_output = write_output or self.config.write_output
+        if write_output is None:
+            write_output = self.config.write_output
+        if self.distributed and not self.is_primary():
+            write_output = False
         if write_output:
             OM = OM or self.OM
             OM.init_training_loop()
@@ -95,7 +98,10 @@ class HyperparameterSweep(DiffusionTrainer):
 
                 # Log progress
                 t_per_it = dt() / (i + 1 - self.iter_start)
-                self.OM.log_training_progress(dt(), t_per_it, i, iterations, loss)
+                if self.is_primary():
+                    self.OM.log_training_progress(
+                        dt(), t_per_it, i, iterations, loss
+                    )
 
                 # Write output
                 if write_output:
@@ -106,7 +112,8 @@ class HyperparameterSweep(DiffusionTrainer):
 
                 # Calculate & log validation loss
                 val_loss = self.validation_loss(validate_ema=self.validate_ema)
-                self.OM.log_val_loss(i, val_loss)
+                if self.is_primary():
+                    self.OM.log_val_loss(i, val_loss)
 
                 # Write output
                 if write_output:

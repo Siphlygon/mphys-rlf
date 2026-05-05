@@ -70,7 +70,7 @@ class OutputManager:
     """
 
     def __init__(
-        self, model_name, override=False, pickup=False, parent_dir=MODEL_PARENT
+        self, model_name, write_output=True, override=False, pickup=False, parent_dir=MODEL_PARENT
     ):
         """
         Initialize the OutputManager object.
@@ -79,6 +79,10 @@ class OutputManager:
         ----------
         model_name : str
             The name of the model.
+        write_output : bool, optional
+            If True, write output files during training.
+            If False, do not write output files.
+            Defaults to True.
         override : bool, optional
             If True, override existing model and results folder with the same name.
             If False, rename both model and results folder if they already exist.
@@ -92,6 +96,7 @@ class OutputManager:
             Defaults to MODEL_PARENT.
         """
         # Set some attributes from input
+        self.write_output = write_output
         self.pickup = pickup
         self.override = override
         self.model_name = model_name
@@ -99,7 +104,16 @@ class OutputManager:
 
         # Set up logger
         self.logger = utils.logging.get_logger(self.__class__.__name__)
+        
+        if self.write_output:
+            self._setup_files()
+        
+        self.ready_to_write = False
 
+    def _setup_files(self):
+        """
+        Get the output files ready for writing. If the model name already exists, either override or rename the model and results folder depending on the override flag. Then set up the output files and add a file handler to the logger.
+        """
         # Check if model name already exists, if so rename both model and
         # results folder.
         if not (self.override or self.pickup):
@@ -144,6 +158,20 @@ class OutputManager:
         )
         handler.setFormatter(self.logger.handlers[0].formatter)
         self.logger.addHandler(handler)
+        
+        self.ready_to_write = True
+        self.logger.info(f"OutputManager output initialized for model {self.model_name}.\n")
+
+    def set_writing_status(self, status):
+        """
+        Set the writing status of the OutputManager.
+        
+        Args:
+            status (bool): If True, the OutputManager will write output files during training. If False, it will not write output files.
+        """
+        self.write_output = status
+        if self.write_output and not self.ready_to_write:
+            self._setup_files()
 
     def _check_rename_model(self):
         """
@@ -233,6 +261,8 @@ class OutputManager:
         SystemExit
             If no key is pressed within 10 seconds after displaying a warning message.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
+        
         for f in self.out_files:
             # Check if file exists
             if f.exists():
@@ -272,6 +302,7 @@ class OutputManager:
         Raises:
             AssertionError: If the loss files for the current model do not exist.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         assert (
             self._loss_files_exist()
         ), f"Loss files for model {self.model_name} do not exist."
@@ -317,6 +348,7 @@ class OutputManager:
             A list of losses to write to the file. Every entry should be a list
             with two elements: the iteration number and the loss value.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         self._write_losses(self.train_loss_file, losses)
 
     def write_val_losses(self, losses):
@@ -330,6 +362,7 @@ class OutputManager:
             with three elements: the iteration number, the loss value, and the
             EMA loss value.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         self._write_losses(self.val_loss_file, losses)
 
     def save_params(
@@ -353,6 +386,7 @@ class OutputManager:
         path : Path, optional
             The path to save the parameters file, by default None.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         path = path or self.parameters_file
 
         # Helper function
@@ -388,6 +422,7 @@ class OutputManager:
         optimizer : torch.optim.Optimizer
             The optimizer to be saved.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         snap_dir = self.results_folder.joinpath("snapshots")
         snap_dir.mkdir(parents=True, exist_ok=True)
 
@@ -411,6 +446,7 @@ class OutputManager:
         gammas : list
             A list of gamma values corresponding to each model.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         power_ema_dir = self.results_folder.joinpath("power_ema")
         power_ema_dir.mkdir(parents=True, exist_ok=True)
 
@@ -438,6 +474,7 @@ class OutputManager:
             None. When provided, the number of iterations is added to the
             configuration file.
         """
+        assert self.write_output, "OutputManager is not initialized for writing output. Set write_output to True to initialize output files and loggers."
         if iterations is not None:
             param_dict["iterations"] = iterations
         with open(self.config_file, "w") as f:
