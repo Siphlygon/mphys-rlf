@@ -16,7 +16,7 @@ def launch():
     # Set the model name for this run to avoid FileExistsError in sweeps.py
     model_name = env["MODEL_NAME"]
     suffix = int(model_name.split("_")[-1])  # Get the current suffix number
-    base_name = "model_sweep"
+    base_name = "sweep" + "_" + model_name.split("_")[1]  # Get the base name without the suffix
     new_model_name = f"{base_name}_{suffix}"
     while os.path.exists(f"model_results/{new_model_name}"):
         suffix += 1
