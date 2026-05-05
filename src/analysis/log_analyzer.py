@@ -22,7 +22,7 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
         self.subdir = subdir if isinstance( subdir, PurePath ) else PurePath( subdir )
 
     # Override default pattern
-    def for_each( self, function, pattern: str | None = r'.*?image(\d+)\.fits\.pybdsf\.log$', progress_bar_desc: str | None = None, numeric_range: tuple[int,int] | None = None, return_nums: bool = False, args: list | None = None, kwargs: dict | None = None ):
+    def for_each( self, function, pattern: str | None = r'.*?\D*(\d+)\.fits\.pybdsf\.log$', progress_bar_desc: str | None = None, numeric_range: tuple[int,int] | None = None, return_nums: bool = False, args: list | None = None, kwargs: dict | None = None ):
         """
         A method to perform a generic function on all files within the log directory and return the output, along with optionally a number as
         gathered from the first capture group in pattern applied to the file paths.
@@ -31,7 +31,7 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
         ----------
         function : callable
             The function which will be called on each file in path recursively
-        pattern : str | None = r'.*?image(\\d)\\.fits\\.pybdsf\\.log$'
+        pattern : str | None = r'.*?\D*(\\d)\\.fits\\.pybdsf\\.log$'
             The regex pattern to search for. Items not matching will have the function operate on them. If None, operate on all.
         progress_bar_desc : str | None = None
             Description to give the progress bar, or none to not show a progress bar
