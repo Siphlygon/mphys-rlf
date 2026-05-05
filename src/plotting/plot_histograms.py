@@ -28,7 +28,7 @@ class HistogramPlotter:
         fig = plt.figure(figsize=(10, 6))
         gs = fig.add_gridspec( 2, 2,
                                 left=0.11, right=0.99, bottom=0.05, top=0.95,
-                                wspace=0.25, hspace=0.25 )
+                                wspace=0.25, hspace=0.30 )
         ax_flux = fig.add_subplot( gs[ 0, 0 ] )
         ax_mean = fig.add_subplot( gs[ 0, 1 ] )
         ax_rms = fig.add_subplot( gs[ 1, 0 ] )
@@ -48,13 +48,13 @@ class HistogramPlotter:
     def plot_histograms(self):
         # Plotting flux, mean, rms, and pixel values
         titles = [ "Flux", "Mean", "RMS", "Pixel Values" ]
-        xlabels = [ "Integrated Flux (arbitrary units)", "Image Mean (0-1)", "Image RMS (0-1)", "Pixel Value (0-1)" ]
-        ranges = [ (0, 60), (0, 0.2), (0, 0.3), (0, 1) ]
+        xlabels = [ "Integrated Flux (Jy)", "Image Mean (Jy/beam)", "Image RMS (Jy/beam)", "Pixel Value (Jy/beam)" ]
+        ranges = [ (0, 30), (0, 0.25), (0, 0.5), (0, 50) ]
         ylabels = [ "Relative Frequency" ] * 4
 
+        fig, axes = self.set_up_figure(titles, ranges, xlabels, ylabels)
         # Plot histograms for every subdir e.g., dataset, loguniform, etc
         for subdir, c in zip( [ self.generated_subdir, self.dataset_subdir ], [ 'g', 'b' ] ):
-            fig, axes = self.set_up_figure(titles, ranges, xlabels, ylabels)
 
             # -- Get model fluxes; will need to get them from PyBDSF if non-existing --
             fluxes_path = utils.paths.NP_ARRAY_PARENT / subdir / 'integrated_fluxes_normalized.npy'
@@ -74,7 +74,7 @@ class HistogramPlotter:
                 if self.train_data_path is not None:
                     with h5py.File( self.train_data_path, 'r' ) as h5file:
                         data = h5file['images'][:]
-                        np.save( data_path, data )
+                        #don't save to numpy, no need to duplicate
                 else:
                     rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
                     data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
@@ -86,11 +86,14 @@ class HistogramPlotter:
             # Plot the histograms
             axes_data = [ normalized_model_fluxes, means, rmsds, data.ravel() ]
             for ax, ax_data, range in zip( axes, axes_data, ranges ):
-                self.hist.draw( ax_data,
+                ax_data_nonnan = ax_data[ ~np.isnan( ax_data ) ]
+                self.logger.info( f'ax_data length: {ax_data.shape[ 0 ]}' )
+                self.logger.info( f'ax_data_nonnan length: {ax_data_nonnan.shape[ 0 ]}' )
+                self.hist.draw( ax_data_nonnan,
                            ax=ax,
                            bins=self.bin_count,
-                           #range=range,
-                           range=None,
+                           range=range,
+                           #range=None,
                            label=subdir,
                            color=c,
                            density=False,
