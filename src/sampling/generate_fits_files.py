@@ -93,13 +93,17 @@ def sample( args ):
                 image = ( image - im_min ) / ( im_max - im_min )
 
             fscaled = context[ i, 0 ]
-            las = context[ i, 1 ]
+            if args.las_conditioning_enabled:
+                las = context[ i, 1 ]
 
             full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
             while full_image_path.exists():
                 sample_index += 1
                 full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
-            image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled, LASIZE=las )
+            if args.las_conditioning_enabled:
+                image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled, LASIZE=las )
+            else:
+                image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled )
 
             if sample_index > bin_end:
                 logger.error( 'Sample index %i has gone outside allowed value %i', sample_index, bin_end )
