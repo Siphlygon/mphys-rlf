@@ -21,4 +21,5 @@ echo "Array Count:"
 echo $SLURM_ARRAY_TASK_COUNT
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/src/plotting/plot_histograms.py
+export HDF5_USE_FILE_LOCKING='FALSE'
+python /share/nas2_3/lgreen/mphys-rlf/src/plotting/plot_histograms.py --config snr15_loguniform
