@@ -341,7 +341,7 @@ class RecursiveFileAnalyzer:
                 *args, **kwargs
             )
 
-        return return_values, numbers if return_nums else return_values
+        return (return_values, numbers) if return_nums else return_values
 
     def benchmark_pipeline(
         self,
