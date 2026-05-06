@@ -15,7 +15,7 @@ import utils.logging
 import utils.paths as paths
 from data.firstgalaxydata import FIRSTGalaxyData
 from plotting.image_plots import plot_image_grid
-from data.transforms import EvalTransform, ToTensor, TrainTransform
+from data.transforms import EvalTransform, ToTensor, TrainTransform, TrainTransformNoScale
 
 
 # Assuming this is in datasets.datasets or a similar module
@@ -291,3 +291,7 @@ class TrainDatasetFIRST(FIRSTGalaxyData):
     def set_context(self, *args):
         logger.warn("FIRSTGalaxyData has class labels as fixed context.")
         return
+
+class TrainDatasetNoScale(TrainDataset):
+    def __init__(self, path, img_size=80, **kwargs):
+        super().__init__(path, transforms=TrainTransformNoScale(img_size), **kwargs)
