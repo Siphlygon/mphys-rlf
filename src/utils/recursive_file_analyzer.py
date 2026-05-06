@@ -17,6 +17,8 @@ from astropy.io import fits
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 import time
+from functools import partial
+from itertools import repeat   
 
 # Utility functions for for_each
 def get_fits_primaryhdu_data( path: Path ):
@@ -57,20 +59,29 @@ class RecursiveFileAnalyzer:
         self.logger.setLevel( log_level )
 
     def get_unwrapped_list( self,
-                            path: Path | None = None,
+                            path: Path | str | None = None,
                             pattern: str | None = None,
                             numeric_range: tuple[int,int] | None = None,
                             return_nums: bool = False ):
+        """A method to recursively unwrap all files in a directory, with optional regex pattern matching and numeric range filtering on the pattern capture group.
+
+        Args:
+            path (Path | str | None, optional): The path to scan. Defaults to None.
+            pattern (str | None, optional): A regex pattern to filter files. Defaults to None.
+            numeric_range (tuple[int,int] | None, optional): A range of numbers to filter files. Defaults to None.
+            return_nums (bool, optional): Whether to return file numbers. Defaults to False.
+
+        Returns:
+            list (Path) | tuple(list[Path], list[int]) : A list of file paths, and optionally a list of file numbers if return_nums is True.
+        """
         if return_nums:
-            paths, idxs = map( list, zip( *self.quick_scan( path, pattern, numeric_range, return_nums ) ) )
+            paths, idxs = map( list, zip( *self._quick_scan( path, pattern, numeric_range, return_nums ) ) )
             return paths, idxs
         else:
-            paths = list( self.quick_scan( path, pattern, numeric_range ) )
+            paths = list( self._quick_scan( path, pattern, numeric_range ) )
             return paths
-
-
     
-    def quick_scan( self, 
+    def _quick_scan( self, 
             path: Path | str | None = None,
             pattern: str | None = None,
             numeric_range: tuple[int,int] | None = None,
@@ -83,16 +94,23 @@ class RecursiveFileAnalyzer:
         :param pattern: A regex pattern to filter files. If None, all files are yielded. If provided, only files whose names match the pattern are yielded.
         :param numeric_range: Range on which to only return values if their index (from the capture group in pattern) is is within said range, or None to do no filtering
         :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
-        :return: A generator yielding paths of files that match the criteria.
+        :return: A generator yielding paths of files that match the criteria, and optionally their extracted numbers.
         """
         if return_nums:
             assert (pattern is not None), "If return_nums is True, a regex pattern must be provided to extract the numbers"
+        
+        if numeric_range:
+            assert (pattern is not None), "If numeric_range is provided, a regex pattern must be provided to extract the numbers"
+        
         if path is None:
             path = self.path
+        
         with os.scandir(path) as it:
             for entry in it:
+                # Use follow_symlinks=False to avoid infinite loops from circular symlinks.
                 if entry.is_dir(follow_symlinks=False):
-                    yield from self.quick_scan(entry.path, pattern=pattern, numeric_range=numeric_range, return_nums=return_nums)
+                    yield from self._quick_scan(entry.path, pattern=pattern, numeric_range=numeric_range, return_nums=return_nums)
+                
                 elif pattern is None or re.match(pattern, entry.name):
                     if return_nums:
                         # Extract file number using the first capture group in the regex pattern
@@ -102,14 +120,14 @@ class RecursiveFileAnalyzer:
                                 continue
                         yield (entry.path, idx)
                     else:
-                        # save some processing power by only doing regex match if numeric_range
+                        # save some processing power by only doing regex match if numeric_range is provided
                         if numeric_range is not None:
                             idx = int( re.search( pattern, entry.name ).group( 1 ) )
                             if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
                                 continue
                         yield entry.path
 
-    def batcher(self, iterable : list, batch_size : int):
+    def _batcher(self, iterable : list, batch_size : int):
         """
         Batches an iterable into chunks of a specified size.
         
@@ -126,37 +144,33 @@ class RecursiveFileAnalyzer:
         if batch:
             yield batch
 
-    def process_file(self, path : str | Path, function : Callable, *args, **kwargs):
+    def _process_file(self, path : str | Path, function : Callable):
         """
         Processes a single file with the given function.
         
         :param path: The path to the file to be processed.
-        :param function: The function to apply to the file.
-        :param args: Arguments to pass to the function.
-        :param kwargs: Keyword arguments to pass to the function.
+        :param function: The function (or partial) to apply to the file.
         :return: The result of applying the function to the file.
         """
         try:
-            result = function(path, *args, **kwargs)
+            result = function(path)
             return result
         except Exception as e:
             self.logger.warning("Error processing %s: %s", path, e)
             return None
 
-    def process_batch(self, file_batch : list[str | Path], function : Callable, *args, **kwargs):
+    def _process_batch(self, file_batch : list[str | Path], function : Callable):
         """     
         Processes a batch of files with the given function.
         
         :param file_batch: A list of file paths to be processed.
-        :param function: The function to apply to each file.
-        :param args: Arguments to pass to the function.
-        :param kwargs: Keyword arguments to pass to the function.
+        :param function: The function (or partial) to apply to each file.
         :return: A list of results from applying the function to each file in the batch.
         """
         results = []
         for path in file_batch:
             try:
-                results.append(self.process_file(path, function, *args, **kwargs))
+                results.append(self._process_file(path, function))
             except Exception as e:
                 self.logger.warning("Error with %s: %s", path, e)
         return results
@@ -166,7 +180,8 @@ class RecursiveFileAnalyzer:
                        function : Callable,
                        num_workers : int,
                        output_file : str | Path | None = None,
-                       show_progress : bool = True):
+                       show_progress : bool = True,
+                       *args, **kwargs):
         """
         Process files by scheduling one file per task.
         
@@ -179,10 +194,14 @@ class RecursiveFileAnalyzer:
         """
         results = []
         out_handle = open(output_file, "a") if output_file else None
-
+        
+        # Create a partial function with the provided args and kwargs
+        func_with_args = partial(function, *args, **kwargs)
+        
         try:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                iterator = executor.map(self.process_file, file_paths, [function] * len(file_paths))
+                self.logger.info("Processing %d files with %d workers", len(file_paths), num_workers)
+                iterator = executor.map(self._process_file, file_paths, repeat(func_with_args))
                 if show_progress:
                     iterator = tqdm(iterator, total=len(file_paths),
                         desc=f"Processing files (file mode, workers={num_workers})",
@@ -204,7 +223,8 @@ class RecursiveFileAnalyzer:
                         batch_size : int,
                         function : Callable,
                         output_file : str | Path | None = None,
-                        show_progress : bool = True):
+                        show_progress : bool = True,
+                        *args, **kwargs):
         """
         Process files by scheduling one batch per task.
         
@@ -217,12 +237,16 @@ class RecursiveFileAnalyzer:
         :return: A list of results if output_file is None, otherwise None.
         """
         results = []
-        batches = list(self.batcher(file_paths, batch_size))
+        batches = list(self._batcher(file_paths, batch_size))
         out_handle = open(output_file, "a") if output_file else None
+        
+        # Create a partial function with the provided args and kwargs
+        func_with_args = partial(function, *args, **kwargs)
 
         try:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                iterator = executor.map(self.process_batch, batches, [function] * len(batches))
+                self.logger.info("Processing %d files in %d batches with batch size %d using %d workers", len(file_paths), len(batches), batch_size, num_workers)
+                iterator = executor.map(self._process_batch, batches, repeat(func_with_args))
                 if show_progress:
                     iterator = tqdm(iterator, total=len(batches),
                         desc=(
@@ -247,6 +271,7 @@ class RecursiveFileAnalyzer:
         self,
         function : Callable,
         return_nums : bool = False,
+        numeric_range: tuple[int,int] | None = None,
         root_dir : Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
         batch_size : int = 500,
@@ -255,12 +280,14 @@ class RecursiveFileAnalyzer:
         mode : str = "batch",
         show_progress : bool = True,
         file_paths_override : list[str | Path] | None = None,
+        *args, **kwargs
     ):
         """
         Runs the complete pipeline to process files in a directory with the specified function, using either file mode or batch mode for concurrent processing.
         
         :param function: The function to apply to each file.
         :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
+        :param numeric_range: Range on which to only return values if their index (from the capture group in pattern) is is within said range, or None to do no filtering
         :param root_dir: The root directory to scan for files to process.
         :param pattern: A regex pattern to filter files. Only files matching the pattern will be processed. Default is r".*?\.fits$" to match FITS files.
         :param batch_size: The number of files to process in each batch.
@@ -269,7 +296,10 @@ class RecursiveFileAnalyzer:
         :param mode: Either "file" (one file per task) or "batch" (one batch per task).
         :param show_progress: Whether to display tqdm progress bars.
         :param file_paths_override: Optional precomputed list of file paths.
-        :return: A list of results if output_file is None, otherwise None.
+        :param args: Additional positional arguments to pass to the processing function.
+        :param kwargs: Additional keyword arguments to pass to the processing function.
+        
+        :return: A list of results if output_file is None, otherwise None. If return_nums is True, also returns a list of file numbers extracted from the file names.
         """
         assert mode in ("file", "batch"), "Mode must be either 'file' or 'batch'"
         
@@ -280,10 +310,15 @@ class RecursiveFileAnalyzer:
             self.logger.info("Using provided list of file paths with %d entries", len(file_paths_override))
             file_paths = file_paths_override
         else:
-            file_paths = list(self.quick_scan(pattern=pattern, return_nums=return_nums))
+            file_paths = self.get_unwrapped_list(path=root_dir, 
+                                                      pattern=pattern, 
+                                                      return_nums=return_nums, 
+                                                      numeric_range=numeric_range)
             if return_nums:
-                file_paths, numbers = map(list, zip(*file_paths))
+                file_paths, numbers = file_paths
             self.logger.info("Found %d files matching pattern '%s' in %s", len(file_paths), pattern, root_dir)
+
+        assert file_paths, "No files found to process. Check the root_dir and pattern parameters."
 
         if mode == "file":
             return_values = self._run_file_mode(
@@ -292,6 +327,7 @@ class RecursiveFileAnalyzer:
                 num_workers=num_workers,
                 output_file=output_file,
                 show_progress=show_progress,
+                *args, **kwargs
             )
 
         if mode == "batch":
@@ -302,6 +338,7 @@ class RecursiveFileAnalyzer:
                 batch_size=batch_size,
                 output_file=output_file,
                 show_progress=show_progress,
+                *args, **kwargs
             )
 
         return return_values, numbers if return_nums else return_values
@@ -312,12 +349,14 @@ class RecursiveFileAnalyzer:
         return_nums : bool = False,
         root_dir : Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
+        numeric_range: tuple[int,int] | None = None,
         worker_options : tuple[int, ...] = (8, 16, 24, 32),
         batch_size_options : tuple[int, ...] = (25, 50, 100, 250, 500),
         sample_size : int | None = 5000,
         repeats : int = 1,
         output_csv : str | Path | None = None,
         show_progress : bool = True,
+        *args, **kwargs
     ):
         """
         Benchmark throughput for different worker counts and batch sizes.
@@ -327,8 +366,10 @@ class RecursiveFileAnalyzer:
         - batch mode: one batch per task for each batch size in batch_size_options
 
         :param function: The function to apply to each file.
+        :param return_nums: If True, returns a tuple of (file_path, file_number) for each file. The file_number is extracted from the file name using the first capture group in the regex pattern. If False, only the file_path is returned.
         :param root_dir: Root directory containing files to process.
         :param pattern: A regex pattern to filter files. Only files matching the pattern will be processed. Default is r".*?\.fits$" to match FITS files.
+        :param numeric_range: Range on which to only return values if their index (from the capture group in pattern) is is within said range, or None to do no filtering
         :param worker_options: Iterable of worker counts to test.
         :param batch_size_options: Iterable of batch sizes to test in batch mode.
         :param sample_size: Number of files to benchmark (None for all files).
@@ -340,17 +381,20 @@ class RecursiveFileAnalyzer:
         if root_dir is None:
             root_dir = self.path
         
-        # Limit files to a subset for benchmarking if specified
-        file_paths = list(self.quick_scan(pattern=pattern))
+        file_paths = self.get_unwrapped_list(path=root_dir, 
+                                            pattern=pattern,
+                                            return_nums=return_nums,
+                                            numeric_range=numeric_range)
         if return_nums:
             # You can test performance of returning numbers, but it is not used in the return of this function.
-            file_paths, _ = map(list, zip(*file_paths))
-        
+            file_paths, _ = file_paths
+
+        # Limit files to a subset for benchmarking if specified        
         if sample_size is not None:
             file_paths = file_paths[:sample_size]
 
         if not file_paths:
-            raise ValueError("No FITS files found for benchmarking.")
+            raise ValueError("No files found for benchmarking.")
 
         rows = []
         total_files = len(file_paths)
@@ -370,6 +414,7 @@ class RecursiveFileAnalyzer:
                     show_progress=show_progress,
                     file_paths_override=file_paths,
                     function=function,
+                    *args, **kwargs
                 )
                 elapsed = time.perf_counter() - t0
                 if elapsed < best_seconds:
@@ -398,6 +443,7 @@ class RecursiveFileAnalyzer:
                         show_progress=show_progress,
                         file_paths_override=file_paths,
                         function=function,
+                        *args, **kwargs
                     )
                     elapsed = time.perf_counter() - t0
                     if elapsed < best_seconds:
