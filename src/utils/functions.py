@@ -38,3 +38,6 @@ def k_corr_factor( redshift, mag_space: bool = False, spectral_index = -0.7 ):
         return k_corr_lum_space
     else:
         return -2.5 * np.log10( k_corr_lum_space )
+    
+def rlf_power_law( luminosity, alpha, beta, C, Lstar ):
+    return C / ( ( luminosity / Lstar )**alpha + ( luminosity / Lstar )**beta )

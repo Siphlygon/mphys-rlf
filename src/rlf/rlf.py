@@ -10,6 +10,8 @@ import logging
 from tqdm import tqdm
 from utils.functions import sigmoid, mag_to_flux_w2, mag_to_flux_w3, k_corr_factor
 from pathlib import Path
+from scipy.optimize import curve_fit
+import utils.functions as functions
 
 # from Hardcastle et al. 2022, https://github.com/mhardcastle/agn-selection/blob/main/plots.py
 def ccol(i):
@@ -88,6 +90,7 @@ class RLF:
         # init rlf values as zero
         self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
         self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
+        self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
 
     # ---------- COMPLETENESS ----------
 
@@ -382,6 +385,9 @@ class RLF:
         # sky coverage completeness factor
         self.phi /= 5700 / 41253 # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
 
+        # fit parameters to the RLFs
+        self.fit_rlf()
+
         if plot_rlf:
             # plot the resulting graph
             title = ''
@@ -393,6 +399,26 @@ class RLF:
                 title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf( title, colors, output=output )
+
+    def fit_rlf( self ):
+        self.logger.info( 'Fitting Parameters to RLFs' )
+
+        # fit a dual power law to each redshift RLF
+        bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
+        
+        # (4,2) being 4 parameters, with [:, 0] being values and [:, 1] being errors
+        self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
+
+        for i_z in range( self.n_z_bins ):
+            popt, pcov = curve_fit( functions.rlf_power_law, bin_centres, self.phi[ i_z ], p0=[ 0.5, 1.5, -5.5, 10**26 ] )
+            perr = np.sqrt( np.diag( pcov ) )
+            self.rlf_fit_params[ i_z ] = np.array( [ popt, perr ] ).T
+            self.logger.info( f'z={self.z_bins[ i_z ]}-{self.z_bins[ i_z+1 ]}: ' )
+            self.logger.info( f'    alpha={popt[ 0 ]:.3f} +/- {perr[ 0 ]:.3f}' )
+            self.logger.info( f'    beta={popt[ 1 ]:.3f} +/- {perr[ 1 ]:.3f}' )
+            self.logger.info( f'    C={popt[ 2 ]:.2f} +/- {perr[ 2 ]:.2f}' )
+            self.logger.info( f'    Lstar={popt[ 3 ]:.2f} +/- {perr[ 3 ]:.2f}' )
+            
 
     def plot_rlf( self, 
                   title: str,
@@ -407,13 +433,19 @@ class RLF:
             self.logger.info( "plotting self contained rlf" )
             fig, ax = plt.subplots( figsize=(10,10) )
 
+        luminosity_space = np.geomspace( self.l_bins[ 0 ], self.l_bins[ -1 ], num=100 )
+
         bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
         for i_z in range( self.phi.shape[0] ):
+            fit_params = self.rlf_fit_params[ i_z, :, 0 ]
+            fitted_rlf = functions.rlf_power_law( luminosity_space, *fit_params )
+            ax.plot( luminosity_space, fitted_rlf, color=colors[ i_z ] )
+
             specific_phi = self.phi[i_z]
             specific_counts = self.counts[i_z]
             mask = specific_counts >= 7
             ax.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
-                     marker='o',
+                     marker='o', linestyle='None',
                      label=f'{self.z_bins[ i_z ]:.2f}<z<{self.z_bins[ i_z + 1 ]:.2f}')
             ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
         ax.set_title( title )
