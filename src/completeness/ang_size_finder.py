@@ -12,7 +12,9 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
 import pandas as pd
-import re 
+import os 
+import h5py
+from matplotlib import transforms
 
 class AngularSizeFinder:
     """
@@ -21,7 +23,8 @@ class AngularSizeFinder:
     def __init__(self,
                  root_dir: Path = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs",
                  flux_threshold: float = 0.95):
-        """ This class processes PyBDSF FITS files containing component data for radio sources, filters the components based on flux, and estimates the angular size of the sources by creating a shape from the components and calculating the maximum distance between points on the convex hull of this shape.
+        """
+        This class processes PyBDSF FITS files containing Gaussian component data for radio sources, filters the components based on total flux, and estimates the angular size of the sources by creating a shape from the components and calculating the maximum distance between points on the convex hull of this shape.
 
         Args:
             root_dir (Path, optional): The root directory containing the FITS files. Defaults to paths.STORAGE_PARENT/"src/completeness/retrained_loguniform_catalogs".
@@ -35,23 +38,26 @@ class AngularSizeFinder:
         # The threshold below represents the fraction of total flux to keep, so dimmer islands are
         # removed while keeping above this threshold.
         self.flux_threshold = flux_threshold
+        
+        # Get a list of FITS files to limit for testing purposes
+        self.rfa = RecursiveFileAnalyzer(self.root_dir)
 
-    def extract_component_data(self, file_path: str) -> tuple[str, list[tuple]]:
+    # ---------- ASSEMBLING SIZE ESTIMATES ----------
+
+    def extract_component_data(self, file_path: Path) -> list[tuple]:
         """
         Process a single FITS file to extract the component data necessary for estimating the angular size of the source.
         
         Args:
             file_path (Path): The path to the FITS file to be processed.
         """
-        # index = int(re.search(r"\D*(\d+)", file_path).group(1)) - this doesn't work, the re pattern isn't write for the full path. ask luna
-        index = Path(file_path).stem
         components = []
         with fits.open(file_path) as hdul:
             data = hdul[1].data
             for row in data:
                 components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
         
-        return index, self.filter_components(components)
+        return self.filter_components(components)
 
     def filter_components(self, components: list[tuple]) -> list[tuple]:
         """
@@ -99,28 +105,36 @@ class AngularSizeFinder:
         shape = MakeShape(pd.DataFrame(components, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
         return shape.length()
 
-    def run(self):
+    def run(self,
+            dir : str | None = None,
+            pattern : str = r'.*?\D+(\d+)\.fits$',
+            output_file : str | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
         Run the pipeline to process all FITS files in the specified root directory, extract and filter the component data, and estimate the angular size of each source.
         """
-        # Get a list of FITS files to limit for testing purposes
-        rfa = RecursiveFileAnalyzer(self.root_dir)
-        # pths = rfa.get_unwrapped_list()
-        
         # Run the pipeline to extract component data from each FITS file,
-        results = rfa.run_pipeline(function=self.extract_component_data)
-        
+        if dir:
+            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data, root_dir=dir, pattern=pattern, return_nums=True, mode="file")
+        else:
+            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data, pattern=pattern, return_nums=True, mode="file")
+
         # Estimate the angular size of each image based on the component data
         sizes = []
-        for index, component_list in results:
+        for components in components_list:
             # If there's only one component, either originaly or after filtering, we return an angular size based on DC_Maj
-            if len(component_list) == 1:
-                sizes.append(2 * component_list[0][3] * 3600) # DC_Maj is the 4th element in the component tuple
-            else:            
-                angular_size = self.fit_shape_and_estimate_size(component_list)
+            if len(components) == 1:
+                sizes.append(2 * components[0][3] * 3600) # DC_Maj is the 4th element in the component tuple
+            else:
+                angular_size = self.fit_shape_and_estimate_size(components)
                 sizes.append(angular_size)
-        return sizes
         
+        # Save the estimated angular sizes to a CSV file if an output file name is provided
+        if output_file:
+            df = pd.DataFrame(sizes, columns=['Estimated Angular Size (arcseconds)'])
+            df.to_csv(output_file, index=False)
+
+        return np.array(indices), np.array(sizes)
+
 
 class MakeShape(object):
     """
@@ -246,7 +260,7 @@ class MakeShape(object):
 
         return bestcoords, mdist2
 
-    def plot(self):
+    def plot(self, rotate=False):
         """
         A method to plot the combined shape of the source and its convex hull, along with the points on the convex hull and the pair of points that are furthest apart, which are used to estimate the angular size of the source.
         """
@@ -264,15 +278,28 @@ class MakeShape(object):
         xh, yh = self.hull.exterior.xy
         plt.plot(xh, yh, label='Convex Hull', color='orange')
         
-        plt.scatter(self.hull_points[:, 0], self.hull_points[:, 1], label='Hull Points', color='green', s=10)
+        xh_points, yh_points = self.hull_points[:, 0], self.hull_points[:, 1]
+        plt.scatter(xh_points, yh_points, label='Hull Points', color='green', s=10)
         
         if self.bestcoords is not None:
-            plt.plot([self.bestcoords[0][0], self.bestcoords[1][0]], 
-                     [self.bestcoords[0][1], self.bestcoords[1][1]], 
+            bestcoords_x = [self.bestcoords[0][0], self.bestcoords[1][0]]
+            bestcoords_y = [self.bestcoords[0][1], self.bestcoords[1][1]]
+            plt.plot(bestcoords_x, bestcoords_y,
                      label='Max Distance Pair', color='red', linewidth=2)
         
-        plt.xlabel('RA Offset (arcseconds)')
-        plt.ylabel('DEC Offset (arcseconds)')
+        plt.xlabel('DEC Offset (arcseconds)')
+        plt.ylabel('RA Offset (arcseconds)')
+        
+        tr = transforms.Affine2D().rotate_deg(90) + transforms.Affine2D().translate(0, 0) + plt.gca().transData
+        for line in plt.gca().get_lines():
+            line.set_transform(tr)
+        
+        # Ensuret the axes are equal to avoid distortion of the shape
+        max_x = max(abs(xh_points)+1)
+        max_y = max(abs(yh_points)+1)
+        plt.xlim(-max_x, max_x)
+        plt.ylim(-max_y, max_y)
+
         plt.title('Combined Shape and Convex Hull of Source')
         plt.legend(loc='upper right')
         plt.grid(True)
@@ -292,22 +319,78 @@ class MakeShape(object):
 if __name__ == "__main__":
     
     root = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
-    # # root = paths.DATASET_PARENT / "dr2_cutouts_download"
-    ang_size_finder = AngularSizeFinder(root)
-    sizes = ang_size_finder.run()
+    output_file = 'estimated_angular_sizes.csv'
     
-    # Save to CSV for easier analysis
-    df = pd.DataFrame(sizes, columns=['Estimated Angular Size (arcseconds)'])
-    df.to_csv('estimated_angular_sizes.csv', index=False)
+    # If no output file, actually run the program
+    if not os.path.exists(output_file):
+        ang_size_finder = AngularSizeFinder(root)
+        indices, sizes = ang_size_finder.run(output_file=output_file)
+    else:
+        sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
+        rfa = RecursiveFileAnalyzer(root)
+        _, indices = np.array(rfa.get_unwrapped_list(pattern=r'.*?\D+(\d+)\.fits$', return_nums=True))
     
-    # df = pd.read_csv('estimated_angular_sizes.csv')
+    # idx, res = ang_size_finder.extract_component_data(root / "10000-19999/cutout15275.fits")
+    # shape = MakeShape(pd.DataFrame(res, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
+    # shape.plot(True)
+        
+    # Check for estimated angular sizes that are above 250 arcseconds; some weird 10^6 results
+    outliers = np.where(sizes > 250)[0]
+    # print("Outliers with estimated angular size above 250 arcseconds:")
+    # print(outliers)
+    # print("Indices of outliers:")
+    # print(indices[outliers])
+    indices = np.delete(indices, outliers)
+    sizes = np.delete(sizes, outliers)
+
+    # Get Hardcastle LAS values for comparison
+    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
+        cat_indexes = f["indices"][:]
+        las_values = f["cat_info"][:]["LAS"]
+        
+        # filter the df and indices to only include sources that are in the Hardcastle catalogue, and get the corresponding LAS values
+        mask = np.isin(indices, cat_indexes)
+        mask2 = np.isin(cat_indexes, indices)
+        indices = indices[mask]
+        sizes = sizes[mask]
+        las_values = las_values[mask2]
     
     # Plot a histogram of the estimated angular sizes
     plt.figure(figsize=(10, 6))
-    plt.hist(df['Estimated Angular Size (arcseconds)'], bins=50, color='skyblue', edgecolor='black')
+    plt.hist(sizes, bins=50, color='skyblue', edgecolor='black')
     plt.title('Distribution of Estimated Angular Sizes of Radio Sources')
     plt.xlabel('Estimated Angular Size (arcseconds)')
     plt.ylabel('Number of Sources')
     plt.grid(axis='y', alpha=0.75)
-    plt.savefig('angular_size_distribution.png')
+    plt.savefig('angular_size_distribution_cutouts.png')
+    plt.show()
+    
+    
+    # max = np.max(sizes)
+    # max_idx = np.argmax(sizes)
+    # print(f"Maximum difference at index {max_idx}, source index {indices[max_idx]}")
+    # print(f"Maximum angular size: {sizes[max_idx]} arcseconds")
+    # print(f"LAS value from Hardcastle catalogue: {las_values[max_idx]} arcseconds")
+    
+    # Plot the difference between the estimated angular sizes and the LAS values from the Hardcastle catalogue
+    diff = sizes - las_values
+    # min = np.min(diff)
+    # min_idx = np.argmin(diff)
+    # print(f"Minimum difference: {min} arcseconds, at index {min_idx}, source index {indices[min_idx]}")
+    # print(f"Estimated angular size: {sizes[min_idx]} arcseconds")
+    # print(f"LAS value from Hardcastle catalogue: {las_values[min_idx]} arcseconds")
+    
+    # max = np.max(diff)
+    # max_idx = np.argmax(diff)
+    # print(f"Maximum difference: {max} arcseconds, at index {max_idx}, source index {indices[max_idx]}")
+    # print(f"Estimated angular size: {sizes[max_idx]} arcseconds")
+    # print(f"LAS value from Hardcastle catalogue: {las_values[max_idx]} arcseconds")
+    
+    plt.figure(figsize=(10, 6))
+    plt.hist(diff, bins=50, color='lightcoral', edgecolor='black')
+    plt.title('Difference Between Estimated Angular Sizes and LAS Values from the Hardcastle Catalogue')
+    plt.xlabel('Estimated Angular Size - LAS Value (arcseconds)')
+    plt.ylabel('Number of Sources')
+    plt.grid(axis='y', alpha=0.75)
+    plt.savefig('angular_size_difference.png')
     plt.show()
