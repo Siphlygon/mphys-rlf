@@ -82,7 +82,6 @@ class CompletenessEstimator:
         except Exception as e:
             self.logger.error(f"Error: {function} fit failed: {e}")
 
-
     def plot_completeness(self,
                           bin_centers: np.ndarray[float, np.dtype[np.float64]],
                           completeness: np.ndarray[float, np.dtype[np.float64]],
@@ -252,7 +251,9 @@ class CompletenessEstimator:
 
     def estimate_completeness(self,
                                dataset: str | None = None,
-                               output_file : str | Path | None = None):
+                               comp_output_file : str | Path | None = None,
+                               func_output_file : str | Path | None = None,
+                               plot_completeness : bool = True):
         """
         Estimate a completeness curve for a specified dataset.
 
@@ -261,9 +262,12 @@ class CompletenessEstimator:
         detectability based on a peak flux threshold (e.g., 5 sigma). The completeness is calculated as the fraction of
         detectable sources in bins of flux, and confidence intervals are calculated using Poisson statistics.
         
-        :param dataset: The dataset to calculate completeness for. Defaults to None.
-        :param output_file: The file in which to save results to. Defaults to None. 
-        :return:
+        :param dataset: The dataset to estimate the completeness for. Defaults to None.
+        :param comp_output_file: The file in which to save completeness results to. Defaults to None.
+        :param func_output_file: The file in which to save fitted parameters to. Defaults to None.
+        :param plot_completeness: Whether the fitted completeness should be plotted. Defaults to True.
+        :return: The bin centers in log space, estimated completeness for those bins, y error on the completeness,
+        and the fitted parameters for the fitting function.
         """
         if dataset is None:
             dataset = self.dataset
@@ -288,17 +292,21 @@ class CompletenessEstimator:
         completeness, yerr = self.compute_completeness(int_flux_bins, mock_sources)
 
         # Store in a file for later use
-        if output_file is not None:
+        if comp_output_file is not None:
             self.logger.info(f"Saving binned completeness estimates to file for dataset {dataset}")
-            with open(output_file, "w") as f:
+            with open(comp_output_file, "w") as f:
                 f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
                 for center, comp, err in zip(bin_centers, completeness, yerr):
                     f.write(f"{center}\t{comp}\t{err}\n")
 
         # Fit a function to the completeness curve and plot
         log_bin_centers = np.log10(bin_centers)
-        fitted_params = self.fit_function(log_bin_centers, completeness, output_file="src/completeness/completeness_params.txt")
-        self.plot_completeness(log_bin_centers, completeness, yerr, sigmoid, fitted_params)
+        fitted_params = self.fit_function(log_bin_centers, completeness, output_file=func_output_file)
+
+        if plot_completeness:
+            self.plot_completeness(log_bin_centers, completeness, yerr, sigmoid, fitted_params)
+        
+        return log_bin_centers, completeness, yerr, fitted_params
 
 
 if __name__ == "__main__":
