@@ -11,6 +11,7 @@ from functools import reduce
 import utils.paths
 import argparse
 import h5py
+import configparser
 
 class SubdirData:
     pass;
@@ -37,7 +38,7 @@ class ImageDataArrays:
     def __init__( self, config_name: str, load_from_files: bool = True ):
         self.logger = get_logger( __name__ )
         self.du = DistributedUtils()
-        self.config = utils.config.config[ config_name ]
+        self.config = configparser.ConfigParser().read(config_name)
 
         for subdir in [ self.config[ 'generated_subdir' ], self.config[ 'dataset_subdir' ] ]:
             subdir_data = SubdirData()
@@ -63,10 +64,10 @@ class ImageDataArrays:
     
                 # Data arrays
                 if subdir == self.config[ 'dataset_subdir' ] and self.config[ 'train_data_path' ] != 'None':
-                    with h5py.File( self.config[ 'train_data_path' ) as train_data:
+                    with h5py.File( self.config[ 'train_data_path' ], 'r' ) as train_data:
                         images = train_data[ 'images' ][ : ]
                         data_inds = train_data[ 'indices' ][ : ]
-                    peak_fluxes_mjy = np.max( images, axes=(1,2) ) * 1000
+                    peak_fluxes_mjy = np.max( images, axis=(1,2) ) * 1000
                     data_values = [ images, peak_fluxes_mjy ]
                 else:
                     data_files = RecursiveFileAnalyzer( pth.FITS_PARENT / subdir )
@@ -143,6 +144,7 @@ class ImageDataArrays:
                 subdir_data.model_images = unscaled_model_images
                 subdir_data.model_fluxes = model_fluxes
                 subdir_data.peak_fluxes = peak_fluxes_mjy
+                subdir_data.las_values = las_values
                 subdir_data.sigma_clipped_means = unscaled_sigma_clipped_means
                 subdir_data.sigma_clipped_rmsds = unscaled_sigma_clipped_rmsds
                 subdir_data.image_scale_factors = image_scale_factors
