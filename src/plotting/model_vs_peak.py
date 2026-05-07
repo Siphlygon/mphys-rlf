@@ -19,10 +19,10 @@ if __name__ == "__main__":
 
     xticks = np.logspace( -5, 5, 11 )
     yticks = np.logspace( -5, 5, 11 )
+    config_data_arrays = ImageDataArrays( args.config )
 
-    for subdir, c in zip( [ dataset_subdir, generated_subdir ], [ 'b', 'g' ] ):
-        images, resid_images, model_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
-        plt.scatter( peak_fluxes, model_fluxes, label=subdir, c=c, s=0.01 )
+    for subdir, c, data_arrays in zip( [ dataset_subdir, generated_subdir ], [ 'b', 'g' ], [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
+        plt.scatter( data_arrays.peak_fluxes, data_arrays.model_fluxes, label=subdir, c=c, s=0.01 )
 
     plt.plot( xticks, yticks, c='r' )
     plt.xscale( 'log' )

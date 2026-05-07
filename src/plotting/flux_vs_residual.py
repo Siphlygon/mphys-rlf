@@ -7,11 +7,12 @@ from utils.img_data_arrays import ImageDataArrays
 
 logger = get_logger( __name__ )
 
-def plot_flux_vs_residuals():
+def plot_flux_vs_residuals( config_name: str ):
+    config = utils.paths.config[ config_name ]
+    config_data_arrays = ImageDataArrays( config_name )
     #for subdir, color in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
-    for subdir, color in zip( [ 'retrained_loguniform', 'dataset' ], [ 'g', 'b' ] ):
-        pt = PeakFluxPowerTransformer( subdir )
-        data_arrays = ImageDataArrays( subdir )
+    for subdir, color, data_arrays in zip( [ config[ 'generated_subdir' ], config[ 'dataset_subdir' ] ], [ 'g', 'b' ], [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
+        pt = PeakFluxPowerTransformer( subdir, maxvals=np.max( data_arrays.images, axis=(1,2) ) )
 
         #Select for peak flux >0.5 mJy
         valid = data_arrays.peak_fluxes > 0.5

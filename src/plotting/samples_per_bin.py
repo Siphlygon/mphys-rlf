@@ -3,6 +3,7 @@ import astropy.stats
 import matplotlib.pyplot as plt
 from analysis.image_analyzer import ImageAnalyzer
 from utils.img_data_arrays import ImageDataArrays
+import utils.paths as pth
 
 rms_LOFAR = 71e-6 * 1e3
 beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
@@ -45,10 +46,14 @@ def create_noise_LOFAR(shape=(80,80), rms=rms_LOFAR):
     """
     return np.random.normal(loc=0.0, scale=rms, size=shape)
 
-def get_completeness_estim():
+def get_completeness_estim( config_name: str ):
+    config = pth.config[ config_name ]
+    config_data_arrays = ImageDataArrays( config_name )
+
     plt.figure(figsize = (8, 5))
-    for subdir in [ "generated_loguniform" ]:
-        images, resid_images, model_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
+    for subdir, data_arrays in zip( [ config[ 'generated_subdir' ] ], [ config_data_arrays.generated_data ] ):
+        images = data_arrays.images
+        model_fluxes = data_arrays.model_fluxes
 
         detectable = np.empty( (images.shape[ 0 ]), dtype=bool )
 
