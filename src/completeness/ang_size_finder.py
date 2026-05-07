@@ -36,7 +36,7 @@ class AngularSizeFinder:
         # removed while keeping above this threshold.
         self.flux_threshold = flux_threshold
 
-    def extract_component_data(self, file_path: str) -> tuple[str, list[np.ndarray]]:
+    def extract_component_data(self, file_path: str) -> tuple[str, list[tuple]]:
         """
         Process a single FITS file to extract the component data necessary for estimating the angular size of the source.
         
@@ -45,21 +45,82 @@ class AngularSizeFinder:
         """
         # index = int(re.search(r"\D*(\d+)", file_path).group(1)) - this doesn't work, the re pattern isn't write for the full path. ask luna
         index = Path(file_path).stem
-        print(f"Processing file {file_path} with index {index}...")
+        components = []
         with fits.open(file_path) as hdul:
             data = hdul[1].data
-            return index, [data["Isl_id"], data["Total_flux"], data["RA"], data["DEC"], data["DC_Maj"], data["DC_Min"], data["PA"]]
-    
-    def main(self):
-        rfa = RecursiveFileAnalyzer(self.root_dir)
-        pths = rfa.get_unwrapped_list()[:100]
+            for row in data:
+                components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
         
-        results = rfa.run_pipeline(function=self.extract_component_data,
-                                   file_paths_override=pths)
-        # Save the results to a text file
-        with open("angular_size_results.txt", "w") as f:
-            for result in results:
-                f.write(f"{result}\n")
+        return index, self.filter_components(components)
+
+    def filter_components(self, components: list[tuple]) -> list[tuple]:
+        """
+        Filter the components based on their fractional total flux, keeping only those components that contribute to a specified fraction of the total flux of the source.
+
+        Args:
+            components (list[tuple]): A list of tuples representing the components, where each tuple contains the component's island ID, total flux, RA, DEC, major axis, minor axis, and position angle.
+
+        Returns:
+            list[tuple]: A list of tuples representing the filtered components.
+        """
+        assert components, "No components found in the data. Check the FITS file and the expected column names."
+        
+        # Sort components by total flux in descending order
+        components.sort(key=lambda x: x[0], reverse=True)
+
+        # Calculate the total flux of the source by summing the total flux of all components
+        sum_flux = sum(component[0] for component in components)
+        if sum_flux == 0:
+            return []
+
+        filtered_components = []
+        cumulative_flux = 0
+        for component in components:
+            cumulative_flux += component[0]
+            filtered_components.append(component)
+            # We are still below the flux threshold, so keep this component
+            if cumulative_flux / sum_flux >= self.flux_threshold:
+                break
+
+        return filtered_components
+
+    def fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
+        """
+        Create a shape representing the source from the filtered components and estimate the angular size of the source based on this shape.
+
+        Args:
+            components (list[tuple]): A list of tuples representing the filtered components, where each tuple contains the component's island ID, total flux, RA, DEC, major axis, minor axis, and position angle.
+        Returns:
+            float: The estimated angular size of the source in arcseconds.
+        """
+        assert components, "No components to create shape from. Check the filtering step and the input data."
+        
+        # Create a shape representing the source from the filtered components, and estimate the angular size of the source based on this shape. The shape is created by taking the union of ellipses representing each component, where the ellipses are defined by the major and minor axes and position angle of the components. The angular size is estimated as the maximum distance between any two points on the convex hull of the combined shape.
+        shape = MakeShape(pd.DataFrame(components, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
+        return shape.length()
+
+    def run(self):
+        """
+        Run the pipeline to process all FITS files in the specified root directory, extract and filter the component data, and estimate the angular size of each source.
+        """
+        # Get a list of FITS files to limit for testing purposes
+        rfa = RecursiveFileAnalyzer(self.root_dir)
+        # pths = rfa.get_unwrapped_list()
+        
+        # Run the pipeline to extract component data from each FITS file,
+        results = rfa.run_pipeline(function=self.extract_component_data)
+        
+        # Estimate the angular size of each image based on the component data
+        sizes = []
+        for index, component_list in results:
+            # If there's only one component, either originaly or after filtering, we return an angular size based on DC_Maj
+            if len(component_list) == 1:
+                sizes.append(2 * component_list[0][3] * 3600) # DC_Maj is the 4th element in the component tuple
+            else:            
+                angular_size = self.fit_shape_and_estimate_size(component_list)
+                sizes.append(angular_size)
+        return sizes
+        
 
 class MakeShape(object):
     """
@@ -80,7 +141,6 @@ class MakeShape(object):
         self.show_progress = show_progress
         
         # Set the RA and DEC of the source to the mean RA and DEC of its components, which will be used as the reference point for calculating the angular size
-        self.logger.info("Calculating mean RA and DEC for the source...")
         ra = np.mean(clist['RA'])
         dec = np.mean(clist['DEC'])
         self.ra = ra
@@ -94,7 +154,6 @@ class MakeShape(object):
         self.hull = self.combined_polygon.convex_hull
         hull_points = np.asarray(self.hull.exterior.coords)
         
-        self.logger.info("Calculating maximum distance on convex hull...")
         self.bestcoords, self.mdist2 = self.find_furthest_points(hull_points)
         self.hull_points = hull_points
 
@@ -154,8 +213,12 @@ class MakeShape(object):
             x = 3600 * np.cos(self.dec * np.pi/180.0) * (self.ra - ra_n)
             y = 3600 * (dec_n - self.dec)
             
+            # Get the major and minor axes of the ellipse representing the component, and convert to arcseconds.
+            dc_maj_n = component[1]['DC_Maj'] * 3600
+            dc_min_n = component[1]['DC_Min'] * 3600
+            
             # Add a small buffer (0.1 arcseconds) to the major and minor axes to ensure that the ellipses overlap and form a single connected shape, even if the components are very close together
-            new_polygon = self.ellipse(x, y, component[1]['DC_Maj'] + 0.1, component[1]['DC_Min'] + 0.1, component[1]['PA'])
+            new_polygon = self.ellipse(x, y, dc_maj_n + 0.1, dc_min_n + 0.1, component[1]['PA'])
             ellist.append(new_polygon)
         return ellist
 
@@ -231,11 +294,20 @@ if __name__ == "__main__":
     root = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
     # # root = paths.DATASET_PARENT / "dr2_cutouts_download"
     ang_size_finder = AngularSizeFinder(root)
-    ang_size_finder.main()
+    sizes = ang_size_finder.run()
     
-    # print("Components DataFrame:", components.head())
+    # Save to CSV for easier analysis
+    df = pd.DataFrame(sizes, columns=['Estimated Angular Size (arcseconds)'])
+    df.to_csv('estimated_angular_sizes.csv', index=False)
     
-    # final_shape = MakeShape(components)
-    # angular_size = final_shape.length()
-    # print(f"Estimated angular size of the source: {angular_size:.2f} arcseconds")
-    # final_shape.plot()
+    # df = pd.read_csv('estimated_angular_sizes.csv')
+    
+    # Plot a histogram of the estimated angular sizes
+    plt.figure(figsize=(10, 6))
+    plt.hist(df['Estimated Angular Size (arcseconds)'], bins=50, color='skyblue', edgecolor='black')
+    plt.title('Distribution of Estimated Angular Sizes of Radio Sources')
+    plt.xlabel('Estimated Angular Size (arcseconds)')
+    plt.ylabel('Number of Sources')
+    plt.grid(axis='y', alpha=0.75)
+    plt.savefig('angular_size_distribution.png')
+    plt.show()
