@@ -1,3 +1,4 @@
+import argparse
 from scipy.optimize import curve_fit
 import numpy as np
 from tqdm import tqdm
@@ -19,34 +20,40 @@ from utils.functions import sigmoid
 
 class CompletenessEstimator:
     
-    def __init__(self, dataset : str | None = None):
+    def __init__(self,
+                 config_str : str,
+                 which_dataset : str | None = "GENERATED_SUBDIR"):
         """
         A class to estimate the completeness of the dataset by creating mock images with noise and checking if they are detectable based on a peak-flux limit. 
 
         Args:
-            dataset (str, optional): The name of the subdir to use as the default dataset. If None, the dataset name will be read from the config instead. Defaults to None
+            config_str (str): The specific configuration in the config file to use.
+            which_dataset (str, optional): Which of the two subdir to use in the analysis. Defaults to "GENERATED_SUBDIR"
         """
         # Set up logging
         self.logger = utils.logging.get_logger("CompletenessEstimator", logging.DEBUG)
+
+        assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"], "which_dataset must be either 'GENERATED_SUBDIR' or 'DATASET_SUBDIR'"
+        self.which_dataset = which_dataset.split("_")[0].lower()  # "generated" or "dataset"
 
         # Initialise the RMS distribution finder
         self.rms_dist = RMSDistribution()
 
         # Read parameters from the config.ini file
-        config = configparser.ConfigParser()
-        config.read(pth.PROGRAM_CONFIG)
-        de_config = config['DEFAULT']
+        _config = configparser.ConfigParser().read(pth.PROGRAM_CONFIG)
+        self.config = _config[config_str]
 
         # Get values from config
-        self.sigma_threshold = int(de_config['DETECTION_SIGMA_THRESHOLD'])
-        self.num_flux_bins = int(de_config['COMPLETENESS_FLUX_BINS'])
-        self.num_noise_patches = int(de_config['N_NOISE_PATCHES'])
-
-        # Parse dataset name properly
-        if dataset:
-            self.dataset = dataset
-        else:
-            self.dataset = de_config['COMPLETENESS_DATASET_NAME']
+        self.sigma_threshold = int(self.config['DETECTION_SIGMA_THRESHOLD'])
+        self.num_flux_bins = int(self.config['COMPLETENESS_FLUX_BINS'])
+        self.min_log_flux = float(self.config['COMPLETENESS_MIN_LOG_FLUX'])
+        self.max_log_flux = float(self.config['COMPLETENESS_MAX_LOG_FLUX'])
+        self.num_noise_patches = int(self.config['N_NOISE_PATCHES'])
+        
+        # Extract all the relevant arrays from the specified dataset
+        self.logger.info(f"Extracting data arrays for dataset")
+        config_data_arrays = ImageDataArrays(self.config)
+        self.data = config_data_arrays.__getattribute__(self.which_dataset + "_data")
 
     # ---------- FITTING FUNCTION ----------
     def fit_function(self,
@@ -70,7 +77,7 @@ class CompletenessEstimator:
             initial_guess = [0.5, 7.0, 1.0, 0.0]
 
         try:
-            self.logger.info(f"Fitting {function} function to completeness curve for dataset")
+            self.logger.info(f"Fitting {function} function to completeness curve...")
             popt, _ = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000)
 
             # Save fitted parameters to a file for use in RLF
@@ -88,7 +95,7 @@ class CompletenessEstimator:
                           yerr : np.ndarray[float, np.dtype[np.float64]],
                           function: Callable = sigmoid,
                           popt : list[float] | None = None,
-                          dataset : str | None = None):
+                          save_name : str | None = None):
         """
         Plot the completeness data points and the fitted function.
 
@@ -97,15 +104,15 @@ class CompletenessEstimator:
         :param yerr: The errors on the y-axis of the completeness points.
         :param function: The function that was fitted to the completeness curve. Defaults to sigmoid.
         :param popt: The fitted parameters to the function.
-        :param dataset: The name of the dataset, for labelling purposes. Defaults to None.
+        :param save_name: The name of the file to save the plot to. Defaults to None.
         """
         assert popt, "You need a fitted completeness function to plot."
-        if dataset is None:
-            dataset = self.dataset
+        if save_name is None:
+            save_name = f"completeness_curve.png"
     
         # Start plotting the measured completeness first
         plt.figure()
-        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'{dataset} data')
+        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'data')
         plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
 
         # Generate smooth curve for plotting on log scale
@@ -116,16 +123,16 @@ class CompletenessEstimator:
         flux_smooth = 10 ** log_flux_smooth
         plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'{function.__name__} fit', alpha=0.7)
 
-        # Now add fit curves in a consistent way if they exist
-        x_fit = np.logspace(-2, 2, 100)
+        # Now add fit curves in a consistent way
+        x_fit = np.logspace(self.min_log_flux, self.max_log_flux, 100)
         y_fit_sig = sigmoid(np.log10(x_fit), *popt)  # function was fit in log x space, so evaluate at log10(x_fit)
-        plt.plot(x_fit, y_fit_sig, label=f'{dataset} {function.__name__} fit', color='r')
+        plt.plot(x_fit, y_fit_sig, label=f'{function.__name__} fit', color='r')
 
         plt.xscale('log')
         plt.xlabel("Integrated Flux Density (mJy/beam)")
         plt.ylabel("Completeness")
         plt.legend()
-        plt.savefig(dpi=1000, fname=f"completeness_curve_{dataset}.png")
+        plt.savefig(dpi=1000, fname=save_name)
         plt.show()
 
     # ---------- COMPLETENESS CALCULATION ----------
@@ -176,7 +183,7 @@ class CompletenessEstimator:
         mock_fluxes = np.empty((images.shape[0] * self.num_noise_patches), dtype=float)
         detectable = np.empty((images.shape[0] * self.num_noise_patches), dtype=bool)
 
-        for i in tqdm(range(images.shape[0]), desc='Creating mock images and running detection...'):
+        for i in tqdm(range(images.shape[0]), desc='Creating mock images and running detection logic'):
             # Use start/end indices so each image occupies a contiguous block of the arrays.
             start = i * self.num_noise_patches
             end = start + self.num_noise_patches
@@ -196,7 +203,7 @@ class CompletenessEstimator:
 
         return mock_fluxes, detectable
 
-    def compute_completeness(self,
+    def compute_completeness_per_bin(self,
                              int_flux_bins : np.ndarray,
                              mock_sources : pd.DataFrame):
         """
@@ -216,7 +223,6 @@ class CompletenessEstimator:
         total_counts = np.zeros(n_bins, dtype=int)  # optional: for diagnostics
 
         # For all bins
-        self.logger.info(f"Calculating completeness per flux bin")
         for i in tqdm(range(n_bins), desc='Calculating completeness per flux bin'):
             # Select sources in this flux bin
             in_bin = (mock_sources['mock_flux'] >= int_flux_bins[i]) & (mock_sources['mock_flux'] < int_flux_bins[i + 1])
@@ -240,7 +246,7 @@ class CompletenessEstimator:
         total_counts = np.where(zero_counts, 1e-10, total_counts)
 
         # Handle confidence interval which is the error on our completeness
-        self.logger.info(f"Calculating confidence intervals for completeness estimates for dataset")
+        self.logger.info(f"Calculating confidence intervals for completeness estimates...")
         conf_interval = astropy.stats.poisson_conf_interval(np.array(completeness) * total_counts,
                                                             interval='frequentist-confidence', sigma=1.0)
         conf_interval /= total_counts
@@ -250,7 +256,6 @@ class CompletenessEstimator:
         return completeness, yerr
 
     def estimate_completeness(self,
-                               dataset: str | None = None,
                                comp_output_file : str | Path | None = None,
                                func_output_file : str | Path | None = None,
                                plot_completeness : bool = True):
@@ -262,24 +267,15 @@ class CompletenessEstimator:
         detectability based on a peak flux threshold (e.g., 5 sigma). The completeness is calculated as the fraction of
         detectable sources in bins of flux, and confidence intervals are calculated using Poisson statistics.
         
-        :param dataset: The dataset to estimate the completeness for. Defaults to None.
         :param comp_output_file: The file in which to save completeness results to. Defaults to None.
         :param func_output_file: The file in which to save fitted parameters to. Defaults to None.
         :param plot_completeness: Whether the fitted completeness should be plotted. Defaults to True.
         :return: The bin centers in log space, estimated completeness for those bins, y error on the completeness,
         and the fitted parameters for the fitting function.
         """
-        if dataset is None:
-            dataset = self.dataset
-
-        self.logger.info(f"Estimating completeness for dataset {dataset}")
-        # Extract all the relevant arrays from the generated dataset
-        self.logger.info(f"Extracting data arrays for dataset {dataset}")
-        _, _, m_images, model_fluxes, _, _, _ = ImageDataArrays(dataset).get_all_arrays()
-
         # Get the mock fluxes and whether they are detectable for all the images in the dataset
-        self.logger.info(f"Creating mock images and running detection logic for dataset {dataset}")
-        mock_fluxes, detectable = self.detect_mock_sources(m_images, model_fluxes)
+        self.logger.info(f"Creating mock images and running detection logic...")
+        mock_fluxes, detectable = self.detect_mock_sources(self.data.m_images, self.data.model_fluxes)
 
         # Combine these into a dataframe for easier analysis
         mock_sources = pd.DataFrame()
@@ -287,13 +283,13 @@ class CompletenessEstimator:
         mock_sources['detectable'] = detectable
 
         # Compute completeness for each bin
-        int_flux_bins = np.logspace(-2, 2, num=self.num_flux_bins)  # in mJy, adjust as needed
+        int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
         bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
-        completeness, yerr = self.compute_completeness(int_flux_bins, mock_sources)
+        completeness, yerr = self.compute_completeness_per_bin(int_flux_bins, mock_sources)
 
         # Store in a file for later use
         if comp_output_file is not None:
-            self.logger.info(f"Saving binned completeness estimates to file for dataset {dataset}")
+            self.logger.info(f"Saving binned completeness estimates to file...")
             with open(comp_output_file, "w") as f:
                 f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
                 for center, comp, err in zip(bin_centers, completeness, yerr):
@@ -309,6 +305,35 @@ class CompletenessEstimator:
         return log_bin_centers, completeness, yerr, fitted_params
 
 
+class SizeBinnedCompleteness(CompletenessEstimator):
+    def __init__(self,
+                 config_str : str,
+                 which_dataset : str | None = "GENERATED_SUBDIR"):
+        """
+        A class to generate completeness curves binned by angular size, to investigate how completeness varies with source size.
+
+        Args:
+            config_str (str): The specific configuration in the config file to use.
+            which_dataset (str, optional): Which of the two subdir to use in the analysis. Defaults to "GENERATED_SUBDIR"
+        """
+        super().__init__(config_str, which_dataset)
+    
+    def estimate_size_binned_completeness(self):
+        max_size = 120 # in arcseconds, adjust as needed
+        max_bins = 12
+        size_bins = np.linspace(0, max_size, num=max_bins)
+
+        for i in range(len(size_bins) - 1):
+            size_min = size_bins[i]
+            size_max = size_bins[i + 1]
+            self.logger.info(f"Estimating completeness for sources with sizes between {size_min} and {size_max} arcseconds")
+        
+        
+
 if __name__ == "__main__":
-    completeness_estim = CompletenessEstimator("loguniform_distribution")
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    args = parser.parse_args()
+    
+    completeness_estim = CompletenessEstimator(args.config)
     completeness_estim.estimate_completeness()
