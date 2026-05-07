@@ -3,6 +3,7 @@ import utils.paths as pth
 import numpy as np
 import astropy.cosmology
 import astropy.units as u
+import astropy.stats
 import matplotlib.pyplot as plt
 from hardcastle_catalogue import Source, HardcastleCatalogue
 from utils.logging import get_logger
@@ -77,6 +78,8 @@ class RLF:
         # define RLF z/l bins
         if lu_config.getboolean( 'HARDCASTLE_Z_BINS' ):
             self.z_bins = np.array( [ 0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2 ] ) #hardcastle bins
+        elif lu_config.getboolean( 'DEJONG_Z_BINS' ):
+            self.z_bins = np.array( [ 0.01, 0.3 ] )
         else:
             self.z_bins = np.arange( self.z_min, self.z_max, self.dz )
 
@@ -89,6 +92,7 @@ class RLF:
 
         # init rlf values as zero
         self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
+        self.phi_err = np.zeros( (self.n_z_bins, self.n_lum_bins) ) 
         self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
         self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
 
@@ -97,7 +101,7 @@ class RLF:
     def get_completeness(self,
                          integ_fluxes : np.ndarray,
                          completeness_path : Path = None,
-                         step_completeness : bool = True,
+                         step_completeness : bool = False,
                          threshold : float = 1.1e-3):
         """
         Returns a value for the completeness correction for use in the RLF integral estimation. Can either return a
@@ -337,6 +341,10 @@ class RLF:
 
                     self.phi[ i_z, i_l ] = np.sum( 1.0 / Vmaxs ) #log bin size included in Vmaxs from monte_carlo_integral
                     self.counts[ i_z, i_l ] = luminosities_in_bin.shape[ 0 ]
+
+                    # get errors from Page & Carrera 2000
+                    self.phi_err[ i_z, i_l ] = np.sqrt( np.sum( 1.0 / Vmaxs**2 ) )
+
                 self.logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
         # otherwise, do Page & Carrera 2000 method
@@ -380,10 +388,16 @@ class RLF:
                 self.phi[i_z] = n_sources_in_lum_bins / bin_integrals
                 self.counts[ i_z ] = n_sources_in_lum_bins
 
+                # get errors from poisson statistics
+                phi_err_range = astropy.stats.poisson_conf_interval( n_sources_in_lum_bins, interval='frequentist-confidence' ) / bin_integrals
+                self.phi_err[ i_z ] = ( phi_err_range[ 1 ] - phi_err_range[ 0 ] ) / 2
+
                 self.logger.info( f'Redshift range {z_min:.2f}-{z_max:.2f} complete' )
 
         # sky coverage completeness factor
         self.phi /= 5700 / 41253 # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
+        self.phi_err /= 5700 / 41253
+
 
         # fit parameters to the RLFs
         self.fit_rlf()
@@ -393,7 +407,7 @@ class RLF:
             title = ''
             output = ''
             if vmax_method:
-                title = f'1/Vmax RLF - {self.n_mc_pts} pts per bin'
+                title = f'1/Va RLF - {self.n_mc_pts} pts per source'
                 output = 'rlf_vmax.png'
             else:
                 title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
@@ -410,14 +424,21 @@ class RLF:
         self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
 
         for i_z in range( self.n_z_bins ):
-            popt, pcov = curve_fit( functions.rlf_power_law, bin_centres, self.phi[ i_z ], p0=[ 0.5, 1.5, -5.5, 10**26 ] )
+            popt, pcov = curve_fit( functions.rlf_power_law,
+                                    bin_centres[ self.phi[ i_z ] > 0 ],
+                                    self.phi[ i_z ][ self.phi[ i_z ] > 0 ],
+                                    p0=[ 0.5, 1.5, -5.5, 26 ],
+                                    bounds=( [0, 1, -10, 20], [1, 2.5, -1, 30]),
+                                    absolute_sigma=True,
+                                    sigma=self.phi_err[ i_z ][ self.phi[ i_z ] > 0 ],
+                                    maxfev=1000000 )
             perr = np.sqrt( np.diag( pcov ) )
             self.rlf_fit_params[ i_z ] = np.array( [ popt, perr ] ).T
             self.logger.info( f'z={self.z_bins[ i_z ]}-{self.z_bins[ i_z+1 ]}: ' )
             self.logger.info( f'    alpha={popt[ 0 ]:.3f} +/- {perr[ 0 ]:.3f}' )
             self.logger.info( f'    beta={popt[ 1 ]:.3f} +/- {perr[ 1 ]:.3f}' )
             self.logger.info( f'    C={popt[ 2 ]:.2f} +/- {perr[ 2 ]:.2f}' )
-            self.logger.info( f'    Lstar={popt[ 3 ]:.2f} +/- {perr[ 3 ]:.2f}' )
+            self.logger.info( f'    Lstar={10**popt[ 3 ]} +/- {10**popt[ 3 ] * (perr[ 3 ]/popt[ 3 ])}' )
             
 
     def plot_rlf( self, 
@@ -447,7 +468,7 @@ class RLF:
             ax.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
                      marker='o', linestyle='None',
                      label=f'{self.z_bins[ i_z ]:.2f}<z<{self.z_bins[ i_z + 1 ]:.2f}')
-            ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=specific_phi[ mask ] / np.sqrt( specific_counts[ mask ] ), color=colors[ i_z ], fmt='none' )
+            ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=self.phi_err[ i_z ][ mask ], color=colors[ i_z ], fmt='none' )
         ax.set_title( title )
         ax.set_xscale( 'log' )
         ax.set_xlabel( '$L_{144}$  $( \\frac{W}{Hz} )$' )
@@ -469,7 +490,7 @@ if __name__ == "__main__":
 
     rlf_calculator = RLF()
     vmax_rlf = RLF()
-    catalog = HardcastleCatalogue( resolved_only=False )
+    catalog = HardcastleCatalogue( resolved_only=True )
 
     rlf_calculator.logger.debug( "getting catalog data" )
     redshifts = catalog.get_values( Source.Redshift )
