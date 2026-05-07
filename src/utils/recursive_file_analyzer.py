@@ -76,9 +76,12 @@ class RecursiveFileAnalyzer:
         """
         if return_nums:
             paths, idxs = map( list, zip( *self._quick_scan( path, pattern, numeric_range, return_nums ) ) )
+            
+            # sort paths and idxs by idxs
+            idxs, paths = map(list, zip( *sorted( zip( idxs, paths ) ) ))
             return paths, idxs
         else:
-            paths = list( self._quick_scan( path, pattern, numeric_range ) )
+            paths = list( self._quick_scan( path, pattern, numeric_range ) )    
             return paths
     
     def _quick_scan( self, 
