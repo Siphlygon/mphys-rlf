@@ -118,14 +118,14 @@ class RecursiveFileAnalyzer:
                         if numeric_range is not None:
                             if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
                                 continue
-                        yield (entry.path, idx)
+                        yield (Path(entry), idx)
                     else:
                         # save some processing power by only doing regex match if numeric_range is provided
                         if numeric_range is not None:
                             idx = int( re.search( pattern, entry.name ).group( 1 ) )
                             if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
                                 continue
-                        yield entry.path
+                        yield Path(entry)
 
     def _batcher(self, iterable : list, batch_size : int):
         """
@@ -178,10 +178,12 @@ class RecursiveFileAnalyzer:
     def _run_file_mode(self,
                        file_paths : list[str | Path],
                        function : Callable,
-                       num_workers : int,
+                       *args,
+                       num_workers : int = 8,
                        output_file : str | Path | None = None,
                        show_progress : bool = True,
-                       *args, **kwargs):
+                       **kwargs,
+                       ):
         """
         Process files by scheduling one file per task.
         
@@ -219,12 +221,13 @@ class RecursiveFileAnalyzer:
 
     def _run_batch_mode(self,
                         file_paths : list[str | Path],
+                        function : Callable,
+                        *args, 
                         num_workers : int,
                         batch_size : int,
-                        function : Callable,
                         output_file : str | Path | None = None,
                         show_progress : bool = True,
-                        *args, **kwargs):
+                        **kwargs):
         """
         Process files by scheduling one batch per task.
         
@@ -270,6 +273,7 @@ class RecursiveFileAnalyzer:
     def run_pipeline(
         self,
         function : Callable,
+        *args,
         return_nums : bool = False,
         numeric_range: tuple[int,int] | None = None,
         root_dir : Path | str | None = None,
@@ -280,7 +284,7 @@ class RecursiveFileAnalyzer:
         mode : str = "batch",
         show_progress : bool = True,
         file_paths_override : list[str | Path] | None = None,
-        *args, **kwargs
+        **kwargs
     ):
         """
         Runs the complete pipeline to process files in a directory with the specified function, using either file mode or batch mode for concurrent processing.
@@ -324,21 +328,23 @@ class RecursiveFileAnalyzer:
             return_values = self._run_file_mode(
                 file_paths=file_paths,
                 function=function,
+                *args,
                 num_workers=num_workers,
                 output_file=output_file,
                 show_progress=show_progress,
-                *args, **kwargs
+                **kwargs
             )
 
         if mode == "batch":
             return_values = self._run_batch_mode(
                 file_paths=file_paths,
                 function=function,
+                *args,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 output_file=output_file,
                 show_progress=show_progress,
-                *args, **kwargs
+                **kwargs
             )
 
         return (return_values, numbers) if return_nums else return_values
@@ -346,6 +352,7 @@ class RecursiveFileAnalyzer:
     def benchmark_pipeline(
         self,
         function : Callable,
+        *args,
         return_nums : bool = False,
         root_dir : Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
@@ -356,7 +363,7 @@ class RecursiveFileAnalyzer:
         repeats : int = 1,
         output_csv : str | Path | None = None,
         show_progress : bool = True,
-        *args, **kwargs
+        **kwargs
     ):
         """
         Benchmark throughput for different worker counts and batch sizes.
@@ -408,13 +415,14 @@ class RecursiveFileAnalyzer:
             for _ in range(repeats):
                 t0 = time.perf_counter()
                 self.run_pipeline(
+                    function,
+                    *args,
                     root_dir=root_dir,
                     num_workers=workers,
                     mode="file",
                     show_progress=show_progress,
                     file_paths_override=file_paths,
-                    function=function,
-                    *args, **kwargs
+                    **kwargs
                 )
                 elapsed = time.perf_counter() - t0
                 if elapsed < best_seconds:
@@ -436,14 +444,15 @@ class RecursiveFileAnalyzer:
                 for _ in range(repeats):
                     t0 = time.perf_counter()
                     self.run_pipeline(
+                        function,
+                        *args,
                         root_dir=root_dir,
                         batch_size=batch_size,
                         num_workers=workers,
                         mode="batch",
                         show_progress=show_progress,
                         file_paths_override=file_paths,
-                        function=function,
-                        *args, **kwargs
+                        **kwargs
                     )
                     elapsed = time.perf_counter() - t0
                     if elapsed < best_seconds:
