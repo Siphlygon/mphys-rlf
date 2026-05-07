@@ -1,5 +1,4 @@
 import h5py
-
 import utils.paths as paths
 import data.datasets as datasets
 import utils.device_utils as device_utils
@@ -45,20 +44,24 @@ if __name__ == "__main__":
 
     # Hyperparameters
     conf = ModelConfig.from_preset(model_preset)
+
     # Change the name if you want:
     # (otherwise default name is used)
+    if "MODEL_NAME" in os.environ:
+        conf.__setattr__("model_name", os.environ["MODEL_NAME"])
     # conf.model_name = "Alternative_Name"
-
+    
     # Load dataset:
-    dataset = datasets.ImagePathDataset( "hardcastle_catalogue/clean_hardcastle_catalogue.h5" )
+    path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
+    dataset = datasets.ImagePathDataset(path)
     
     # Get LAS values for the dataset context
-    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
+    with h5py.File(path, "r") as f:
         las_values = f["cat_info"][:]["LAS"]
         dataset.set_las_values(las_values)
 
     # Initialize trainer
-    trainer = DiffusionTrainer( config=conf, dataset=dataset)
+    trainer = DiffusionTrainer(config=conf, dataset=dataset)
 
     # Start training
     trainer.training_loop()
