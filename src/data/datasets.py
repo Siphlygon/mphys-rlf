@@ -292,6 +292,6 @@ class TrainDatasetFIRST(FIRSTGalaxyData):
         logger.warn("FIRSTGalaxyData has class labels as fixed context.")
         return
 
-class TrainDatasetNoScale(TrainDataset):
+class TrainDatasetNoScale(ImagePathDataset):
     def __init__(self, path, img_size=80, **kwargs):
         super().__init__(path, transforms=TrainTransformNoScale(img_size), **kwargs)
