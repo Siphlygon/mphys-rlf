@@ -52,11 +52,14 @@ if __name__ == "__main__":
     # conf.model_name = "Alternative_Name"
     
     # Load dataset:
-    path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
-    dataset = datasets.ImagePathDataset(path)
+    if "DATASET_PATH" in os.environ:
+        dataset_path = os.environ["DATASET_PATH"]
+    else:
+        dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
+    dataset = datasets.ImagePathDataset(dataset_path)
     
     # Get LAS values for the dataset context
-    with h5py.File(path, "r") as f:
+    with h5py.File(dataset_path, "r") as f:
         las_values = f["cat_info"][:]["LAS"]
         dataset.set_las_values(las_values)
 
