@@ -105,18 +105,28 @@ class AngularSizeFinder:
         shape = MakeShape(pd.DataFrame(components, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
         return shape.length()
 
-    def run(self,
+    def estimate_angular_sizes(self,
             dir : str | None = None,
             pattern : str = r'.*?\D+(\d+)\.fits$',
             output_file : str | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
-        Run the pipeline to process all FITS files in the specified root directory, extract and filter the component data, and estimate the angular size of each source.
+        A method to estimate the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
+
+        Args:
+            dir (str | None, optional): The root directory containing the FITS files. Defaults to None.
+            pattern (str, optional): The regex pattern to match FITS files. Defaults to r'.*?\D+(\d+)\.fits$'.
+            output_file (str | None, optional): The name of the CSV file to save the estimated angular sizes to. Defaults to None.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: A tuple containing the indices of the sources and their estimated angular sizes.
         """
         # Run the pipeline to extract component data from each FITS file,
         if dir:
-            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data, root_dir=dir, pattern=pattern, return_nums=True, mode="file")
+            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data,
+                                                             root_dir=dir, pattern=pattern, return_nums=True, mode="file")
         else:
-            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data, pattern=pattern, return_nums=True, mode="file")
+            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data,
+                                                             pattern=pattern, return_nums=True, mode="file")
 
         # Estimate the angular size of each image based on the component data
         sizes = []
@@ -134,6 +144,24 @@ class AngularSizeFinder:
             df.to_csv(output_file, index=False)
 
         return np.array(indices), np.array(sizes)
+
+    def run(self, output_file: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """
+        A method to run the entire pipeline for estimating the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
+
+        Args:
+            output_file (str | None, optional): The name of the CSV file to save/load the estimated angular sizes to. If None, the results will not be saved to a file. Defaults to None.
+        Returns:
+            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays: the first array contains the indices of the sources corresponding to the FITS files processed, and the second array contains the estimated angular sizes of these sources in arcseconds.
+        """
+        # If no output file, actually run the program
+        if output_file is None or not os.path.exists(output_file):
+            indices, sizes = self.estimate_angular_sizes(output_file=output_file)
+        else:
+            sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
+            _, indices = np.array(self.rfa.get_unwrapped_list(pattern=r'.*?\D+(\d+)\.fits$', return_nums=True))
+        
+        return indices, sizes
 
 
 class MakeShape(object):
@@ -317,18 +345,11 @@ class MakeShape(object):
 
 
 if __name__ == "__main__":
-    
     root = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
     output_file = 'estimated_angular_sizes.csv'
-    
-    # If no output file, actually run the program
-    if not os.path.exists(output_file):
-        ang_size_finder = AngularSizeFinder(root)
-        indices, sizes = ang_size_finder.run(output_file=output_file)
-    else:
-        sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
-        rfa = RecursiveFileAnalyzer(root)
-        _, indices = np.array(rfa.get_unwrapped_list(pattern=r'.*?\D+(\d+)\.fits$', return_nums=True))
+
+    ang_size_finder = AngularSizeFinder(root)
+    indices, sizes = ang_size_finder.run(output_file=output_file)
     
     # idx, res = ang_size_finder.extract_component_data(root / "10000-19999/cutout15275.fits")
     # shape = MakeShape(pd.DataFrame(res, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
