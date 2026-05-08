@@ -7,7 +7,7 @@ from scipy.stats import rv_histogram
 import matplotlib.pyplot as plt
 
 import logging
-import utils.utils_logging as utils_logging
+import utils.logging
 import configparser
 import utils.paths as pths
 
@@ -28,7 +28,7 @@ class CatalogueDistribution:
             value_name (str, optional): The name of the value being represented. Defaults to "Value".
             units (str, optional): The units of the value being represented. Defaults to "Units".
         """
-        self.logger = utils_logging.get_logger(logger_name, logging.DEBUG)
+        self.logger = utils.logging.get_logger(logger_name, logging.DEBUG)
         
         # Initialise attributes
         self.value_name = value_name
@@ -266,7 +266,12 @@ class PeakPixDistribution(CatalogueDistribution):
     fits a histogram to the peak pixel values and creates a random variable distribution that can be used to generate new peak pixel
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100):
+    def __init__(self, bin_num: int = 100, path: Path | None = None):
+        if path is None:
+            self.path = pths.DATASET_PARENT / "clean_hardcastle_catalogue.h5"
+        else:
+            self.path = path
+        
         # Get values from config
         # self.percentage_threshold = float(de_config['PEAK_PIXEL_PERCENTAGE_THRESHOLD'])
         self.percentage_threshold = 0.80
@@ -288,7 +293,7 @@ class PeakPixDistribution(CatalogueDistribution):
         """        
         self.logger.info("Extracting peak pixel values from cutout images using preprocessed data...")
         if data_path is None:
-            data_path = pths.DATASET_PARENT / "snr_15_hardcastle_catalogue.h5"
+            data_path = self.path
 
         with h5py.File(data_path, "r") as f:
             images = np.array(f["images"][:])
