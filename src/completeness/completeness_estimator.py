@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 from astropy.io import fits
 
-from rms_dist import RMSDistribution
+from utils.catalogue_dist import RMSDistribution
 from utils.img_data_arrays import ImageDataArrays
 import configparser
 import utils.paths as pth
