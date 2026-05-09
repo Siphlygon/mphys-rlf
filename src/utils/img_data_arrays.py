@@ -32,7 +32,7 @@ def get_las( file_path: str ):
         angular_size = fit_shape_and_estimate_size(component_list)
         return angular_size
 
-def fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
+def fit_shape_and_estimate_size(components: list[tuple]) -> float:
     """
     Create a shape representing the source from the filtered components and estimate the angular size of the source based on this shape.
 
