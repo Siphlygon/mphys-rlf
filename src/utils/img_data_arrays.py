@@ -226,14 +226,18 @@ class ImageDataArrays:
 
                 if subdir == self.config[ 'generated_subdir' ]:
                     self.generated_data = subdir_data
+                    generated_dict = vars( subdir_data )
                     self.logger.debug( 'Saving subdir_data to generated_data' )
+                    self.save_arrays( subdir, **generated_dict )
                 else:
                     self.dataset_data = subdir_data
+                    datasect_dict = vars( subdir_data )
                     self.logger.debug( 'Saving subdir_data to dataset_data' )
-
+                    self.save_arrays( subdir, **datasect_dict )
+                
         if dirty_subdirs:
             self.logger.debug( 'Done! Saving image data arrays...' )
-            self.save_all_arrays( only_subdirs=dirty_subdirs )
+            # self.save_all_arrays( only_subdirs=dirty_subdirs )
         else:
             self.logger.debug( 'Done! All image data arrays loaded from cache; not re-saving.' )
     
@@ -250,6 +254,15 @@ class ImageDataArrays:
             for key, val in subdir_dict.items():
                 if isinstance( val, np.ndarray ):
                     np.save( parent / subdir / ( key + '.npy' ), val )
+    
+    def save_arrays( self, subdir: str, **arrays: np.ndarray ):
+        """
+        Save specific arrays to a file for ease of loading
+        """
+        parent = utils.paths.NP_ARRAY_PARENT
+        for key, val in arrays.items():
+            if isinstance( val, np.ndarray ):
+                np.save( parent / subdir / ( key + '.npy' ), val )
 
 
 if __name__ == "__main__":
