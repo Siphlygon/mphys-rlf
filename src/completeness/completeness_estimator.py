@@ -209,12 +209,28 @@ class CompletenessEstimator:
             # Create and apply noise patches for every input image
             mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
             noise_patches = self.create_noise_LOFAR(_filter_kernel_2d, rms=rms, shape=(self.num_noise_patches, 80, 80))
-            sim_data = noise_patches + images[i][np.newaxis, :, :]
+
+            # Ensure the image slice is 2D so it can broadcast against (n_patches, 80, 80).
+            # Some FITS readers return shapes like (1, 80, 80) for a single image.
+            image_2d = images[i]
+            while (getattr(image_2d, "ndim", 0) > 2) and (image_2d.shape[0] == 1):
+                image_2d = image_2d[0]
+            if image_2d.ndim != 2:
+                raise ValueError(f"Expected image[{i}] to be 2D after squeezing; got shape {image_2d.shape}")
+
+            sim_data = noise_patches + image_2d[np.newaxis, :, :]
 
             # Determine if the mock sources are detectable based on a peak flux threshold (e.g., 5 sigma)
             peak_fluxes = np.max(sim_data, axis=(1, 2))
             threshold = self.sigma_threshold * rms
             detectable[start:end] = peak_fluxes >= threshold
+
+        # save mock fluxes to a file for later use        if show_progress:
+        self.logger.info(f"Saving mock fluxes and detectability to file...")
+        with open("mock_fluxes_detectability.txt", "w") as f:
+            f.write("Mock_Flux(mJy/beam)\tDetectable\n")
+            for flux, detect in zip(mock_fluxes, detectable):
+                f.write(f"{flux}\t{detect}\n")
 
         return mock_fluxes, detectable
 
@@ -243,6 +259,8 @@ class CompletenessEstimator:
         for i in tqdm(range(n_bins), desc='Calculating completeness per flux bin', disable=not show_progress):
             # Select sources in this flux bin
             in_bin = (mock_sources['mock_flux'] >= int_flux_bins[i]) & (mock_sources['mock_flux'] < int_flux_bins[i + 1])
+
+            self.logger.info(f"Flux bin {int_flux_bins[i]:.3f} - {int_flux_bins[i + 1]:.3f} mJy/beam: {np.sum(in_bin)} sources")
 
             # Calculate the fraction of detectable sources in this bin
             n_detect = mock_sources[
@@ -306,8 +324,12 @@ class CompletenessEstimator:
         mock_sources['mock_flux'] = mock_fluxes
         mock_sources['detectable'] = detectable
 
-        # Compute completeness for each bin
-        int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
+        # Compute completeness for each s
+        
+        
+        # NOTE - THIS IS FOR THE NEW MODELS WHERE WE CANT REALLY UNDERSTAND WHY IT'S SMALL FLUX 
+        int_flux_bins = np.logspace(-2, 3, num=21)  # in log(mJy/beam)
+        # int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
         bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
         completeness, yerr = self.compute_completeness_per_bin(int_flux_bins, mock_sources, show_progress)
 
@@ -338,13 +360,15 @@ class SizeBinnedCompleteness(CompletenessEstimator):
                  config_str : str,
                  which_dataset : str | None = "GENERATED_SUBDIR",
                  override_data : bool = False,
-                 paths_to_use : list[Path] | None = None):
+                 paths_to_use : list[Path] | None = None,
+                 output_file : str | Path | None = None):
         """
         A class to generate completeness curves binned by angular size, to investigate how completeness varies with source size.
 
         Args:
             config_str (str): The specific configuration in the config file to use.
             which_dataset (str, optional): Which of the two subdir to use in the analysis. Defaults to "GENERATED_SUBDIR"
+            output_file (str | Path | None, optional): The file to save the output to. Defaults to None.
         """
         super().__init__(config_str, which_dataset, override_data)
         self.logger = utils.logging.get_logger("SizeBinnedCompleteness", logging.DEBUG)
@@ -352,6 +376,8 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         # Add functionality to extract angular sizes and model images/fluxes if not using ImageDataArrays as source of data
         if override_data:
             assert paths_to_use is not None, "You must provide a list of paths to use if override_data is True"
+            assert len(paths_to_use) == 3, "You must provide exactly 3 paths to use if override_data is True: [ang_size_path, model_image_path, model_flux_path]"
+            assert output_file is not None, "You must provide an output file if override_data is True"
             
             rfa = RecursiveFileAnalyzer(paths_to_use[0])
             
@@ -359,10 +385,9 @@ class SizeBinnedCompleteness(CompletenessEstimator):
             self.orig_data = Data()
             
             # Get sizes
-            output_file = 'estimated_angular_sizes.csv'
             self.logger.info(f"Getting angular sizes...")
             ang_size_finder = AngularSizeFinder(paths_to_use[0])
-            sizes = ang_size_finder.run(output_file=output_file)[1]
+            indices, sizes = ang_size_finder.run(output_file=output_file)
             self.sizes = sizes
             
             # Get model images 
@@ -370,20 +395,35 @@ class SizeBinnedCompleteness(CompletenessEstimator):
                 return fits.getdata(path, 0)
             
             self.logger.info(f"Getting model images...")
-            model_images = np.array(rfa.run_pipeline(read_model_images,
-                                                            root_dir=paths_to_use[1],
-                                                            mode="file",
-                                                            show_progress=False))
-            self.model_images = model_images[:len(self.sizes)]
+            model_images, _ = rfa.run_pipeline(read_model_images,
+                                            return_nums=True,
+                                            root_dir=paths_to_use[1],
+                                            mode="file",
+                                            pattern=r'.*?\D+(\d+)\.fits$',
+                                            show_progress=False)
+            self.model_images = np.array(model_images)[indices]
+            self.model_images *= 1e3 # convert from Jy/beam to mJy/beam
             
             # Get model fluxes
             self.logger.info(f"Getting model fluxes...")
-            model_fluxes = np.array(rfa.run_pipeline(get_model_flux,
-                                                        root_dir=paths_to_use[2],
-                                                        pattern=None,
-                                                        mode="file",
-                                                        show_progress=False))
-            self.model_fluxes = model_fluxes[:len(self.sizes)]
+            model_fluxes, _ = rfa.run_pipeline(get_model_flux,
+                                                return_nums=True,
+                                                pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
+                                                root_dir=paths_to_use[2],
+                                                mode="file",
+                                                show_progress=False)
+            self.model_fluxes = np.array(model_fluxes)[indices]
+            self.model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
+            
+            # Plot a histogram of model fluxes to check they look reasonable
+            # plt.figure()
+            # plt.hist(self.model_fluxes, bins=50, log=True)
+            # plt.xlabel("Model Flux (mJy/beam)")
+            # plt.xscale('log')
+            # plt.ylabel("Number of sources")
+            # plt.title("Distribution of Model Fluxes")
+            # plt.savefig(dpi=1000, fname="model_flux_distribution.png")
+            # plt.show()
         
         # Otherwise, pull these static values from ImageDataArrays as normal
         else:
@@ -393,6 +433,13 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         
         self.max_size = 120 # arcseconds
         self.max_bins = 12
+        # size_bins_edges = np.linspace(0, self.max_size, num=self.max_bins+1, endpoint=True)
+        
+        # hardcoded bins for snr5 transforms, to try and keep similar number of sources in each bin
+        self.size_bins_edges = np.array([0, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 120])
+        self.size_bins_edges = np.array([0, 10, 15, 20, 25, 30, 40, 50, 70, 120])
+        self.max_bins = len(self.size_bins_edges) - 1
+        
     
     def estimate_size_binned_completeness(self, show_progress: bool = True) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """
@@ -401,19 +448,20 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         Returns:
             list[tuple]: A list of tuples containing the log bin centers, completeness values, y errors, and fitted parameters for each size bin.
         """
-        size_bins_edges = np.linspace(0, self.max_size, num=self.max_bins+1, endpoint=True)
-        
         # Store results
         completeness_results = []
 
-        for i in range(len(size_bins_edges) - 1):
+        for i in range(len(self.size_bins_edges) - 1):
             # Select sources in this size bin
-            size_min = size_bins_edges[i]
-            size_max = size_bins_edges[i + 1]
+            size_min = self.size_bins_edges[i]
+            size_max = self.size_bins_edges[i + 1]
             in_bin = (self.sizes >= size_min) & (self.sizes < size_max)
             self.logger.info(f"Size bin {size_min:.1f} - {size_max:.1f} arcseconds: {np.sum(in_bin)} sources")
             images_in_bin = self.model_images[in_bin]
             fluxes_in_bin = self.model_fluxes[in_bin]
+            
+            print(f"Model fluxes in this size bin: {fluxes_in_bin}")
+            print(f"Max model flux in this size bin: {np.max(fluxes_in_bin)} mJy/beam")
             
             # Dynamically set the model images and fluxes in self.data to be the sources in this size bin, so that we can reuse the same completeness estimation code
             setattr(self.data, 'model_images', images_in_bin)
@@ -449,10 +497,12 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         mcolors = palette[indices]
 
         plt.figure(figsize=(10, 6))
-        interval = self.max_size / self.max_bins
+        # interval = self.max_size / self.max_bins
         for i, (log_bin_centers, completeness, yerr, fitted_params) in enumerate(completeness_results):
-            size_min = i * interval
-            size_max = (i + 1) * interval
+            # size_min = i * interval
+            # size_max = (i + 1) * interval
+            size_min = self.size_bins_edges[i]
+            size_max = self.size_bins_edges[i + 1]
             label = f"{size_min:.1f} - {size_max:.1f} arcsecs"
             
             # Plot the measured completeness with error bars
@@ -465,7 +515,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         
         plt.xscale('log')
         plt.ylim(-0.01, 1.05)
-        plt.xlim(10**-1, 10**1)
+        plt.xlim(10**-1, 10**2)
         plt.xlabel("Integrated Flux Density (mJy/beam)")
         plt.ylabel("Completeness")
         plt.title("Completeness Curves Binned by Angular Size")
@@ -482,11 +532,12 @@ if __name__ == "__main__":
        
     # completeness_estim = SizeBinnedCompleteness(args.config)
     root = pth.STORAGE_PARENT / "src/completeness/"
-    folder_name = "retrained_loguniform"
-    completeness_estim = SizeBinnedCompleteness("retrained_model_loguniform", override_data=True,
+    folder_name = "snr5_transforms_new"
+    completeness_estim = SizeBinnedCompleteness("snr5_transforms_new", override_data=True,
         paths_to_use=[root / (folder_name + "_catalogs"),
-                      root / (folder_name + "_images"),
-                      root / (folder_name + "_logs")]
+                      root / (folder_name + "_images/gaus_model"),
+                      root / (folder_name + "_logs")],
+        output_file="estimated_angular_sizes_snr5_transforms_new.csv"
     )
     completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
     completeness_estim.plot_size_binned_completeness(completeness_results)
