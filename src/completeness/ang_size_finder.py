@@ -108,14 +108,14 @@ class AngularSizeFinder:
     def estimate_angular_sizes(self,
             dir : str | Path | None = None,
             pattern : str = r'.*?\D+(\d+)\.fits$',
-            output_file : str | None = None) -> tuple[np.ndarray, np.ndarray]:
+            output_file : str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
         A method to estimate the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
 
         Args:
             dir (str | Path | None, optional): The root directory containing the FITS files. Defaults to None.
             pattern (str, optional): The regex pattern to match FITS files. Defaults to r'.*?\D+(\d+)\.fits$'.
-            output_file (str | None, optional): The name of the CSV file to save the estimated angular sizes to. Defaults to None.
+            output_file (str | Path | None, optional): The name of the CSV file to save the estimated angular sizes to. Defaults to None.
 
         Returns:
             tuple[np.ndarray, np.ndarray]: A tuple containing the indices of the sources and their estimated angular sizes.
@@ -146,14 +146,14 @@ class AngularSizeFinder:
         return np.array(indices), np.array(sizes)
 
     def run(self,
-            output_file: str | None = None,
+            output_file: str | Path | None = None,
             dir: str | Path | None = None,
             pattern: str = r'.*?\D+(\d+)\.fits$') -> tuple[np.ndarray, np.ndarray]:
         """
         A method to run the entire pipeline for estimating the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
 
         Args:
-            output_file (str | None, optional): The name of the CSV file to save/load the estimated angular sizes to. If None, the results will not be saved to a file. Defaults to None.
+            output_file (str | Path | None, optional): The name of the CSV file to save/load the estimated angular sizes to. If None, the results will not be saved to a file. Defaults to None.
             dir (str | Path | None, optional): The root directory containing the FITS files. If None, the current directory will be used. Defaults to None.
             pattern (str, optional): The regex pattern to match FITS files. Defaults to r'.*?\D+(\d+)\.fits$'.
         Returns:
@@ -164,7 +164,7 @@ class AngularSizeFinder:
             indices, sizes = self.estimate_angular_sizes(output_file=output_file, dir=dir, pattern=pattern)
         else:
             sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
-            _, indices = self.rfa.get_unwrapped_list(pattern=pattern, return_nums=True)
+            _, indices = self.rfa.get_unwrapped_list(path=dir, pattern=pattern, return_nums=True)
         
         return np.array(indices), sizes
 
