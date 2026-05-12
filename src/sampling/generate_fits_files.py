@@ -74,7 +74,7 @@ def sample( args ):
         context = fpeak_model_dist( batch_size )[ :, np.newaxis ]
         # if las conditioning is enabled, add it to context
         if args.las_conditioning_enabled:
-            context = np.concatenate( (context, scipy.stats.loguniform.rvs( 6, 120, size=batch_size )[ :, np.newaxis ]), axis=1 )
+            context = np.concatenate( (context, scipy.stats.uniform.rvs( 6, 120, size=batch_size )[ :, np.newaxis ]), axis=1 )
 
         samples = model_sampler.quick_sample( f"{args.model_name}", context=torch.from_numpy( context ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
         sample_generated_count += batch_size
