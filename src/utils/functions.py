@@ -2,7 +2,7 @@ import numpy as np
 
 def sigmoid(x, x0, k, a, b):
     """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
-    return a / (1 + np.exp(-k * (x - x0))) + b
+    return a / (1 + np.exp(-k * (np.log10( x ) - x0))) + b
 
 def polynomial_deg4(x, a, b, c, d, e):
     """Quadratic polynomial: ax^2 + bx + c"""

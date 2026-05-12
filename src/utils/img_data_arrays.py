@@ -282,22 +282,27 @@ class ImageDataArrays:
         frequently. Default True. If any arrays cannot be loaded, all are read from the fits files.
     """
     def __init__( self, config_name: str, load_from_files: bool = True ):
-        self.logger = get_logger( __name__ )
+        self.logger = get_logger( __name__, logging.DEBUG )
         self.du = DistributedUtils()
-        self.config = configparser.ConfigParser().read(config_name)
+        self.config = pth.config[ config_name ]
 
         for subdir in [ self.config[ 'generated_subdir' ], self.config[ 'dataset_subdir' ] ]:
+            self.logger.debug( f'Entering image data arrays for subdir {subdir}' )
             subdir_data = SubdirData()
             if load_from_files:
+                self.logger.debug( 'Attempting to load from files' )
                 parent = utils.paths.NP_ARRAY_PARENT
-                for array_name in [ 'images', 'residual_images', 'model_images', 'model_fluxes', 'peak_fluxes', 'sigma_clipped_means', 'sigma_clipped_rmsds', 'image_scale_factors' ]:
+                for array_name in [ 'images', 'residual_images', 'model_images', 'model_fluxes', 'peak_fluxes', 'sigma_clipped_means', 'sigma_clipped_rmsds', 'image_scale_factors', 'las_values' ]:
                     try:
                         val = np.load( parent / subdir / ( array_name + '.npy' ) )
+                        self.logger.debug( f'{subdir}/{array_name} exists!' )
                         setattr( subdir_data, array_name, val )
                     except OSError:
                         load_from_files = False
+                        self.logger.debug( f'{subdir}/{array_name} does not exist' )
             
             if not load_from_files:
+                self.logger.debug( 'Not loading from files, either clearing cache or failed to load cache' )
                 # Log analyzer arrays
                 log_analyzer = LogAnalyzer( subdir )
                 normalized_model_fluxes, log_analyzer_inds = log_analyzer.for_each( la.get_model_flux, return_nums=True )
@@ -309,34 +314,39 @@ class ImageDataArrays:
                 self.logger.debug( 'Log analyzer length: %i', len( log_analyzer_inds ) )
 
                 use_dataset_h5 = subdir == self.config[ 'dataset_subdir' ] and self.config[ 'train_data_path' ] != 'None'
+                if use_dataset_h5:
+                    self.logger.debug( f'Using h5 dataset {self.config[ "train_data_path" ]}' )
+                else:
+                    self.logger.debug( f'Not using dataset h5 for {subdir}' )
     
                 # Data arrays
                 if use_dataset_h5:
                     with h5py.File( self.config[ 'train_data_path' ], 'r' ) as train_data:
                         images = train_data[ 'images' ][ : ]
                         data_inds = train_data[ 'indices' ][ : ]
+                        las_values = train_data[ 'cat_info' ][ 'LAS' ][ : ]
                     peak_fluxes_mjy = np.max( images, axis=(1,2) ) * 1000
                     data_values = [ images, peak_fluxes_mjy ]
                 else:
                     data_files = RecursiveFileAnalyzer( pth.FITS_PARENT / subdir )
-                    images, data_inds = data_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?image(\d+)\.fits$', return_nums=True )
+                    images, data_inds = data_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
                     images = np.array( images )
 
-                    peak_fluxes_transformed = np.array( data_files.for_each( rfa.get_fits_primaryhdu_header, pattern=r'.*?image(\d+)\.fits$', kwargs=dict( key='FXSCLD' ) ) )
+                    peak_fluxes_transformed = np.array( data_files.for_each( rfa.get_fits_primaryhdu_header, pattern=r'.*?\D+(\d+)\.fits$', kwargs=dict( key='FXSCLD' ) ) )
                     data_values = [ images, peak_fluxes_transformed ]
 
                 self.logger.debug( 'Data files length: %i', len( data_inds ) )
     
                 # Residual folder
                 residual_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
-                residual_images, residual_indexes = residual_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?image(\d+)\.fits$', return_nums=True )
+                residual_images, residual_indexes = residual_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
                 residual_images = np.array( residual_images )
                 residual_values = [ residual_images ]
                 self.logger.debug( 'Gaussian residual files length: %i', len( residual_indexes ) )
     
                 # Model folder
                 model_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model' )
-                model_images, model_indexes = model_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?image(\d+)\.fits$', return_nums=True )
+                model_images, model_indexes = model_files.for_each( rfa.get_fits_primaryhdu_data, pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
                 model_images = np.array( model_images )
                 model_values = [ model_images ]
                 self.logger.debug( 'Gaussian model files length: %i', len( model_images ) )
@@ -348,12 +358,11 @@ class ImageDataArrays:
                     las_values = np.array( las_values )
                     catalog_values = [ las_values ]
                     self.logger.debug( 'Catalog files length: %i', len( las_values ) )
-    
                 
                 # Wrap everything and match indices/values for all different folders so everything aligns properly
                 inds_array = [ log_analyzer_inds, data_inds, residual_indexes, model_indexes ]
                 values_array = [ log_analyzer_values, data_values, residual_values, model_values ]
-                if use_dataset_h5:
+                if not use_dataset_h5:
                     inds_array.append( catalog_indexes )
                     values_array.append( catalog_values )
 
@@ -373,25 +382,24 @@ class ImageDataArrays:
     
                 # Unwrap everything into its original values
                 if use_dataset_h5:
-                    log_analyzer_values, data_values, residual_values, model_values, catalog_values = values_array
-
-                    las_values, = catalog_values
-                    images, peak_fluxes_mjy = data_values
-                else:
                     log_analyzer_values, data_values, residual_values, model_values = values_array
 
+                    images, peak_fluxes_mjy = data_values
+                else:
+                    log_analyzer_values, data_values, residual_values, model_values, catalog_values = values_array
+                    las_values, = catalog_values
+
                     images, peak_fluxes_transformed = data_values
+
+                    # Get the unscaled fluxes and unscale everything accordingly
+                    pt = PeakFluxPowerTransformer( subdir, maxvals=np.max( images, axis=(1,2) ) )
+                    peak_fluxes_mjy = pt.inverse_transform( peak_fluxes_transformed ) * 1000
 
                 normalized_model_fluxes, sigma_clipped_means, sigma_clipped_rmsds, unclipped_rmsds = log_analyzer_values
                 residual_images, = residual_values
                 model_images, = model_values
 
     
-                # Get the unscaled fluxes and unscale everything accordingly
-                if not use_dataset_h5:
-                    pt = PeakFluxPowerTransformer( subdir, maxvals=np.max( images, axis=(1,2) ) )
-                    peak_fluxes_mjy = pt.inverse_transform( peak_fluxes_transformed ) * 1000
-
                 if self.config[ 'do_unscaling' ] == 'True':
                     image_scale_factors = peak_fluxes_mjy / np.max( images, axis=(1,2) ) #Scale from current image maxes (~1) to what the values should be as per peak fluxes
                 else:
@@ -415,12 +423,17 @@ class ImageDataArrays:
                 subdir_data.sigma_clipped_rmsds = unscaled_sigma_clipped_rmsds
                 subdir_data.image_scale_factors = image_scale_factors
 
+                self.logger.debug( 'saved all parameters to subdir_data' )
+
                 if subdir == self.config[ 'generated_subdir' ]:
                     self.generated_data = subdir_data
+                    self.logger.debug( 'Saving subdir_data to generated_data' )
                 else:
                     self.dataset_data = subdir_data
-    
-            self.save_all_arrays()
+                    self.logger.debug( 'Saving subdir_data to dataset_data' )
+
+        self.logger.debug( 'Done! Saving image data arrays...' ) 
+        self.save_all_arrays()
     
     def save_all_arrays( self ):
         """
