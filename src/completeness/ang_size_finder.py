@@ -106,14 +106,14 @@ class AngularSizeFinder:
         return shape.length()
 
     def estimate_angular_sizes(self,
-            dir : str | None = None,
+            dir : str | Path | None = None,
             pattern : str = r'.*?\D+(\d+)\.fits$',
             output_file : str | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
         A method to estimate the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
 
         Args:
-            dir (str | None, optional): The root directory containing the FITS files. Defaults to None.
+            dir (str | Path | None, optional): The root directory containing the FITS files. Defaults to None.
             pattern (str, optional): The regex pattern to match FITS files. Defaults to r'.*?\D+(\d+)\.fits$'.
             output_file (str | None, optional): The name of the CSV file to save the estimated angular sizes to. Defaults to None.
 
@@ -145,23 +145,28 @@ class AngularSizeFinder:
 
         return np.array(indices), np.array(sizes)
 
-    def run(self, output_file: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def run(self,
+            output_file: str | None = None,
+            dir: str | Path | None = None,
+            pattern: str = r'.*?\D+(\d+)\.fits$') -> tuple[np.ndarray, np.ndarray]:
         """
         A method to run the entire pipeline for estimating the angular sizes of sources from the FITS files in the root directory, and optionally save the results to a CSV file.
 
         Args:
             output_file (str | None, optional): The name of the CSV file to save/load the estimated angular sizes to. If None, the results will not be saved to a file. Defaults to None.
+            dir (str | Path | None, optional): The root directory containing the FITS files. If None, the current directory will be used. Defaults to None.
+            pattern (str, optional): The regex pattern to match FITS files. Defaults to r'.*?\D+(\d+)\.fits$'.
         Returns:
             tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays: the first array contains the indices of the sources corresponding to the FITS files processed, and the second array contains the estimated angular sizes of these sources in arcseconds.
         """
         # If no output file, actually run the program
         if output_file is None or not os.path.exists(output_file):
-            indices, sizes = self.estimate_angular_sizes(output_file=output_file)
+            indices, sizes = self.estimate_angular_sizes(output_file=output_file, dir=dir, pattern=pattern)
         else:
             sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
-            _, indices = np.array(self.rfa.get_unwrapped_list(pattern=r'.*?\D+(\d+)\.fits$', return_nums=True))
+            _, indices = self.rfa.get_unwrapped_list(pattern=pattern, return_nums=True)
         
-        return indices, sizes
+        return np.array(indices), sizes
 
 
 class MakeShape(object):
@@ -345,8 +350,10 @@ class MakeShape(object):
 
 
 if __name__ == "__main__":
-    root = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
-    output_file = 'estimated_angular_sizes.csv'
+    # root = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
+    # root = paths.STORAGE_PARENT / "src/completeness/dr2_cutouts_download_catalogs"
+    root = paths.STORAGE_PARENT / "src/completeness/snr5_transforms_new_catalogs"
+    output_file = 'estimated_angular_sizes_snr5.csv'
 
     ang_size_finder = AngularSizeFinder(root)
     indices, sizes = ang_size_finder.run(output_file=output_file)
@@ -357,24 +364,32 @@ if __name__ == "__main__":
         
     # Check for estimated angular sizes that are above 250 arcseconds; some weird 10^6 results
     outliers = np.where(sizes > 250)[0]
-    # print("Outliers with estimated angular size above 250 arcseconds:")
-    # print(outliers)
-    # print("Indices of outliers:")
-    # print(indices[outliers])
     indices = np.delete(indices, outliers)
     sizes = np.delete(sizes, outliers)
+    
 
-    # Get Hardcastle LAS values for comparison
-    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
-        cat_indexes = f["indices"][:]
-        las_values = f["cat_info"][:]["LAS"]
+    # # Get Hardcastle LAS values for comparison
+    # with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
+    #     cat_indexes = f["indices"][:]
+    #     las_values = f["cat_info"][:]["LAS"]
         
-        # filter the df and indices to only include sources that are in the Hardcastle catalogue, and get the corresponding LAS values
-        mask = np.isin(indices, cat_indexes)
-        mask2 = np.isin(cat_indexes, indices)
-        indices = indices[mask]
-        sizes = sizes[mask]
-        las_values = las_values[mask2]
+    #     # filter the df and indices to only include sources that are in the Hardcastle catalogue, and get the corresponding LAS values
+    #     mask = np.isin(indices, cat_indexes)
+    #     mask2 = np.isin(cat_indexes, indices)
+    #     indices = indices[mask]
+    #     sizes = sizes[mask]
+    #     las_values = las_values[mask2]
+        
+    #     # Remove any 0 LAS values, which represent sources that are not resolved in the Hardcastle catalogue and would skew the comparison
+    #     nonzero_mask = las_values > 0
+    #     indices = indices[nonzero_mask]
+    #     sizes = sizes[nonzero_mask]
+    #     las_values = las_values[nonzero_mask]
+    
+    
+    for i in range(0, round(max(sizes)), 5):
+        print(f"Size bin: {i} - {i+5} arcseconds")
+        print(f"Number of sources in this size bin: {len(sizes[(sizes >= i) & (sizes < i+5)])}")
     
     # Plot a histogram of the estimated angular sizes
     plt.figure(figsize=(10, 6))
@@ -386,32 +401,57 @@ if __name__ == "__main__":
     plt.savefig('angular_size_distribution_cutouts.png')
     plt.show()
     
+    # # Plot the difference between the estimated angular sizes and the LAS values from the Hardcastle catalogue
+    # diff = sizes - las_values
     
-    # max = np.max(sizes)
-    # max_idx = np.argmax(sizes)
-    # print(f"Maximum difference at index {max_idx}, source index {indices[max_idx]}")
-    # print(f"Maximum angular size: {sizes[max_idx]} arcseconds")
-    # print(f"LAS value from Hardcastle catalogue: {las_values[max_idx]} arcseconds")
+    # # Fit a gaussian to the difference distribution and plot it
+    # from scipy.stats import norm
+    # from scipy.optimize import curve_fit
+    # diff = diff[diff < 60]
+    # diff = diff[diff > -60]
+    # diff_hist, diff_bin_edges = np.histogram(diff, bins=200, density=False)
+   
+    # # Fit the histogram to a rv histogram
+    # from scipy.stats import rv_histogram
+    # model_dist = rv_histogram((diff_hist, diff_bin_edges), density=False)
+    # print(f"Fitted Distribution Parameters: mean={model_dist.mean():.2f}, std={model_dist.std():.2f}")
+    # print(model_dist.cdf(0))
+    # print(model_dist.stats(moments='mvsk'))
+   
+   
+    # def gaussian(x, mu, std, amplitude):
+    #     return amplitude * (1/(std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x - mu) / std) ** 2)
+   
+    # binned_x = np.linspace(-60, 60, 200)
+    # smooth_x = np.linspace(-60, 60, len(diff))
+   
+    # # Initial guess for mu and std
+    # mu_guess = np.mean(diff)
+    # std_guess = np.std(diff)
+   
+    # # Fit the gaussian
+    # popt, _ = curve_fit(gaussian, binned_x, diff_hist, p0=[mu_guess, std_guess, max(diff_hist)])
+    # gaussian_fit = gaussian(smooth_x, *popt)
     
-    # Plot the difference between the estimated angular sizes and the LAS values from the Hardcastle catalogue
-    diff = sizes - las_values
-    # min = np.min(diff)
-    # min_idx = np.argmin(diff)
-    # print(f"Minimum difference: {min} arcseconds, at index {min_idx}, source index {indices[min_idx]}")
-    # print(f"Estimated angular size: {sizes[min_idx]} arcseconds")
-    # print(f"LAS value from Hardcastle catalogue: {las_values[min_idx]} arcseconds")
+    # print(f"Fitted Gaussian Parameters: mu={popt[0]:.2f}, std={popt[1]:.2f}, amplitude={popt[2]:.2f}")
     
-    # max = np.max(diff)
-    # max_idx = np.argmax(diff)
-    # print(f"Maximum difference: {max} arcseconds, at index {max_idx}, source index {indices[max_idx]}")
-    # print(f"Estimated angular size: {sizes[max_idx]} arcseconds")
-    # print(f"LAS value from Hardcastle catalogue: {las_values[max_idx]} arcseconds")
+    # plt.figure(figsize=(10, 6))
+    # plt.hist(diff, bins=200, color='lightcoral', edgecolor='black')
+    # plt.plot(smooth_x, gaussian_fit, color='blue', label='Gaussian Fit')
+    # plt.legend()
+    # plt.title('Difference Between Estimated Angular Sizes and LAS Values from the Hardcastle Catalogue')
+    # plt.xlabel('Estimated Angular Size - LAS Value (arcseconds)')
+    # plt.ylabel('Number of Sources')
+    # plt.xlim(-60, 60)
+    # plt.grid(axis='y', alpha=0.75)
+    # plt.savefig('angular_size_difference.png')
+    # plt.show()
     
-    plt.figure(figsize=(10, 6))
-    plt.hist(diff, bins=50, color='lightcoral', edgecolor='black')
-    plt.title('Difference Between Estimated Angular Sizes and LAS Values from the Hardcastle Catalogue')
-    plt.xlabel('Estimated Angular Size - LAS Value (arcseconds)')
-    plt.ylabel('Number of Sources')
-    plt.grid(axis='y', alpha=0.75)
-    plt.savefig('angular_size_difference.png')
-    plt.show()
+    # # Save differences to a CSV file for further analysis
+    # df_diff = pd.DataFrame({
+    #     'Index': indices,
+    #     'Estimated Angular Size (arcseconds)': sizes,
+    #     'LAS Value from Hardcastle Catalogue (arcseconds)': las_values,
+    #     'Difference (arcseconds)': diff
+    # })
+    # df_diff.to_csv('angular_size_differences_cutouts.csv', index=False)
