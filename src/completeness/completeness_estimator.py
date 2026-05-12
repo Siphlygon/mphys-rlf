@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 from astropy.io import fits
 
-from rms_dist import RMSDistribution
+from utils.catalogue_dist import RMSDistribution
 from utils.img_data_arrays import ImageDataArrays
 import configparser
 import utils.paths as pth
@@ -484,9 +484,9 @@ if __name__ == "__main__":
     root = pth.STORAGE_PARENT / "src/completeness/"
     folder_name = "retrained_loguniform"
     completeness_estim = SizeBinnedCompleteness("retrained_model_loguniform", override_data=True,
-        paths_to_use=[root / folder_name / "_catalogs",
-                      root / folder_name / "images",
-                      root / folder_name / "logs"]
+        paths_to_use=[root / (folder_name + "_catalogs"),
+                      root / (folder_name + "_images"),
+                      root / (folder_name + "_logs")]
     )
     completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
     completeness_estim.plot_size_binned_completeness(completeness_results)
