@@ -22,7 +22,7 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
         self.subdir = subdir if isinstance( subdir, PurePath ) else PurePath( subdir )
 
     # Override default pattern
-    def for_each( self, function, pattern: str | None = r'.*?\D*(\d+)\.fits\.pybdsf\.log$', progress_bar_desc: str | None = None, numeric_range: tuple[int,int] | None = None, return_nums: bool = False, args: list | None = None, kwargs: dict | None = None ):
+    def for_each( self, function, pattern: str | None = r'.*?\D*(\d+)\.fits\.pybdsf\.log$', numeric_range: tuple[int,int] | None = None, return_nums: bool = False, *args, **kwargs ):
         """
         A method to perform a generic function on all files within the log directory and return the output, along with optionally a number as
         gathered from the first capture group in pattern applied to the file paths.
@@ -33,8 +33,6 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
             The function which will be called on each file in path recursively
         pattern : str | None = r'.*?\D*(\\d)\\.fits\\.pybdsf\\.log$'
             The regex pattern to search for. Items not matching will have the function operate on them. If None, operate on all.
-        progress_bar_desc : str | None = None
-            Description to give the progress bar, or none to not show a progress bar
         numeric_range: int | None = None
             If there is a regex pattern to search for and it has a capture group, attempt to parse the capture
             group into an integer. If the integer is within the numeric range (inclusive begin, exclusive end), 
@@ -55,7 +53,12 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
         list[ int ] (optional)
             if return_nums, also returns a list of integers for the values captured by the first capture group in pattern from the file path str
         """
-        return super().for_each( function, pattern, progress_bar_desc, numeric_range, return_nums, args, kwargs )
+        return super().run_pipeline( function,
+                                    *args,
+                                    return_nums=return_nums,
+                                    numeric_range=numeric_range,
+                                    pattern=pattern,
+                                    **kwargs )
 
 def get_flux( path: Path ):
     """
