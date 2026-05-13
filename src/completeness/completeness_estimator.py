@@ -63,6 +63,8 @@ class CompletenessEstimator:
             self.logger.info(f"Extracting data arrays for dataset")
             config_data_arrays = ImageDataArrays(self.config)
             self.data = config_data_arrays.__getattribute__(self.which_dataset + "_data")
+        else:
+            self.data = Data()
 
     # ---------- FITTING FUNCTION ----------
     def fit_function(self,
