@@ -13,19 +13,41 @@ rms_LOFAR = 95e-6 * 1e3
 beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
 beam_area_LOFAR = beam_width_LOFAR[ 0 ] * beam_width_LOFAR[ 1 ]
 
+# shimwell_data = np.array( [
+#     [ 0.2,   0.0 ],
+#     [ 0.3,   0.1 ],
+#     [ 0.4,   0.4 ],
+#     [ 0.5,   0.6 ],
+#     [ 0.6,   0.7 ],
+#     [ 0.7,   0.8 ],
+#     [ 0.8,   0.85 ],
+#     [ 0.9,   0.9 ],
+#     [ 1.0,   0.93 ],
+#     [ 1.1,   0.94 ],
+#     [ 1.2,   0.96 ]
+# ] ).transpose()
 shimwell_data = np.array( [
-    [ 0.2,   0.0 ],
-    [ 0.3,   0.1 ],
-    [ 0.4,   0.4 ],
-    [ 0.5,   0.6 ],
-    [ 0.6,   0.7 ],
-    [ 0.7,   0.8 ],
-    [ 0.8,   0.85 ],
-    [ 0.9,   0.9 ],
-    [ 1.0,   0.93 ],
-    [ 1.1,   0.94 ],
-    [ 1.2,   0.96 ]
+    [ 0.20,   0.00000 ],
+    [ 0.22,   0.015625 ],
+    [ 0.24,   0.015625 ],
+    [ 0.27,   0.03125 ],
+    [ 0.30,   0.06250 ],
+    [ 0.34,   0.12500 ],
+    [ 0.38,   0.18750 ],
+    [ 0.42,   0.28125 ],
+    [ 0.46,   0.34375 ],
+    [ 0.52,   0.46875 ],
+    [ 0.58,   0.53125 ],
+    [ 0.64,   0.62500 ],
+    [ 0.72,   0.71875 ],
+    [ 0.80,   0.78125 ],
+    [ 0.88,   0.81250 ],
+    [ 0.98,   0.87500 ],
+    [ 1.10,   0.90625 ],
+    [ 1.19,   0.96875 ],
+    [ 1.25,   1.00000 ],
 ] ).transpose()
+
 
 dejong_data = np.array( [
     [ 1, 0.025 ],
@@ -67,174 +89,25 @@ kondapally_data = np.array( [
 ]).transpose()
 
 
-def get_noise(data):
-    """
-    from Cyril Tasse/kMS, courtesy of Wara
-    """
-    maskSup = 1e-7
-    m = data[np.abs(data) > maskSup]
-    rmsold = np.std(m)
-    diff = 1e-1
-    cut = 3.
-    med = np.median(m)
-    for _ in range(10):
-        ind = np.where(np.abs(m - med) < rmsold * cut)[0]
-        rms = np.std(m[ind])
-        if np.abs((rms - rmsold)//rmsold) < diff: break
-        rmsold = rms
-    return rms
-
-def masking(fits_data, threshold_level = 5.0):
-    mean, median, std_dev = astropy.stats.sigma_clipped_stats(fits_data, sigma=3.0)
-    
-    # Calculate the threshold
-    threshold = threshold_level * std_dev
-    
-    # Create a mask for values less than the threshold
-    mask = fits_data < threshold
-    
-    # Set values less than the threshold to zero
-    fits_data_nr = np.where(mask, 0, fits_data)
-
-    return fits_data_nr
-
-def create_noise_LOFAR(shape=(80,80), rms=rms_LOFAR):
-    """
-    Create a 2D patch of Gaussian noise with given RMS.
-    """
-    # Add beam-correllated noise
-
-    # Source - https://stackoverflow.com/a/63868276
-    # Posted by Igor
-    # Retrieved 2026-02-12, License - CC BY-SA 4.0
-
-    # Compute filter kernel with radius correlation_scale
-    correlation_scale = 6 / 1.5 #( 6 arcsec / beam ) / ( 1.5 arcsec / pix )
-    x = np.arange(-correlation_scale, correlation_scale)
-    y = np.arange(-correlation_scale, correlation_scale)
-    X, Y = np.meshgrid(x, y)
-    dist = np.sqrt(X*X + Y*Y)
-    dist = dist[np.newaxis, :, :]
-    filter_kernel = np.exp(-dist**2/(2*correlation_scale))
-
-    noise = np.random.normal( loc=0.0, scale=rms, size=shape )
-    noise = scipy.signal.fftconvolve( noise, filter_kernel, mode='same' )
-
-    return noise
-
-def get_completeness_estim():
-    plt.figure(figsize = (8, 5))
-    N_NOISE_PATCHES = 5
-    for subdir in [ "generated_loguniform" ]:
-        images, resid_images, m_images, model_fluxes, peak_fluxes, sigma_clipped_means, sigma_clipped_rmsds = ImageDataArrays( subdir ).get_all_arrays()
-
-        mock_fluxes = np.empty( (images.shape[ 0 ]*N_NOISE_PATCHES), dtype=float )
-        detectable = np.empty( (images.shape[ 0 ]*N_NOISE_PATCHES), dtype=bool )
-
-
-        for i in tqdm( range( images.shape[ 0 ] ), desc='Calculating mock images' ):
-            #rms = image_rmss_actual[ random_image ]
-            #noise_patch = resid_images[ random_image ]
-
-            # Using rms=image_rmss_actual[ random_image ] is technically correct yet utterly useless
-            # because the majority of the noise is from the artificial 1% noise added for pybdsf
-            # TODO: Use raw LOFAR data so we can get rms locally based on strength of source, potential code commented above
-            rms = rms_LOFAR
-            mock_fluxes[ i:(i+N_NOISE_PATCHES) ] = model_fluxes[ i ][ np.newaxis ]
-            noise_patches = create_noise_LOFAR( shape=(N_NOISE_PATCHES,80,80), rms=rms )
-            sim_data = noise_patches + images[ i ][ np.newaxis, :, : ]
-
-            peak_fluxes = np.max( sim_data, axis=(1,2) )
-            threshold = 5 * rms
-            detectable[ i:(i+N_NOISE_PATCHES) ] = peak_fluxes >= threshold
-
-
-        test_mock = pd.DataFrame()
-        #test_mock['mock_flux'] = mock_fluxes.ravel()
-        #test_mock['detectable'] = detectable.ravel()
-        test_mock['mock_flux'] = mock_fluxes
-        test_mock['detectable'] = detectable
-
-        # Define flux bins
-        flux_bins = np.logspace( -2, 2, num=25 )
-        bin_centers = 0.5 * (flux_bins[1:] + flux_bins[:-1])
-
-        # Bin and count
-        completeness = []   # to store completeness per bin
-        total_counts = []   # optional: for diagnostics
-
-        for i in range(len(flux_bins) - 1):
-            # Select sources in this flux bin
-            in_bin = (mock_fluxes >= flux_bins[i]) & (mock_fluxes < flux_bins[i + 1])
-
-            n_detect = test_mock[ (test_mock['mock_flux'] >= flux_bins[i]) & (test_mock['mock_flux'] < flux_bins[i + 1]) ]
-            
-            if np.sum(in_bin) > 0:
-                frac_recovered = np.sum(n_detect['detectable']) / np.sum(in_bin)
-            else:
-                frac_recovered = 0  
-
-            completeness.append(frac_recovered)
-            total_counts.append(np.sum(in_bin))
-
-        # Handle confidence interval with poisson_conf_interval for total_counts = 0
-        total_counts = np.array( total_counts )
-        zero_counts = total_counts == 0
-        total_counts = np.where( zero_counts, 1e-10, total_counts )
-        conf_interval = astropy.stats.poisson_conf_interval( np.array( completeness ) * total_counts, interval='frequentist-confidence', sigma=1.0 )
-        conf_interval /= total_counts
-        conf_interval[ :, zero_counts ] = 0
-        yerr = conf_interval[ 1 ] - conf_interval[ 0 ]
-
-        # Plot completeness curve
-
-        plt.errorbar( bin_centers, completeness, yerr, fmt='.', color='g' )
-        plt.plot(bin_centers, completeness, marker='.', label = f'{subdir} completeness', color='g' )
-
+def plot_completeness():
     # Plot data from other papers
     plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
     plt.plot( dejong_data[ 0 ], dejong_data[ 1 ], marker='s', color='m', label='de jong et al. 2023 data (approximate)' )
-
-    # Fit a curve (claude code)
-    # Fit sigmoid to completeness curve
-    def sigmoid(x, x0, k, a, b):
-        """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
-        return a / (1 + np.exp(-k * (x - x0))) + b
-    
-    # Use log of flux for fitting since we're on a log scale
-    log_bin_centers = np.log10(bin_centers)
-    
-    # Initial parameter guesses: x0 (midpoint), k (steepness), a (amplitude), b (offset)
-    initial_guess = [0.5, 2.0, 1.0, 0.0]
-    
-    try:
-        # Fit the sigmoid
-        popt, pcov = curve_fit(sigmoid, log_bin_centers, completeness, p0=initial_guess, maxfev=10000)
-        
-        # Generate smooth curve for plotting
-        log_flux_smooth = np.linspace(log_bin_centers.min(), log_bin_centers.max(), 200)
-        completeness_fit = sigmoid(log_flux_smooth, *popt)
-        
-        # Convert back to linear scale for plotting
-        flux_smooth = 10**log_flux_smooth
-        plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'Sigmoid fit', alpha=0.7)
-        
-        print(f"Sigmoid fit parameters:")
-        print(f"  x0 (log midpoint): {popt[0]:.3f} (flux: {10**popt[0]:.3f} mJy)")
-        print(f"  k (steepness): {popt[1]:.3f}")
-        print(f"  a (amplitude): {popt[2]:.3f}")
-        print(f"  b (offset): {popt[3]:.3f}")
-    except Exception as e:
-        print(f"Warning: Sigmoid fit failed: {e}")
-
-
     kondapally_markers = [ '<', '>', '^' ]
     kondapally_fields = [ 'ELAIS-N1',	'Lockman Hole',	'Boötes' ]
     for i, marker, field in zip( range( 1, kondapally_data.shape[ 0 ] ), kondapally_markers, kondapally_fields ):
         plt.plot( kondapally_data[ 0 ][ kondapally_data[ i ] > 0 ], kondapally_data[ i ][ kondapally_data[ i ] > 0 ], color='k', marker=marker, label=f'kondapally et al. 2022 - {field}' )
 
-
-
+    # Plot our estimated completeness curve from a file
+    completeness_data = pd.read_csv( 'completeness_estimate.csv' )
+    plt.plot( completeness_data[ 'flux_density_mJy' ], completeness_data[ 'completeness' ], marker='o', color='b', label='Estimated Completeness Curve' )
+    
+    # Plot our fitted curve from a file
+    from utils.functions import sigmoid
+    fitted_params = pd.read_csv( 'completeness_fit_params.csv' )
+    x_fit = np.logspace( -1, 2, 100 )
+    y_fit = sigmoid( x_fit, fitted_params[ 'x0' ][ 0 ], fitted_params[ 'k' ][ 0 ], fitted_params[ 'a' ][ 0 ], fitted_params[ 'b' ][ 0 ] )
+    plt.plot( x_fit, y_fit, color='c', label='Fitted Sigmoid Curve' )
 
     plt.xscale('log')
     plt.ylim(0, 1.1)
@@ -249,5 +122,5 @@ def get_completeness_estim():
 
 
 if __name__ == "__main__":
-    get_completeness_estim()
+    plot_completeness()
 

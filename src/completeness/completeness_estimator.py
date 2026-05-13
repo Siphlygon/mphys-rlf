@@ -395,26 +395,34 @@ class SizeBinnedCompleteness(CompletenessEstimator):
                 return fits.getdata(path, 0)
             
             self.logger.info(f"Getting model images...")
-            model_images, _ = rfa.run_pipeline(read_model_images,
+            model_images, mi_indices = rfa.run_pipeline(read_model_images,
                                             return_nums=True,
                                             root_dir=paths_to_use[1],
                                             mode="file",
                                             pattern=r'.*?\D+(\d+)\.fits$',
                                             show_progress=False)
-            self.model_images = np.array(model_images)[indices]
+            self.model_images = np.array(model_images)
             self.model_images *= 1e3 # convert from Jy/beam to mJy/beam
             
             # Get model fluxes
             self.logger.info(f"Getting model fluxes...")
-            model_fluxes, _ = rfa.run_pipeline(get_model_flux,
+            model_fluxes, mf_indices = rfa.run_pipeline(get_model_flux,
                                                 return_nums=True,
                                                 pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
                                                 root_dir=paths_to_use[2],
                                                 mode="file",
                                                 show_progress=False)
-            self.model_fluxes = np.array(model_fluxes)[indices]
+            self.model_fluxes = np.array(model_fluxes)
             self.model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
             
+            # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
+            common_indices = np.intersect1d(indices, mi_indices)
+            common_indices = np.intersect1d(common_indices, mf_indices)
+            print(f"Number of sources with matching indices across all datasets: {len(common_indices)}")
+            self.sizes = self.sizes[common_indices]
+            self.model_images = self.model_images[common_indices]
+            self.model_fluxes = self.model_fluxes[common_indices]
+
             # Plot a histogram of model fluxes to check they look reasonable
             # plt.figure()
             # plt.hist(self.model_fluxes, bins=50, log=True)
@@ -531,13 +539,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
        
     # completeness_estim = SizeBinnedCompleteness(args.config)
-    root = pth.STORAGE_PARENT / "src/completeness/"
-    folder_name = "snr5_transforms_new"
-    completeness_estim = SizeBinnedCompleteness("snr5_transforms_new", override_data=True,
-        paths_to_use=[root / (folder_name + "_catalogs"),
-                      root / (folder_name + "_images/gaus_model"),
-                      root / (folder_name + "_logs")],
-        output_file="estimated_angular_sizes_snr5_transforms_new.csv"
-    )
-    completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
-    completeness_estim.plot_size_binned_completeness(completeness_results)
+    do_size_binned_completeness = True
+    if do_size_binned_completeness:
+        root = pth.STORAGE_PARENT / "src/completeness/"
+        folder_name = "snr5_exclusive_50k"
+        completeness_estim = SizeBinnedCompleteness(folder_name, override_data=True,
+            paths_to_use=[root / (folder_name + "_catalogs"),
+                        root / (folder_name + "_images/gaus_model"),
+                        root / (folder_name + "_logs")],
+            output_file=f"estimated_angular_sizes_{folder_name}.csv"
+        )
+        completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
+        completeness_estim.plot_size_binned_completeness(completeness_results)
+    else:
+        completeness_estim = CompletenessEstimator(args.config)
+        completeness_estim.estimate_completeness()
