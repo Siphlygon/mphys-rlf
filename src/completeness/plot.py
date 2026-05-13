@@ -101,9 +101,9 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
         
         if override_data:
             if which_dataset == 'GENERATED_SUBDIR':
-                path_to_subdir = pths.NP_ARRAY_PARENT / config_str["GENERATED_SUBDIR"]
+                path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["GENERATED_SUBDIR"]
             else:
-                path_to_subdir = pths.NP_ARRAY_PARENT / config_str["DATASET_SUBDIR"]
+                path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
             estimator.data.model_images = np.load( path_to_subdir / 'model_images.npy', allow_pickle=True )
             estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
         
@@ -138,12 +138,12 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
     plt.grid(True)
     plt.legend( loc='lower right' )
     plt.show()
-    plt.savefig( 'cplestim.png' )
+    plt.savefig(f'cplestim_{config_str}_full_plot.png' )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pths.PROGRAM_CONFIG.name}", type=str )
     args = parser.parse_args()
     
     plot_completeness(args.config)
