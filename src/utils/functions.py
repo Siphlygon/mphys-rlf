@@ -43,3 +43,31 @@ def rlf_power_law( luminosity, alpha, beta, Log10C, Log10Lstar ):
     C = 10**Log10C
     Lstar = 10**Log10Lstar
     return C / ( ( luminosity / Lstar )**alpha + ( luminosity / Lstar )**beta )
+
+def rlf_schechter( luminosity, beta, gamma, Log10Phi, Log10Lstar ):
+    phi = 10**Log10Phi
+    Lstar = 10**Log10Lstar
+    return phi / ( np.log( 10 ) ) * ( luminosity / Lstar )**(-beta) * np.exp( -(luminosity / Lstar)**gamma )
+
+def rlf_power_law_evolution( x, alpha, beta, Log10C, Log10Lstar, alphaD, alphaL ):
+    luminosity = x[ 0 ]
+    redshift = x[ 1 ]
+    return ( 1 + redshift )**( alphaD ) * rlf_power_law( luminosity / ( 1 + redshift )**( alphaL ), alpha, beta, Log10C, Log10Lstar )
+
+def yuan_evolution_a( x, alpha, beta, Log10C, Log10Lstar, m, z0, zsigma, k1 ):
+    l = x[ 0 ]
+    z = x[ 1 ]
+
+    e1 = np.where( z > z0, z**m, z**m * np.exp( -0.5 * ( ( z - z0 ) / zsigma )**2 ) )
+    e2 = (1 + z)**k1
+
+    return e1 * rlf_power_law( l / e2, alpha, beta, Log10C, Log10Lstar )
+
+def yuan2018_evolution_a( x, p1, p2, zc, Log10Phi, Log10Lstar, beta, gamma, k1 ):
+    l = x[ 0 ]
+    z = x[ 1 ]
+
+    p0 = ( (1+zc)**p1 + (z+zc)**p2 )
+    e1 = p0 * ( ( (1+zc) / (1+z) )**p1 + ( (1+zc) / (1+z) )**p2 )**(-1)
+    e2 = (1 + z)**k1
+    return e1 * rlf_schechter( l / e2, beta, gamma, Log10Phi, Log10Lstar )

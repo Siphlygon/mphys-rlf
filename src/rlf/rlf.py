@@ -58,7 +58,7 @@ class RLF:
     2000.
     """
 
-    def __init__(self, fluxes, redshifts, luminosities, resolved, cosmo, bias: float = 0, flux_cut_jy: float = 1.1e-3, debug_flux_lum_relation: bool = False, vmax_method: bool = False, use_shimwell: bool = True, completeness_path: str = None):
+    def __init__(self, fluxes, redshifts, luminosities, resolved, cosmo, bias: float = 0, flux_cut_jy: float = 1.1e-3, debug_flux_lum_relation: bool = False, vmax_method: bool = False, use_shimwell: bool = True, completeness_path: str = None, use_pde: bool = False):
         # Start logging
         self.logger = get_logger("RLF", logging.DEBUG)
 
@@ -72,6 +72,7 @@ class RLF:
         self.luminosities = luminosities
         self.resolved = resolved
         self.use_shimwell = use_shimwell
+        self.use_pde = use_pde
 
         if completeness_path is None:
             completeness_path = pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
@@ -474,7 +475,7 @@ class RLF:
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf( title, colors, output=output )
 
-    def fit_rlf( self ):
+    def fit_rlf_individually( self ):
         self.logger.info( 'Fitting Parameters to RLFs' )
 
         # fit a dual power law to each redshift RLF
@@ -508,7 +509,56 @@ class RLF:
             self.logger.info( f'Reduced chi squared: {self.chi_sqr[ i_z ]}' )
         self.chi_sqr_tot = np.sum( self.chi_sqr )
         self.logger.info( f'Reduced chi squared total: {self.chi_sqr_tot}' )
-            
+
+    def fit_rlf( self ):
+        self.logger.info( 'Fitting Parameters to RLFs' )
+
+        # fit a dual power law to each redshift RLF
+        l_bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
+        z_bin_centres = ( self.z_bins[ :-1 ] + self.z_bins[ 1: ] ) / 2
+
+        ydata = self.phi.ravel()
+        L, Z = np.meshgrid( l_bin_centres, z_bin_centres )
+        L = L.ravel()[ ydata > 0 ]
+        Z = Z.ravel()[ ydata > 0 ]
+        xdata = np.vstack((L, Z))
+        yerr = self.phi_err.ravel()
+
+        yerr = yerr[ ydata > 0 ]
+        ydata = ydata[ ydata > 0 ]
+
+        # (4,2) being 4 parameters, with [:, 0] being values and [:, 1] being errors
+
+        p0_yuan=[ 0.5, 1.5, -5.5, 24.59, 1, 1, 1, 1 ]
+        bounds_yuan=( [0, 1, -10, 20, -5, -5, 0.01, 0 ], [1, 2.5, -1, 30, 5, 5, 1, 5 ])
+        p0_yuan2018=      [  0.31, -5.92, 0.86, -4.85, 24.68, 0.44, 0.31, 4.73 ]
+        bounds_yuan2018=( [-30,    -10,   0,    -10,   20,    0,    0,   -10 ], 
+                          [ 10,     10,   5,    -1,    28,    10,   6,    10 ])
+
+        p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0, 0 ]
+        bounds_PDE = ([0, 1, -10, 20, -100, 0], [1, 4, -1, 30, 100, 0])
+        bounds_PLE = ([0, 1, -10, 20, 0, -100], [1, 4, -1, 30, 0, 100])
+        bounds_powerlaw = bounds_PDE if self.use_pde else bounds_PLE
+        self.rlf_fit_params = np.zeros( (len( p0_powerlaw ), 2) ) 
+
+        popt, pcov = curve_fit( functions.rlf_power_law_evolution,
+                                xdata,
+                                ydata,
+                                p0=p0_powerlaw,
+                                bounds=bounds_powerlaw,
+                                absolute_sigma=True,
+                                sigma=yerr,
+                                maxfev=1000000 )
+        perr = np.sqrt( np.diag( pcov ) )
+        self.rlf_fit_params = np.array( [ popt, perr ] ).T
+
+        param_names_yuan2018 = [ 'p1', 'p2', 'zc', 'Log10Phi', 'Log10Lstar', 'beta', 'gamma', 'k1' ]
+        param_names_yuan = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'm', 'z0', 'zsigma', 'k1' ]
+        param_names_powerlaw = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'alphaD', 'alphaL' ]
+
+        for param_name, popt_i, perr_i in zip( param_names_powerlaw, popt, perr ):
+            self.logger.info( f'{param_name}={popt_i:.3f} +/- {perr_i:.3f}' )
+
 
     def plot_rlf( self, 
                   title: str,
@@ -526,9 +576,19 @@ class RLF:
         luminosity_space = np.geomspace( self.l_bins[ 0 ], self.l_bins[ -1 ], num=100 )
 
         bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
+        z_bin_centres = ( self.z_bins[ :-1 ] + self.z_bins[ 1: ] ) / 2
         for i_z in range( self.phi.shape[0] ):
-            fit_params = self.rlf_fit_params[ i_z, :, 0 ]
-            fitted_rlf = functions.rlf_power_law( luminosity_space, *fit_params )
+
+            if self.rlf_fit_params.ndim == 3:
+                fit_params = self.rlf_fit_params[ i_z, :, 0 ]
+                fitted_rlf = functions.rlf_power_law( luminosity_space, *fit_params )
+            else:
+                redshift = bin_centres[ i_z ]
+                redshift_space = np.repeat( redshift, luminosity_space.shape[ 0 ] )
+                fit_params = self.rlf_fit_params[ :, 0 ]
+                fitted_rlf = functions.rlf_power_law_evolution( (luminosity_space, z_bin_centres[ i_z ]), *fit_params )
+                #self.logger.debug( fitted_rlf )
+
             ax.plot( luminosity_space, fitted_rlf, color=colors[ i_z ] )
 
             specific_phi = self.phi[i_z]
@@ -650,27 +710,30 @@ if __name__ == "__main__":
     cosmo = astropy.cosmology.FlatLambdaCDM(h * 100 * u.km / u.s / u.Mpc, Tcmb0=Tcmb0 * u.K, Om0=Om0)
 
     redshifts, fluxes, luminosities, resolved = get_catalog_info( cosmo, 1.1e-3 )
-    redshifts1, fluxes1, luminosities1, resolved1 = get_catalog_info( cosmo, 0.5e-3 )
+    #redshifts1, fluxes1, luminosities1, resolved1 = get_catalog_info( cosmo, 0.5e-3 )
+    redshifts1, fluxes1, luminosities1, resolved1 = redshifts, fluxes, luminosities, resolved
 
     all_unresolved = np.zeros( resolved.shape[ 0 ], dtype=bool )
 
-    rlf0 = RLF( fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=1.1e-3 )
-    rlf1 = RLF( fluxes1, redshifts1, luminosities1, resolved1, cosmo, bias=0, flux_cut_jy=0.5e-3 )
+    rlf0 = RLF( fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=1.1e-3, use_pde=True )
+    rlf1 = RLF( fluxes1, redshifts1, luminosities1, resolved1, cosmo, bias=0, flux_cut_jy=1.1e-3, use_pde=False )
     rlfs = [ rlf0, rlf1 ]
 
     fig, axes = plt.subplots( ncols=2, figsize=(20, 10) )
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
 
-    rlf_titles = [ f'Shimwell et al. 2022 After Flux Cut',
-                   f'Flux Cut Only',
-                   f'Composite RLF -0.1 mJy Resolved Completeness',
-                   f'Composite RLF +0.1 mJy Resolved Completeness',
-                   f'H25 RLF using Page & Carrera 2000',
-                   f'H25 RLF using $1/V_a$',
-                   f'H23 Catalog RLF, Flux Cut 0.5mJy',
-                   f'H23 Catalog RLF, Flux Cut 1.1mJy' ]
-    rlf_titles = [ rlf_titles[ -1 ], rlf_titles[ -2 ] ]
+    rlf_titles = [ f'Shimwell et al. 2022 After Flux Cut',           #0
+                   f'Flux Cut Only',                                 #1
+                   f'Composite RLF -0.1 mJy Resolved Completeness',  #2
+                   f'Composite RLF +0.1 mJy Resolved Completeness',  #3
+                   f'H25 RLF using Page & Carrera 2000',             #4
+                   f'H25 RLF using $1/V_a$',                         #5
+                   f'H23 Catalog RLF, Flux Cut 0.5mJy',              #6
+                   f'H23 Catalog RLF, Flux Cut 1.1mJy' ]             #7
+                   f'H23 Catalog RLF with PDE Fit' ]                 #8
+                   f'H23 Catalog RLF with PLE Fit' ]                 #9
+    rlf_titles = [ rlf_titles[ -2 ], rlf_titles[ -1 ] ]
     draw_ylabels = [ True, False ]
 
     for rlf, ax, title, draw_ylabel in zip( rlfs, axes, rlf_titles, draw_ylabels ):
