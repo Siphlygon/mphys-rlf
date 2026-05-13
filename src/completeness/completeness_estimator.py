@@ -57,11 +57,10 @@ class CompletenessEstimator:
         self.min_log_flux = float(self.config['COMPLETENESS_MIN_LOG_FLUX'])
         self.max_log_flux = float(self.config['COMPLETENESS_MAX_LOG_FLUX'])
         self.num_noise_patches = int(self.config['N_NOISE_PATCHES'])
-        
-        # Extract all the relevant arrays from the specified dataset
-        self.logger.info(f"Extracting data arrays for dataset")
-        
+                
         if not override_data:
+            # Extract all the relevant arrays from the specified dataset
+            self.logger.info(f"Extracting data arrays for dataset")
             config_data_arrays = ImageDataArrays(self.config)
             self.data = config_data_arrays.__getattribute__(self.which_dataset + "_data")
 
@@ -129,17 +128,9 @@ class CompletenessEstimator:
         plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
 
         # Generate smooth curve for plotting on log scale
-        log_flux_smooth = np.linspace(bin_centers.min(), bin_centers.max(), 200)
+        log_flux_smooth = np.logspace(bin_centers.min(), bin_centers.max(), 200)
         completeness_fit = sigmoid(log_flux_smooth, *popt)
-
-        # Convert back to linear scale for plotting
-        flux_smooth = 10 ** log_flux_smooth
-        plt.plot(flux_smooth, completeness_fit, 'r--', linewidth=2, label=f'{function.__name__} fit', alpha=0.7)
-
-        # Now add fit curves in a consistent way
-        x_fit = np.logspace(self.min_log_flux, self.max_log_flux, 100)
-        y_fit_sig = sigmoid(np.log10(x_fit), *popt)  # function was fit in log x space, so evaluate at log10(x_fit)
-        plt.plot(x_fit, y_fit_sig, label=f'{function.__name__} fit', color='r')
+        plt.plot(log_flux_smooth, completeness_fit, color='c', label=f'{function.__name__} fit')
 
         plt.xscale('log')
         plt.xlabel("Integrated Flux Density (mJy/beam)")
@@ -324,12 +315,8 @@ class CompletenessEstimator:
         mock_sources['mock_flux'] = mock_fluxes
         mock_sources['detectable'] = detectable
 
-        # Compute completeness for each s
-        
-        
-        # NOTE - THIS IS FOR THE NEW MODELS WHERE WE CANT REALLY UNDERSTAND WHY IT'S SMALL FLUX 
-        int_flux_bins = np.logspace(-2, 3, num=21)  # in log(mJy/beam)
-        # int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
+        # Calculate completeness per bin and y errors, and save to a file if desired
+        int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
         bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
         completeness, yerr = self.compute_completeness_per_bin(int_flux_bins, mock_sources, show_progress)
 

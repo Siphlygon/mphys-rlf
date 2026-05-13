@@ -1,3 +1,6 @@
+import argparse
+import os
+
 from scipy.optimize import curve_fit
 import numpy as np
 import scipy.stats
@@ -8,6 +11,8 @@ import matplotlib.pyplot as plt
 from analysis.image_analyzer import ImageAnalyzer
 from utils.img_data_arrays import ImageDataArrays
 import scipy.signal
+from completeness.completeness_estimator import CompletenessEstimator
+import utils.paths as pths
 
 rms_LOFAR = 95e-6 * 1e3
 beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
@@ -89,7 +94,21 @@ kondapally_data = np.array( [
 ]).transpose()
 
 
-def plot_completeness():
+def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', override_data: bool = True):
+    # Check if the completeness estimate file exists, and if not, create it
+    if not os.path.exists( 'completeness_estimate.csv' ):
+        estimator = CompletenessEstimator(config_str, which_dataset=which_dataset, override_data=override_data)
+        
+        if override_data:
+            if which_dataset == 'GENERATED_SUBDIR':
+                path_to_subdir = pths.NP_ARRAY_PARENT / config_str["GENERATED_SUBDIR"]
+            else:
+                path_to_subdir = pths.NP_ARRAY_PARENT / config_str["DATASET_SUBDIR"]
+            estimator.data.model_images = np.load( path_to_subdir / 'model_images.npy', allow_pickle=True )
+            estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
+        
+        lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness()
+    
     # Plot data from other papers
     plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
     plt.plot( dejong_data[ 0 ], dejong_data[ 1 ], marker='s', color='m', label='de jong et al. 2023 data (approximate)' )
@@ -99,18 +118,19 @@ def plot_completeness():
         plt.plot( kondapally_data[ 0 ][ kondapally_data[ i ] > 0 ], kondapally_data[ i ][ kondapally_data[ i ] > 0 ], color='k', marker=marker, label=f'kondapally et al. 2022 - {field}' )
 
     # Plot our estimated completeness curve from a file
-    completeness_data = pd.read_csv( 'completeness_estimate.csv' )
-    plt.plot( completeness_data[ 'flux_density_mJy' ], completeness_data[ 'completeness' ], marker='o', color='b', label='Estimated Completeness Curve' )
+    plt.errorbar(lb_centres, completeness, yerr, fmt='.', color='g', label=f'data')
+    plt.plot(lb_centres, completeness, marker='.', linestyle='None', color='g')
     
     # Plot our fitted curve from a file
     from utils.functions import sigmoid
-    fitted_params = pd.read_csv( 'completeness_fit_params.csv' )
-    x_fit = np.logspace( -1, 2, 100 )
-    y_fit = sigmoid( x_fit, fitted_params[ 'x0' ][ 0 ], fitted_params[ 'k' ][ 0 ], fitted_params[ 'a' ][ 0 ], fitted_params[ 'b' ][ 0 ] )
-    plt.plot( x_fit, y_fit, color='c', label='Fitted Sigmoid Curve' )
+    
+    # Generate smooth curve for plotting on log scale
+    log_flux_smooth = np.logspace(lb_centres.min(), lb_centres.max(), 200)
+    completeness_fit = sigmoid(log_flux_smooth, *fitted_params)
+    plt.plot(log_flux_smooth, completeness_fit, color='c', label=f'{sigmoid} fit')
 
     plt.xscale('log')
-    plt.ylim(0, 1.1)
+    plt.ylim(0, 1.05)
     plt.xlim( left=0.5, right=100 )
     plt.xlabel("Flux Density (mJy)")
     plt.ylabel("Completeness")
@@ -122,5 +142,9 @@ def plot_completeness():
 
 
 if __name__ == "__main__":
-    plot_completeness()
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    args = parser.parse_args()
+    
+    plot_completeness(args.config)
 
