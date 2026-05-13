@@ -2,7 +2,7 @@ import numpy as np
 
 def sigmoid(x, x0, k, a, b):
     """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
-    return a / (1 + np.exp(-k * (np.log10( x ) - x0))) + b
+    return a / (1 + np.exp(-k * (x - x0))) + b
 
 def polynomial_deg4(x, a, b, c, d, e):
     """Quadratic polynomial: ax^2 + bx + c"""
@@ -53,6 +53,16 @@ def rlf_power_law_evolution( x, alpha, beta, Log10C, Log10Lstar, alphaD, alphaL 
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
     return ( 1 + redshift )**( alphaD ) * rlf_power_law( luminosity / ( 1 + redshift )**( alphaL ), alpha, beta, Log10C, Log10Lstar )
+
+def rlf_pde( x, alpha, beta, Log10C, Log10Lstar, alphaD ):
+    luminosity = x[ 0 ]
+    redshift = x[ 1 ]
+    return ( 1 + redshift )**( alphaD ) * rlf_power_law( luminosity, alpha, beta, Log10C, Log10Lstar )
+
+def rlf_ple( x, alpha, beta, Log10C, Log10Lstar, alphaL ):
+    luminosity = x[ 0 ]
+    redshift = x[ 1 ]
+    return rlf_power_law( luminosity / ( 1 + redshift )**( alphaL ), alpha, beta, Log10C, Log10Lstar )
 
 def yuan_evolution_a( x, alpha, beta, Log10C, Log10Lstar, m, z0, zsigma, k1 ):
     l = x[ 0 ]

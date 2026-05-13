@@ -143,7 +143,7 @@ class RLF:
         """
         bias = self.bias
 
-        sigmoid_completeness = sigmoid( ( integ_fluxes - bias ) * 1000, *self.completeness_args )
+        sigmoid_completeness = sigmoid( np.log10( ( integ_fluxes - bias ) * 1000 ), *self.completeness_args )
         resolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0 )
         if self.use_shimwell:
             shimwell_completeness = np.interp( integ_fluxes, shimwell_data[ 0 ] / 1000, shimwell_data[ 1 ] )
@@ -535,13 +535,15 @@ class RLF:
         bounds_yuan2018=( [-30,    -10,   0,    -10,   20,    0,    0,   -10 ], 
                           [ 10,     10,   5,    -1,    28,    10,   6,    10 ])
 
-        p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0, 0 ]
-        bounds_PDE = ([0, 1, -10, 20, -100, 0], [1, 4, -1, 30, 100, 0])
-        bounds_PLE = ([0, 1, -10, 20, 0, -100], [1, 4, -1, 30, 0, 100])
-        bounds_powerlaw = bounds_PDE if self.use_pde else bounds_PLE
+        p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0 ]
+        bounds_powerlaw = ([0, 1, -10, 20, -100], [1, 4, -1, 30, 100])
+        
+
+        fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+
         self.rlf_fit_params = np.zeros( (len( p0_powerlaw ), 2) ) 
 
-        popt, pcov = curve_fit( functions.rlf_power_law_evolution,
+        popt, pcov = curve_fit( fn_powerlaw,
                                 xdata,
                                 ydata,
                                 p0=p0_powerlaw,
@@ -554,7 +556,11 @@ class RLF:
 
         param_names_yuan2018 = [ 'p1', 'p2', 'zc', 'Log10Phi', 'Log10Lstar', 'beta', 'gamma', 'k1' ]
         param_names_yuan = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'm', 'z0', 'zsigma', 'k1' ]
-        param_names_powerlaw = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'alphaD', 'alphaL' ]
+        param_names_powerlaw = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar' ]
+        if self.use_pde:
+            param_names_powerlaw.append( 'alphaD' )
+        else:
+            param_names_powerlaw.append( 'alphaL' )
 
         for param_name, popt_i, perr_i in zip( param_names_powerlaw, popt, perr ):
             self.logger.info( f'{param_name}={popt_i:.3f} +/- {perr_i:.3f}' )
@@ -586,7 +592,8 @@ class RLF:
                 redshift = bin_centres[ i_z ]
                 redshift_space = np.repeat( redshift, luminosity_space.shape[ 0 ] )
                 fit_params = self.rlf_fit_params[ :, 0 ]
-                fitted_rlf = functions.rlf_power_law_evolution( (luminosity_space, z_bin_centres[ i_z ]), *fit_params )
+                fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+                fitted_rlf = fn_powerlaw( (luminosity_space, z_bin_centres[ i_z ]), *fit_params )
                 #self.logger.debug( fitted_rlf )
 
             ax.plot( luminosity_space, fitted_rlf, color=colors[ i_z ] )
@@ -730,8 +737,8 @@ if __name__ == "__main__":
                    f'H25 RLF using Page & Carrera 2000',             #4
                    f'H25 RLF using $1/V_a$',                         #5
                    f'H23 Catalog RLF, Flux Cut 0.5mJy',              #6
-                   f'H23 Catalog RLF, Flux Cut 1.1mJy' ]             #7
-                   f'H23 Catalog RLF with PDE Fit' ]                 #8
+                   f'H23 Catalog RLF, Flux Cut 1.1mJy',              #7
+                   f'H23 Catalog RLF with PDE Fit',                  #8
                    f'H23 Catalog RLF with PLE Fit' ]                 #9
     rlf_titles = [ rlf_titles[ -2 ], rlf_titles[ -1 ] ]
     draw_ylabels = [ True, False ]
