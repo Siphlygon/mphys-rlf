@@ -112,6 +112,7 @@ class RLF:
             self.z_bins = np.array( [ 0.01, 0.3 ] )
         else:
             self.z_bins = np.arange( self.z_min, self.z_max, self.dz )
+        #self.z_bins = np.array( [ 0.01, 0.3, 0.5, 1.0 ] )
 
         self.l_bins = np.logspace( self.l_min, self.l_max, self.lum_bins_count)
         self.n_lum_bins = self.lum_bins_count - 1
@@ -141,15 +142,20 @@ class RLF:
         :param step_completeness: Whether or not to use a step completeness.
         :return: Completeness corrections in the same shape as integ_fluxes
         """
-        bias = self.bias
+        completeness_args = self.completeness_args
+        #self.logger.debug( f'x0: {completeness_args[ 0 ]} - S0: {10**completeness_args[ 0 ]} - bias: {self.bias}' )
+        completeness_args[ 0 ] = np.log10( 10**completeness_args[ 0 ] + self.bias )
+        #self.logger.debug( f'x\'0: {completeness_args[ 0 ]} - S\'0: {10**completeness_args[ 0 ]}' )
 
-        sigmoid_completeness = sigmoid( np.log10( ( integ_fluxes - bias ) * 1000 ), *self.completeness_args )
+        sigmoid_completeness = sigmoid( np.log10( integ_fluxes * 1000 ), *completeness_args )
         resolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0 )
         if self.use_shimwell:
             shimwell_completeness = np.interp( integ_fluxes, shimwell_data[ 0 ] / 1000, shimwell_data[ 1 ] )
             unresolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, shimwell_completeness, 0 )
         else:
             unresolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, 1, 0 )
+
+        completeness_args[ 0 ] = np.log10( 10**completeness_args[ 0 ] - self.bias )
 
         return np.where( resolved, resolved_completeness, unresolved_completeness )
 
@@ -231,7 +237,7 @@ class RLF:
     #    c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs )
     #    return self.one_dim_simpsons_rule( c, v_min, v_max, self.n_mc_pts )
 
-    def monte_carlo_integral( self, v_min: float, v_max: float, l_min: float | np.ndarray, l_max: float | np.ndarray, resolved: bool, lum: np.ndarray | float | None = None, vmax_method: bool = False ):
+    def monte_carlo_integral( self, v_min: float, v_max: float, l_min: float | np.ndarray, l_max: float | np.ndarray, resolved: np.ndarray | bool, lum: np.ndarray | float | None = None, vmax_method: bool = False ):
         """
         Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
 
@@ -242,6 +248,7 @@ class RLF:
         :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method. Float for one integral of that luminosity, or array of shape (1, n_integrals) or (n_integrals), or none to use uniform logluminosities (Page & Carrera 2000 method).
         """
         mc_pts = self.n_mc_pts // 10 if vmax_method else self.n_mc_pts
+        #mc_pts = self.n_mc_pts
         if lum is None:
             if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
                 lums = 10**np.random.uniform(np.log10(l_min[ 0, : ]), np.log10(l_max[ 0, : ]), size=(mc_pts, l_min.shape[ 1 ]))
@@ -264,6 +271,7 @@ class RLF:
         # Now generate random points in volume space and either use given luminosities or random luminosities within the bin(s)
         # evaluate the completeness at each point to determine the integral C[S[v,L]] dV dlog10L from v=(v_min, v_max) and l=(l_min, l_max)
         # random_volumes has shape (self.n_mc_pts, 1) while lums has shape (1, n_integrals)
+        # note: resolved has shape (n_integrals) or is a bool
         random_volumes = np.random.uniform(v_min, v_max, mc_pts)[ :, np.newaxis ]
         bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums, resolved=resolved ), axis=0) / mc_pts
 
@@ -356,8 +364,8 @@ class RLF:
                         continue
                     self.logger.debug( f'{luminosities_in_bin.shape[ 0 ]} sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
 
-                    Vmaxs_resolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, resolved, luminosities_in_bin, vmax_method=True )
-                    Vmaxs_unresolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, resolved, luminosities_in_bin, vmax_method=True )
+                    Vmaxs_resolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, True, luminosities_in_bin, vmax_method=True )
+                    Vmaxs_unresolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, False, luminosities_in_bin, vmax_method=True )
                     Vmaxs = np.where( resolved_in_bin, Vmaxs_resolved, Vmaxs_unresolved )
 
                     self.phi[ i_z, i_l ] = np.sum( 1.0 / Vmaxs ) #log bin size included in Vmaxs from monte_carlo_integral
@@ -461,7 +469,7 @@ class RLF:
 
 
         # fit parameters to the RLFs
-        self.fit_rlf()
+        self.fit_rlf_individually()
 
         if plot_rlf:
             # plot the resulting graph
@@ -486,21 +494,28 @@ class RLF:
         self.chi_sqr = np.zeros( (self.n_z_bins) ) 
 
         for i_z in range( self.n_z_bins ):
+            fit_bin_centres = bin_centres[ self.phi[ i_z ] > 0 ]
+            fit_phi = self.phi[ i_z ][ self.phi[ i_z ] > 0 ]
+            fit_phi_err = self.phi_err[ i_z ][ self.phi[ i_z ] > 0 ]
+            if self.vmax_method:
+                fit_bin_centres = fit_bin_centres[ 1: ]
+                fit_phi = fit_phi[ 1: ]
+                fit_phi_err = fit_phi_err[ 1: ]
             popt, pcov = curve_fit( functions.rlf_power_law,
-                                    bin_centres[ self.phi[ i_z ] > 0 ],
-                                    self.phi[ i_z ][ self.phi[ i_z ] > 0 ],
+                                    fit_bin_centres,
+                                    fit_phi,
                                     p0=[ 0.5, 1.5, -5.5, 26 ],
                                     bounds=( [0, 1, -10, 20], [1, 4, -1, 30]),
                                     absolute_sigma=True,
-                                    sigma=self.phi_err[ i_z ][ self.phi[ i_z ] > 0 ],
+                                    sigma=fit_phi_err,
                                     maxfev=1000000 )
             perr = np.sqrt( np.diag( pcov ) )
             self.rlf_fit_params[ i_z ] = np.array( [ popt, perr ] ).T
             self.logger.info( f'z={self.z_bins[ i_z ]}-{self.z_bins[ i_z+1 ]}: ' )
             self.logger.info( f'    alpha={popt[ 0 ]:.3f} +/- {perr[ 0 ]:.3f}' )
             self.logger.info( f'    beta={popt[ 1 ]:.3f} +/- {perr[ 1 ]:.3f}' )
-            self.logger.info( f'    Log10C={popt[ 2 ]:.2f} +/- {perr[ 2 ]:.2f}' )
-            self.logger.info( f'    Log10Lstar={popt[ 3 ]} +/- {perr[ 3 ]}' )
+            self.logger.info( f'    Log10C={popt[ 2 ]:.3f} +/- {perr[ 2 ]:.3f}' )
+            self.logger.info( f'    Log10Lstar={popt[ 3 ]:.3f} +/- {perr[ 3 ]:.3f}' )
 
             model_values = functions.rlf_power_law( bin_centres[ self.phi[ i_z ] > 0 ], *popt )
             residuals = self.phi[ i_z ][ self.phi[ i_z ] > 0 ] - model_values
@@ -535,11 +550,14 @@ class RLF:
         bounds_yuan2018=( [-30,    -10,   0,    -10,   20,    0,    0,   -10 ], 
                           [ 10,     10,   5,    -1,    28,    10,   6,    10 ])
 
-        p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0 ]
-        bounds_powerlaw = ([0, 1, -10, 20, -100], [1, 4, -1, 30, 100])
+        #p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0 ]
+        p0_powerlaw = [ 0.5, 1.5, -5.5, 26, 0, 0 ]
+        #bounds_powerlaw = ([0, 1, -10, 20, -100], [1, 4, -1, 30, 100])
+        bounds_powerlaw = ([0, 1, -10, 20, -100, -100], [1, 4, -1, 30, 100, 100])
         
 
-        fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+        #fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+        fn_powerlaw = functions.rlf_power_law_evolution
 
         self.rlf_fit_params = np.zeros( (len( p0_powerlaw ), 2) ) 
 
@@ -556,11 +574,12 @@ class RLF:
 
         param_names_yuan2018 = [ 'p1', 'p2', 'zc', 'Log10Phi', 'Log10Lstar', 'beta', 'gamma', 'k1' ]
         param_names_yuan = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'm', 'z0', 'zsigma', 'k1' ]
-        param_names_powerlaw = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar' ]
-        if self.use_pde:
-            param_names_powerlaw.append( 'alphaD' )
-        else:
-            param_names_powerlaw.append( 'alphaL' )
+        param_names_powerlaw = [ 'alpha', 'beta', 'Log10C', 'Log10Lstar', 'alphaD', 'alphaL' ]
+        #if self.use_pde:
+        #    param_names_powerlaw.append( 'alphaD' )
+        #else:
+        #    param_names_powerlaw.append( 'alphaL' )
+
 
         for param_name, popt_i, perr_i in zip( param_names_powerlaw, popt, perr ):
             self.logger.info( f'{param_name}={popt_i:.3f} +/- {perr_i:.3f}' )
@@ -570,8 +589,8 @@ class RLF:
                   title: str,
                   colors: list,
                   ax = None,
-                  ylim: tuple = [ 1e-9, 3e-4 ],
-                  xlim: tuple = [ 1e21, 1e29 ],
+                  ylim: tuple | None = [ 1e-9, 3e-4 ],
+                  xlim: tuple | None = [ 1e21, 1e29 ],
                   output: str = 'rlf.png',
                   draw_ylabel: bool = True ):
         self_contained = ax is None
@@ -592,7 +611,8 @@ class RLF:
                 redshift = bin_centres[ i_z ]
                 redshift_space = np.repeat( redshift, luminosity_space.shape[ 0 ] )
                 fit_params = self.rlf_fit_params[ :, 0 ]
-                fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+                #fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
+                fn_powerlaw = functions.rlf_power_law_evolution
                 fitted_rlf = fn_powerlaw( (luminosity_space, z_bin_centres[ i_z ]), *fit_params )
                 #self.logger.debug( fitted_rlf )
 
@@ -611,8 +631,10 @@ class RLF:
         ax.set_yscale( 'log' )
         if draw_ylabel:
             ax.set_ylabel( '$\\phi_{est}$  $( Mpc^{-3} (\\log_{10}( \\frac{W}{m^2} ))^{-1} )$' )
-        ax.set_xlim( xlim )
-        ax.set_ylim( ylim )
+        if xlim is not None:
+            ax.set_xlim( xlim )
+        if ylim is not None:
+            ax.set_ylim( ylim )
         ax.grid()
         ax.tick_params( which='both', right=True, top=True )
         ax.legend()
@@ -717,38 +739,111 @@ if __name__ == "__main__":
     cosmo = astropy.cosmology.FlatLambdaCDM(h * 100 * u.km / u.s / u.Mpc, Tcmb0=Tcmb0 * u.K, Om0=Om0)
 
     redshifts, fluxes, luminosities, resolved = get_catalog_info( cosmo, 1.1e-3 )
-    #redshifts1, fluxes1, luminosities1, resolved1 = get_catalog_info( cosmo, 0.5e-3 )
+    #redshifts1, fluxes1, luminosities1, resolved1 = get_catalog_info( cosmo, 0.3e-3 )
     redshifts1, fluxes1, luminosities1, resolved1 = redshifts, fluxes, luminosities, resolved
 
     all_unresolved = np.zeros( resolved.shape[ 0 ], dtype=bool )
+    resolved = all_unresolved
+    resolved1 = all_unresolved
 
-    rlf0 = RLF( fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=1.1e-3, use_pde=True )
-    rlf1 = RLF( fluxes1, redshifts1, luminosities1, resolved1, cosmo, bias=0, flux_cut_jy=1.1e-3, use_pde=False )
+
+    biases = [ -1, 1 ]
+    rlf0 = RLF( fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=1.1e-3 )
+    rlf1 = RLF( fluxes1, redshifts1, luminosities1, resolved1, cosmo, bias=0, flux_cut_jy=1.1e-3, vmax_method=True )
+    #rlf_normal = RLF( fluxes1, redshifts1, luminosities1, resolved1, cosmo, bias=0, flux_cut_jy=1.1e-3 )
     rlfs = [ rlf0, rlf1 ]
 
     fig, axes = plt.subplots( ncols=2, figsize=(20, 10) )
 
     logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
 
-    rlf_titles = [ f'Shimwell et al. 2022 After Flux Cut',           #0
-                   f'Flux Cut Only',                                 #1
-                   f'Composite RLF -0.1 mJy Resolved Completeness',  #2
-                   f'Composite RLF +0.1 mJy Resolved Completeness',  #3
-                   f'H25 RLF using Page & Carrera 2000',             #4
-                   f'H25 RLF using $1/V_a$',                         #5
-                   f'H23 Catalog RLF, Flux Cut 0.5mJy',              #6
-                   f'H23 Catalog RLF, Flux Cut 1.1mJy',              #7
-                   f'H23 Catalog RLF with PDE Fit',                  #8
-                   f'H23 Catalog RLF with PLE Fit' ]                 #9
-    rlf_titles = [ rlf_titles[ -2 ], rlf_titles[ -1 ] ]
+    rlf_titles = [ f'RLAGN RLF, Shimwell et al. 2022 After Flux Cut',#0
+                   f'RLAGN RLF Flux Cut Only',                       #1
+                   f'RLAGN RLF -1.0 mJy Resolved Completeness',      #2
+                   f'RLAGN RLF +1.0 mJy Resolved Completeness',      #3
+                   f'H25 RLAGN RLF using Page & Carrera 2000',       #4
+                   f'H25 RLAGN RLF using $1/V_a$',                   #5
+                   f'Composite RLAGN RLF, Flux Cut 0.5mJy',          #6
+                   f'Composite RLAGN RLF, Flux Cut 1.1mJy',          #7
+                   f'Composite RLAGN RLF with PDE Fit',              #8
+                   f'Composite RLAGN RLF with PLE Fit',              #9
+                   f'Composite RLAGN RLF',                           #10
+                   f'H25 RLAGN RLF' ]                                #11
+    rlf_titles = [ rlf_titles[ 4 ], rlf_titles[ 5 ] ]
     draw_ylabels = [ True, False ]
 
     for rlf, ax, title, draw_ylabel in zip( rlfs, axes, rlf_titles, draw_ylabels ):
         rlf.calculate_rlf( plot_rlf=False )
         rlf.plot_rlf( title, colors, ax, draw_ylabel=draw_ylabel )
 
-    plt.savefig( 'rlfs.png' )
+
+    plt.savefig( 'rlfs_vmax.png' )
     plt.show()
+
+    #rlf_normal.calculate_rlf( plot_rlf=False )
+
+    #fig, ax = plt.subplots( ncols=1, figsize=(12,10) )
+
+    #x0_0 = np.log10( 10**rlf0.completeness_args[ 0 ] + rlf0.bias )
+    #x0_1 = np.log10( 10**rlf1.completeness_args[ 0 ] + rlf1.bias )
+    #logger.info( f'x0_0: {x0_0} - x0_1: {x0_1}' )
+    #h = x0_1 - x0_0
+
+    #rlf_difference_phi = rlf1.phi - rlf0.phi
+    #rlf_difference_phi_err = np.sqrt( rlf1.phi_err**2 + rlf0.phi_err**2 )
+    #rlf_derivative = rlf_difference_phi / h
+    #rlf_derivative_err = rlf_difference_phi_err / h 
+
+    #phi = rlf_derivative / rlf_normal.phi
+    #phi_err = phi * np.sqrt( ( rlf_derivative_err / rlf_derivative )**2 + ( rlf_normal.phi_err / rlf_normal.phi )**2 )
+
+    #phi[ np.isnan( phi ) ] = 0
+    #phi_err[ np.isnan( phi_err ) ] = np.inf
+
+
+    #def sigmoid_mod( x, x0, k, a ):
+    #    return functions.sigmoid( np.log10( x ), x0, k, a, 0 )
+
+    #bin_centres = ( rlf0.l_bins[ :-1 ] + rlf0.l_bins[ 1: ] ) / 2
+    #for i_z in range( rlf_derivative.shape[0] ):
+    #    logger.info( f'z bin {i_z}' )
+    #    specific_phi = phi[i_z]
+    #    mask = specific_phi > 1e-6
+    #    logger.info( f'specific phi[ mask ]: {specific_phi[ mask ]}' )
+    #    logger.info( f'phi_err[ i_z ][ mask ]: {phi_err[ i_z ][ mask ]}' )
+    #    ax.plot( bin_centres[ mask ], specific_phi[ mask ], color=colors[ i_z ],
+    #             marker='o', linestyle='None',
+    #             label=f'{rlf0.z_bins[ i_z ]:.2f}<z<{rlf0.z_bins[ i_z + 1 ]:.2f}')
+    #    ax.errorbar( bin_centres[ mask ], specific_phi[ mask ], yerr=phi_err[ i_z ][ mask ], color=colors[ i_z ], fmt='none' )
+
+    #    popt, pcov = curve_fit( sigmoid_mod,
+    #                            bin_centres[ mask ],
+    #                            specific_phi[ mask ],
+    #                            p0=[ 23, -5, 1 ],
+    #                            bounds=( [20, -100, 0.001], [30, -0.00001, 5] ),
+    #                            absolute_sigma=True,
+    #                            sigma=phi_err[ i_z ][ mask ],
+    #                            maxfev=1000000 )
+    #    perr = np.sqrt( np.diag( pcov ) )
+    #    logspace_lums = np.logspace( np.log10( bin_centres[ mask ][ 0 ] ), rlf0.l_max )
+    #    model_values = sigmoid_mod( logspace_lums, *popt )
+    #    ax.plot( logspace_lums, model_values, color=colors[ i_z ] )
+    #    logger.info( f'    x0: {popt[ 0 ]} +/- {perr[ 0 ]}' )
+    #    logger.info( f'    k: {popt[ 1 ]} +/- {perr[ 1 ]}' )
+    #    logger.info( f'    a: {popt[ 2 ]} +/- {perr[ 2 ]}' )
+
+    #ax.set_title( 'RLF Derivative w.r.t. $x_0$' )
+    #ax.set_xscale( 'log' )
+    #ax.set_ylim( (0, None) )
+    #ax.set_xlabel( '$L_{144}$  $( \\frac{W}{Hz} )$' )
+    #ax.set_ylabel( '$\\frac{\\partial\\phi_{est}}{\\partial x_0}/\\phi_{est} $  $( (\\log_{10}( mJy ))^{-1} )$' )
+    #ax.grid()
+    #ax.tick_params( which='both', right=True, top=True )
+    #ax.legend()
+
+    #plt.savefig( 'rlf_derivative.png' )
+    #plt.show()
+
 
     logger.info( 'done' )
     
