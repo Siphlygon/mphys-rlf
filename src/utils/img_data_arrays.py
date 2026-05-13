@@ -136,16 +136,24 @@ class ImageDataArrays:
                 # Residual folder
                 residual_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
                 residual_images, residual_indexes = residual_files.run_pipeline( rfa.get_fits_primaryhdu_data, pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
-                residual_images = np.asarray( residual_images )
+                # residual_images = np.asarray( residual_images )
                 residual_values = [ residual_images ]
                 self.logger.debug( 'Gaussian residual files length: %i', len( residual_indexes ) )
     
                 # Model folder
                 model_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model' )
                 model_images, model_indexes = model_files.run_pipeline( rfa.get_fits_primaryhdu_data, pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
-                model_images = np.asarray( model_images )
+                # model_images = np.asarray( model_images )
                 model_values = [ model_images ]
                 self.logger.debug( 'Gaussian model files length: %i', len( model_images ) )
+                
+                # Having notable issues with inhomogenity in the pybdsf images for the dr2 cutouts, so I am adding an explicit check to put a blank image instead of whatever is inhomogenous
+                expected_shape = ( 80, 80 )
+                for arr_list in [ residual_images, model_images ]:
+                    for i in tqdm(range( len( arr_list ) - 1, -1, -1 ), desc=f'Checking pybdsf image homogeneity for {subdir}', unit='image'):
+                        if arr_list[ i ].shape != expected_shape:
+                            self.logger.debug( f'Image at index {i} in subdir {subdir} has shape {arr_list[ i ].shape} instead of expected {expected_shape}, removing from arrays' )
+                            arr_list[i] = np.zeros( expected_shape )
 
                 # Catalog folder, only run if not getting LAS values from dataset
                 if not use_dataset_h5:
