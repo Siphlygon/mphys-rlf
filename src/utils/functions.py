@@ -1,8 +1,40 @@
 import numpy as np
+from scipy.special import erf
 
 def sigmoid(x, x0, k, a, b):
     """Sigmoid function: a / (1 + exp(-k*(x-x0))) + b"""
     return a / (1 + np.exp(-k * (x - x0))) + b
+
+
+def sigmoid01(x, x0, k):
+    """Standard logistic in (0, 1) with fixed asymptotes.
+
+    This is equivalent to `sigmoid(x, x0, k, a=1, b=0)`.
+    For k>0: approaches 0 as x -> -inf and 1 as x -> +inf.
+    """
+    return 1.0 / (1.0 + np.exp(-k * (x - x0)))
+
+
+def richards01(x, x0, k, nu):
+    """Richards / generalized logistic with fixed asymptotes 0 and 1.
+
+    Adds a shape parameter `nu` to allow asymmetric transitions while
+    preserving the long-term behaviour.
+
+    For k>0 and nu>0: approaches 0 as x -> -inf and 1 as x -> +inf.
+    Setting nu=1 reduces to the standard logistic.
+    """
+    return 1.0 / (1.0 + np.exp(-k * (x - x0))) ** nu
+
+
+def erf01(x, x0, sigma):
+    """Error-function CDF with fixed asymptotes 0 and 1.
+
+    Often a good model for detection completeness under Gaussian noise.
+    For sigma>0: approaches 0 as x -> -inf and 1 as x -> +inf.
+    """
+    z = (x - x0) / (np.sqrt(2.0) * sigma)
+    return 0.5 * (1.0 + erf(z))
 
 def polynomial_deg4(x, a, b, c, d, e):
     """Quadratic polynomial: ax^2 + bx + c"""

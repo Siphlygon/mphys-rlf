@@ -9,6 +9,7 @@ import matplotlib as mpl
 import scipy.signal
 from pathlib import Path
 from typing import Callable
+import inspect
 from astropy.io import fits
 
 from utils.catalogue_dist import RMSDistribution
@@ -18,7 +19,7 @@ import utils.paths as pth
 import logging
 import utils.logging
 from utils.functions import sigmoid
-from ang_size_finder import AngularSizeFinder
+from completeness.ang_size_finder import AngularSizeFinder
 from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 from analysis.log_analyzer import get_model_flux
 
@@ -73,7 +74,7 @@ class CompletenessEstimator:
                      function: Callable = sigmoid,
                      initial_guess : list[float] | np.ndarray[float, np.dtype[np.float64]] | None = None,
                      output_file : str | Path | None = None,
-                     show_progress : bool = True) -> np.ndarray[float, np.dtype[np.float64]] | None:
+                     show_progress : bool = True) -> tuple[np.ndarray[float, np.dtype[np.float64]], np.ndarray[float, np.dtype[np.float64]]]:
         """
         Fit a function to the completeness curve.
 
@@ -85,30 +86,67 @@ class CompletenessEstimator:
         :param show_progress: Whether to show progress bars. Defaults to True.
         :returns: The fitted parameters for the given function.
         """
-        # Use log of flux for fitting since we're on a log scale
+        # `bin_centers` are expected to already be in log10(flux) space.
+        # Provide a sensible default initial guess based on the function signature.
         if initial_guess is None:
-            initial_guess = [0.5, 7.0, 1.0, 0.0]
+            try:
+                sig = inspect.signature(function)
+                params = list(sig.parameters.values())[1:]  # drop x
+                param_names = [p.name for p in params]
+                n_params = max(len(params), 0)
+            except Exception:
+                param_names = []
+                n_params = 0
+
+            # Guess the 50% point from the data if possible.
+            if completeness.size > 0:
+                x0_guess = float(bin_centers[int(np.argmin(np.abs(completeness - 0.5)))])
+            else:
+                x0_guess = float(np.median(bin_centers))
+
+            span = float(np.ptp(bin_centers)) if bin_centers.size > 1 else 1.0
+            span = span if span > 0 else 1.0
+            k_guess = 5.0 / span
+            width_guess = span / 5.0
+
+            if n_params == 4:
+                initial_guess = [x0_guess, k_guess, 1.0, 0.0]
+            elif n_params == 3:
+                initial_guess = [x0_guess, k_guess, 1.0]
+            elif n_params == 2:
+                # If the second parameter is a width/scale, guess in x-units.
+                if len(param_names) >= 2 and param_names[1].lower() in {"sigma", "width", "w", "scale", "s"}:
+                    initial_guess = [x0_guess, width_guess]
+                else:
+                    initial_guess = [x0_guess, k_guess]
+            else:
+                initial_guess = None
 
         try:
             if show_progress:
                 self.logger.info(f"Fitting {function.__name__} function to completeness curve...")
-            popt, _ = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000)
+
+            if initial_guess is None:
+                popt, pcov = curve_fit(function, bin_centers, completeness, maxfev=10000)
+            else:
+                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000)
 
             # Save fitted parameters to a file for use in RLF
             if output_file:
-                np.savetxt(output_file, popt)
+                np.savetxt(output_file, popt, pcov, header="Fitted parameters and covariance for completeness function fit", comments='')
 
-            return popt
+            return popt, pcov
 
         except Exception as e:
             self.logger.error(f"Error: {function.__name__} fit failed: {e}")
+            return None, None
 
     def plot_completeness(self,
                           bin_centers: np.ndarray[float, np.dtype[np.float64]],
                           completeness: np.ndarray[float, np.dtype[np.float64]],
                           yerr : np.ndarray[float, np.dtype[np.float64]],
                           function: Callable = sigmoid,
-                          popt : list[float] | None = None,
+                          popt : list[float] | np.ndarray | None = None,
                           save_name : str | None = None):
         """
         Plot the completeness data points and the fitted function.
@@ -124,15 +162,19 @@ class CompletenessEstimator:
         if save_name is None:
             save_name = f"completeness_curve.png"
     
-        # Start plotting the measured completeness first
-        plt.figure()
-        plt.errorbar(bin_centers, completeness, yerr, fmt='.', color='g', label=f'data')
-        plt.plot(bin_centers, completeness, marker='.', linestyle='None', color='g')
+        # `bin_centers` are in log10(flux) throughout this module.
+        # Plot in linear flux on a log-scaled x-axis for readability.
+        flux_centers = 10 ** bin_centers
 
-        # Generate smooth curve for plotting on log scale
-        log_flux_smooth = np.logspace(bin_centers.min(), bin_centers.max(), 200)
-        completeness_fit = sigmoid(log_flux_smooth, *popt)
-        plt.plot(log_flux_smooth, completeness_fit, color='c', label=f'{function.__name__} fit')
+        plt.figure()
+        plt.errorbar(flux_centers, completeness, yerr, fmt='.', color='g', label='data')
+        plt.plot(flux_centers, completeness, marker='.', linestyle='None', color='g')
+
+        # Generate smooth curve for plotting.
+        smooth_flux = np.logspace(bin_centers.min(), bin_centers.max(), 200)
+        smooth_log_flux = np.log10(smooth_flux)
+        completeness_fit = function(smooth_log_flux, *popt)
+        plt.plot(smooth_flux, completeness_fit, color='c', label=f'{function.__name__} fit')
 
         plt.xscale('log')
         plt.xlabel("Integrated Flux Density (mJy/beam)")
@@ -333,7 +375,7 @@ class CompletenessEstimator:
 
         # Fit a function to the completeness curve and plot
         log_bin_centers = np.log10(bin_centers)
-        fitted_params = self.fit_function(log_bin_centers, completeness, function, initial_guess, func_output_file, show_progress)
+        fitted_params, pcov = self.fit_function(log_bin_centers, completeness, function, initial_guess, func_output_file, show_progress)
 
         if plot_completeness:
             self.plot_completeness(log_bin_centers, completeness, yerr, function, fitted_params, figure_save_name)
