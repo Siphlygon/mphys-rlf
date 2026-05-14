@@ -93,14 +93,25 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
     # Check if the completeness estimate file exists, and if not, create it
     if not os.path.exists( 'completeness_estimate.csv' ):
         estimator = CompletenessEstimator(config_str, which_dataset=which_dataset, override_data=override_data)
+        root = pths.STORAGE_PARENT / "src/completeness/"
+
+        model_images_path = root / 'model_images.npy'
+        peak_fluxes_path = root / 'peak_fluxes.npy'
+        model_fluxes_path = root / 'model_fluxes.npy'
+
+        all_exist = model_images_path.exists() and peak_fluxes_path.exists() and model_fluxes_path.exists()
         
-        if override_data:
+        if all_exist:
+            model_fluxes = np.load( root / 'model_fluxes.npy' )
+            peak_fluxes = np.load( root / 'peak_fluxes.npy' )
+            model_images = np.load( root / 'model_images.npy' )
+
+        else:
             if which_dataset == 'GENERATED_SUBDIR':
                 path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["GENERATED_SUBDIR"]
             else:
                 path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
             
-            root = pths.STORAGE_PARENT / "src/completeness/"
             folder_name = "snr15_loguniform_nolas"
             paths_to_use=[root / (folder_name + "_fits_images"),
                          root / (folder_name + "_images/gaus_model"),
@@ -132,31 +143,38 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             log_files_pt2 = log_files[len(log_files) // 2:]
             fits_files_pt1 = fits_files[ :len(fits_files) // 2 ]
             fits_files_pt2 = fits_files[ len(fits_files) // 2: ]
-            
-            print(f"Getting model images...")
-            model_images_pt1 = rfa.run_pipeline(read_model_images,
-                                            mode="file",
-                                            file_paths_override=image_files_pt1,
-                                            show_progress=True)
-            model_images_pt2 = rfa.run_pipeline(read_model_images,
-                                            mode="file",
-                                            file_paths_override=image_files_pt2,
-                                            show_progress=True)
-            peak_fluxes_tr_pt1 = rfa.run_pipeline(r_f_a.get_fits_primaryhdu_header,
-                                               'FXSCLD',
+
+            print( 'getting peak fluxes...' )
+
+            def get_fxscld( path ):
+                return r_f_a.get_fits_primaryhdu_header( path, 'FXSCLD' )
+
+            peak_fluxes_tr_pt1 = rfa.run_pipeline( function=get_fxscld,
                                             mode="file",
                                             file_paths_override=fits_files_pt1,
                                             show_progress=True)
-            peak_fluxes_tr_pt2 = rfa.run_pipeline(r_f_a.get_fits_primaryhdu_header,
-                                               'FXSCLD',
+            
+            print( peak_fluxes_tr_pt1 )
+            peak_fluxes_tr_pt2 = rfa.run_pipeline( function=get_fxscld,
                                             mode="file",
                                             file_paths_override=fits_files_pt2,
+                                            show_progress=True)
+            print( peak_fluxes_tr_pt2 )
+            
+            print(f"Getting model images...")
+            model_images_pt1 = rfa.run_pipeline(function=read_model_images,
+                                            mode="file",
+                                            file_paths_override=image_files_pt1,
+                                            show_progress=True)
+            model_images_pt2 = rfa.run_pipeline(function=read_model_images,
+                                            mode="file",
+                                            file_paths_override=image_files_pt2,
                                             show_progress=True)
             
             pt = PeakFluxPowerTransformer( 'nobody_cares', maxvals=maxvals )
 
-            peak_fluxes_pt1 = pt.inverse_transform( peak_fluxes_tr_pt1 )
-            peak_fluxes_pt2 = pt.inverse_transform( peak_fluxes_tr_pt2 )
+            peak_fluxes_pt1 = pt.inverse_transform( np.array( peak_fluxes_tr_pt1 ) )
+            peak_fluxes_pt2 = pt.inverse_transform( np.array( peak_fluxes_tr_pt2 ) )
             
             
             expected_shape = ( 1, 1, 80, 80 )
@@ -171,11 +189,11 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             
             # Get model fluxes
             print(f"Getting model fluxes...")
-            model_fluxes_pt1 = rfa.run_pipeline(get_model_flux,
+            model_fluxes_pt1 = rfa.run_pipeline(function=get_model_flux,
                                             mode="file",
                                             file_paths_override=log_files_pt1,
                                             show_progress=True)
-            model_fluxes_pt2 = rfa.run_pipeline(get_model_flux,
+            model_fluxes_pt2 = rfa.run_pipeline(function=get_model_flux,
                                             mode="file",
                                             file_paths_override=log_files_pt2,
                                             show_progress=True)
@@ -187,21 +205,33 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             #             arr_list[i] = np.zeros( expected_shape )
             model_fluxes = np.concatenate([model_fluxes_pt1, model_fluxes_pt2])
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
-            
-            
-            # Filter so only peak_fluxes > 1 are included, and apply the same filter to model_images
+
             peak_fluxes = np.concatenate([peak_fluxes_pt1, peak_fluxes_pt2])
-            model_fluxes = model_fluxes[peak_fluxes > 1.0]
-            mf_indices = np.array(mf_indices)[peak_fluxes > 1.0]
+            peak_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
+            
+            
             
             # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
             common_indices = np.intersect1d(mi_indices, mf_indices)
+            common_indices = np.intersect1d(common_indices, fi_indices)
             print(f"Number of sources with matching indices across all datasets: {len(common_indices)}")
             model_images = model_images[common_indices]
             model_fluxes = model_fluxes[common_indices]
+            peak_fluxes = peak_fluxes[common_indices]
+
+            # Filter so only peak_fluxes > 1 are included, and apply the same filter to model_images
+            #peak_fluxes = np.concatenate([peak_fluxes_pt1, peak_fluxes_pt2])
+            #mf_indices = np.array(mf_indices)[peak_fluxes > 1.0]
+            model_fluxes = model_fluxes[peak_fluxes > 1.0]
+            model_images = model_images[peak_fluxes > 1.0]
+            peak_fluxes = peak_fluxes[peak_fluxes > 1.0]
+
+            np.save( root / 'model_fluxes.npy', model_fluxes )
+            np.save( root / 'peak_fluxes.npy', peak_fluxes )
+            np.save( root / 'model_images.npy', model_images )
             
             
-            
+        if override_data: 
             estimator.data.model_images = model_images
             estimator.data.model_fluxes = model_fluxes
             print(max(model_fluxes), min(model_fluxes), np.median(model_fluxes))
