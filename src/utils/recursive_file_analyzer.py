@@ -4,6 +4,8 @@
 # number of files is helpful. The HistogramErrorDrawer is a utility class to house its Draw function, which
 # draws a histogram and calculates its errors with astropy.stats.poisson_conf_interval
 
+from ast import pattern
+
 import astropy.stats
 import numpy as np
 from pathlib import Path
@@ -117,7 +119,10 @@ class RecursiveFileAnalyzer:
                 elif pattern is None or re.match(pattern, entry.name):
                     if return_nums:
                         # Extract file number using the first capture group in the regex pattern
-                        idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                        try:
+                            idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                        except IndexError:
+                            raise ValueError(f"Pattern '{pattern}' does not contain a capture group to extract numbers for file '{entry.name}'")
                         if numeric_range is not None:
                             if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
                                 continue
@@ -125,7 +130,10 @@ class RecursiveFileAnalyzer:
                     else:
                         # save some processing power by only doing regex match if numeric_range is provided
                         if numeric_range is not None:
-                            idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                            try:
+                                idx = int( re.search( pattern, entry.name ).group( 1 ) )
+                            except IndexError:
+                                raise ValueError(f"Pattern '{pattern}' does not contain a capture group to extract numbers for file '{entry.name}'")
                             if idx < numeric_range[ 0 ] or idx >= numeric_range[ 1 ]:
                                 continue
                         yield Path(entry)
@@ -179,12 +187,12 @@ class RecursiveFileAnalyzer:
         return results
 
     def _run_file_mode(self,
-                       file_paths : list[str | Path],
                        function : Callable,
                        *args,
                        num_workers : int = 16,
                        output_file : str | Path | None = None,
                        show_progress : bool = True,
+                        file_paths : list[str | Path],
                        **kwargs,
                        ) -> list[Any]:
         """
@@ -223,13 +231,13 @@ class RecursiveFileAnalyzer:
         return results
 
     def _run_batch_mode(self,
-                        file_paths : list[str | Path],
                         function : Callable,
                         *args, 
                         num_workers : int = 8,
                         batch_size : int = 500,
                         output_file : str | Path | None = None,
                         show_progress : bool = True,
+                        file_paths : list[str | Path],
                         **kwargs):
         """
         Process files by scheduling one batch per task.
@@ -331,12 +339,12 @@ class RecursiveFileAnalyzer:
             if num_workers is None:
                 num_workers = 16
             return_values = self._run_file_mode(
-                file_paths=file_paths,
                 function=function,
                 *args,
                 num_workers=num_workers,
                 output_file=output_file,
                 show_progress=show_progress,
+                file_paths=file_paths,
                 **kwargs
             )
 
@@ -344,13 +352,13 @@ class RecursiveFileAnalyzer:
             if num_workers is None:
                 num_workers = 8
             return_values = self._run_batch_mode(
-                file_paths=file_paths,
                 function=function,
                 *args,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 output_file=output_file,
                 show_progress=show_progress,
+                file_paths=file_paths,
                 **kwargs
             )
 
