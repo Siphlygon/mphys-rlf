@@ -7,6 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from completeness.completeness_estimator import CompletenessEstimator, SizeBinnedCompleteness
 import utils.paths as pths
+from utils.power_transform import PeakFluxPowerTransformer
 
 rms_LOFAR = 95e-6 * 1e3
 beam_width_LOFAR = (0.00166667, 0.00166667, 0.0)
@@ -101,13 +102,15 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             
             root = pths.STORAGE_PARENT / "src/completeness/"
             folder_name = "snr15_loguniform_nolas"
-            # paths_to_use=[root / (folder_name + "_catalogs"),
-            #             root / (folder_name + "_images/gaus_model"),
-            #             root / (folder_name + "_logs")]
+            paths_to_use=[root / (folder_name + "_fits_images"),
+                         root / (folder_name + "_images/gaus_model"),
+                         root / (folder_name + "_logs")]
             
-            paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
-                             pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
-                             pths.PYBDSF_LOG_PARENT / folder_name]
+            maxvals = np.load( root / 'maxvals.npy' )
+            
+            #paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
+            #                 pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
+            #                 pths.PYBDSF_LOG_PARENT / folder_name]
             
             from astropy.io import fits
             # Get model images 
@@ -115,28 +118,48 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
                 return fits.getdata(path, 0)
             
             from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+            import utils.recursive_file_analyzer as r_f_a
             from analysis.log_analyzer import get_model_flux
             rfa = RecursiveFileAnalyzer(paths_to_use[0])
             
             image_files, mi_indices = rfa.get_unwrapped_list(paths_to_use[1], pattern=r'.*?\D+(\d+)\.fits$', return_nums=True)
+            fits_files, fi_indices = rfa.get_unwrapped_list(paths_to_use[0], pattern=r'.*?\D+(\d+)\.fits$', return_nums=True)
             log_files, mf_indices = rfa.get_unwrapped_list(paths_to_use[2], pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$', return_nums=True)
             
             image_files_pt1 = image_files[:len(image_files) // 2]
             image_files_pt2 = image_files[len(image_files) // 2:]
             log_files_pt1 = log_files[:len(log_files) // 2]
             log_files_pt2 = log_files[len(log_files) // 2:]
+            fits_files_pt1 = fits_files[ :len(fits_files) // 2 ]
+            fits_files_pt2 = fits_files[ len(fits_files) // 2: ]
             
             print(f"Getting model images...")
             model_images_pt1 = rfa.run_pipeline(read_model_images,
                                             mode="file",
                                             file_paths_override=image_files_pt1,
-                                            show_progress=False)
+                                            show_progress=True)
             model_images_pt2 = rfa.run_pipeline(read_model_images,
                                             mode="file",
                                             file_paths_override=image_files_pt2,
-                                            show_progress=False)
+                                            show_progress=True)
+            peak_fluxes_tr_pt1 = rfa.run_pipeline(r_f_a.get_fits_primaryhdu_header,
+                                               'FXSCLD',
+                                            mode="file",
+                                            file_paths_override=fits_files_pt1,
+                                            show_progress=True)
+            peak_fluxes_tr_pt2 = rfa.run_pipeline(r_f_a.get_fits_primaryhdu_header,
+                                               'FXSCLD',
+                                            mode="file",
+                                            file_paths_override=fits_files_pt2,
+                                            show_progress=True)
             
-            expected_shape = ( 80, 80 )
+            pt = PeakFluxPowerTransformer( 'nobody_cares', maxvals=maxvals )
+
+            peak_fluxes_pt1 = pt.inverse_transform( peak_fluxes_tr_pt1 )
+            peak_fluxes_pt2 = pt.inverse_transform( peak_fluxes_tr_pt2 )
+            
+            
+            expected_shape = ( 1, 1, 80, 80 )
             for arr_list in [ model_images_pt1, model_images_pt2 ]:
                 for i in tqdm(range( len( arr_list ) - 1, -1, -1 ), desc=f'Checking pybdsf image homogeneity', unit='image'):
                     if arr_list[ i ].shape != expected_shape:
@@ -151,11 +174,11 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             model_fluxes_pt1 = rfa.run_pipeline(get_model_flux,
                                             mode="file",
                                             file_paths_override=log_files_pt1,
-                                            show_progress=False)
+                                            show_progress=True)
             model_fluxes_pt2 = rfa.run_pipeline(get_model_flux,
                                             mode="file",
                                             file_paths_override=log_files_pt2,
-                                            show_progress=False)
+                                            show_progress=True)
             # expected_shape = ( 80, 80 )
             # for arr_list in [ model_fluxes_pt1, model_fluxes_pt2 ]:
             #     for i in tqdm(range( len( arr_list ) - 1, -1, -1 ), desc=f'Checking pybdsf image homogeneity', unit='image'):
@@ -167,7 +190,7 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             
             
             # Filter so only peak_fluxes > 1 are included, and apply the same filter to model_images
-            peak_fluxes = np.max(model_images, axis=(1, 2))
+            peak_fluxes = np.concatenate([peak_fluxes_pt1, peak_fluxes_pt2])
             model_fluxes = model_fluxes[peak_fluxes > 1.0]
             mf_indices = np.array(mf_indices)[peak_fluxes > 1.0]
             
