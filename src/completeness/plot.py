@@ -99,15 +99,15 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             else:
                 path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
             
-            # root = pths.STORAGE_PARENT / "src/completeness/"
+            root = pths.STORAGE_PARENT / "src/completeness/"
             folder_name = "snr15_loguniform_nolas"
-            # paths_to_use=[root / (folder_name + "_catalogs"),
-            #             root / (folder_name + "_images/gaus_model"),
-            #             root / (folder_name + "_logs")]
+            paths_to_use=[root / (folder_name + "_catalogs"),
+                        root / (folder_name + "_images/gaus_model"),
+                        root / (folder_name + "_logs")]
             
-            paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
-                            pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
-                            pths.PYBDSF_LOG_PARENT / folder_name]
+            # paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
+            #                 pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
+            #                 pths.PYBDSF_LOG_PARENT / folder_name]
             
             from astropy.io import fits
             # Get model images 
@@ -118,25 +118,37 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             from analysis.log_analyzer import get_model_flux
             rfa = RecursiveFileAnalyzer(paths_to_use[0])
             
+            image_files, mi_indices = rfa.get_unwrapped_list(paths_to_use[1], pattern=r'.*?\D+(\d+)\.fits$', return_nums=True)
+            log_files, mf_indices = rfa.get_unwrapped_list(paths_to_use[2], pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$', return_nums=True)
+            
+            image_files_pt1 = image_files[:len(image_files) // 2]
+            image_files_pt2 = image_files[len(image_files) // 2:]
+            log_files_pt1 = log_files[:len(log_files) // 2]
+            log_files_pt2 = log_files[len(log_files) // 2:]
+            
             print(f"Getting model images...")
-            model_images, mi_indices = rfa.run_pipeline(read_model_images,
-                                            return_nums=True,
-                                            root_dir=paths_to_use[1],
+            model_images_pt1 = rfa.run_pipeline(read_model_images,
                                             mode="file",
-                                            pattern=r'.*?\D+(\d+)\.fits$',
+                                            file_paths_override=image_files_pt1,
                                             show_progress=False)
-            model_images = np.array(model_images)
+            model_images_pt2 = rfa.run_pipeline(read_model_images,
+                                            mode="file",
+                                            file_paths_override=image_files_pt2,
+                                            show_progress=False)
+            model_images = np.concatenate([model_images_pt1, model_images_pt2])
             model_images *= 1e3 # convert from Jy/beam to mJy/beam
             
             # Get model fluxes
             print(f"Getting model fluxes...")
-            model_fluxes, mf_indices = rfa.run_pipeline(get_model_flux,
-                                                return_nums=True,
-                                                pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
-                                                root_dir=paths_to_use[2],
-                                                mode="file",
-                                                show_progress=False)
-            model_fluxes = np.array(model_fluxes)
+            model_fluxes_pt1 = rfa.run_pipeline(get_model_flux,
+                                            mode="file",
+                                            file_paths_override=log_files_pt1,
+                                            show_progress=False)
+            model_fluxes_pt2 = rfa.run_pipeline(get_model_flux,
+                                            mode="file",
+                                            file_paths_override=log_files_pt2,
+                                            show_progress=False)
+            model_fluxes = np.concatenate([model_fluxes_pt1, model_fluxes_pt2])
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
             
             # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
