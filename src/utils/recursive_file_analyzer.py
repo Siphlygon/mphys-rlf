@@ -187,8 +187,8 @@ class RecursiveFileAnalyzer:
         return results
 
     def _run_file_mode(self,
-                       function : Callable,
                        *args,
+                        function : Callable,
                        num_workers : int = 16,
                        output_file : str | Path | None = None,
                        show_progress : bool = True,
@@ -231,8 +231,8 @@ class RecursiveFileAnalyzer:
         return results
 
     def _run_batch_mode(self,
-                        function : Callable,
                         *args, 
+                        function : Callable,
                         num_workers : int = 8,
                         batch_size : int = 500,
                         output_file : str | Path | None = None,
@@ -283,8 +283,8 @@ class RecursiveFileAnalyzer:
 
     def run_pipeline(
         self,
-        function : Callable,
         *args,
+        function : Callable,
         return_nums : bool = False,
         numeric_range: tuple[int,int] | None = None,
         root_dir : Path | str | None = None,
@@ -339,8 +339,8 @@ class RecursiveFileAnalyzer:
             if num_workers is None:
                 num_workers = 16
             return_values = self._run_file_mode(
-                function=function,
                 *args,
+                function=function,
                 num_workers=num_workers,
                 output_file=output_file,
                 show_progress=show_progress,
@@ -352,8 +352,8 @@ class RecursiveFileAnalyzer:
             if num_workers is None:
                 num_workers = 8
             return_values = self._run_batch_mode(
-                function=function,
                 *args,
+                function=function,
                 num_workers=num_workers,
                 batch_size=batch_size,
                 output_file=output_file,
