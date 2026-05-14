@@ -156,12 +156,12 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
                                             mode="file",
                                             file_paths_override=log_files_pt2,
                                             show_progress=False)
-            expected_shape = ( 80, 80 )
-            for arr_list in [ model_fluxes_pt1, model_fluxes_pt2 ]:
-                for i in tqdm(range( len( arr_list ) - 1, -1, -1 ), desc=f'Checking pybdsf image homogeneity', unit='image'):
-                    if arr_list[ i ].shape != expected_shape:
-                        print( f'Image at index {i} has shape {arr_list[ i ].shape} instead of expected {expected_shape}, removing from arrays' )
-                        arr_list[i] = np.zeros( expected_shape )
+            # expected_shape = ( 80, 80 )
+            # for arr_list in [ model_fluxes_pt1, model_fluxes_pt2 ]:
+            #     for i in tqdm(range( len( arr_list ) - 1, -1, -1 ), desc=f'Checking pybdsf image homogeneity', unit='image'):
+            #         if arr_list[ i ].shape != expected_shape:
+            #             print( f'Image at index {i} has shape {arr_list[ i ].shape} instead of expected {expected_shape}, removing from arrays' )
+            #             arr_list[i] = np.zeros( expected_shape )
             model_fluxes = np.concatenate([model_fluxes_pt1, model_fluxes_pt2])
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
             
