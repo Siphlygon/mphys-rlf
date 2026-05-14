@@ -165,11 +165,19 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             model_fluxes = np.concatenate([model_fluxes_pt1, model_fluxes_pt2])
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
             
+            
+            # Filter so only model_fluxes > 0 are included, and apply the same filter to model_images
+            model_fluxes = model_fluxes[model_fluxes > 1.0]
+            mf_indices = np.array(mf_indices)[model_fluxes > 1.0]
+            
+            
             # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
             common_indices = np.intersect1d(mi_indices, mf_indices)
             print(f"Number of sources with matching indices across all datasets: {len(common_indices)}")
             model_images = model_images[common_indices]
             model_fluxes = model_fluxes[common_indices]
+            
+            
             
             estimator.data.model_images = model_images
             estimator.data.model_fluxes = model_fluxes
@@ -183,14 +191,14 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
         functions_to_use = [sigmoid, sigmoid01, richards01, erf01]
         
         for func in functions_to_use:
-            lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness(func)
-            print(f"Estimated completeness curve parameters: {fitted_params}")
+            lb_centres, completeness, yerr, fitted_params, pcov = estimator.estimate_completeness(func)
+            print(f"Estimated completeness curve parameters: {fitted_params} with errors {np.sqrt(np.diag(pcov))}")
             
             # save the completeness curve data to a file
             np.savetxt('completeness_estimate_final.csv', np.array([lb_centres, completeness, yerr]).transpose(), delimiter=',', header='log_flux,completeness,yerr', comments='' )
             
-            # save the fitted parameters to a file
-            np.savetxt(f'completeness_fit_params_final_{func.__name__}.csv', np.array(fitted_params), delimiter=',', comments='' )
+            # save the fitted parameters to a file and erros from pcov
+            np.savetxt(f'completeness_fit_params_{func.__name__}.csv', np.array([fitted_params, np.sqrt(np.diag(pcov))]).transpose(), delimiter=',', header='parameter,error', comments='' )
         
             # Plot data from other papers
             plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )

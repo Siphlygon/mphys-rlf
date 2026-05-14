@@ -381,7 +381,7 @@ class CompletenessEstimator:
         if plot_completeness:
             self.plot_completeness(log_bin_centers, completeness, yerr, function, fitted_params, figure_save_name)
         
-        return log_bin_centers, completeness, yerr, fitted_params
+        return log_bin_centers, completeness, yerr, fitted_params, pcov
 
 
 class Data(object):
