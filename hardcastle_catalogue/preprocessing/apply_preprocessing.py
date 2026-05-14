@@ -29,7 +29,7 @@ class CutoutPreprocessor:
 
         # Thresholds for the flags, these could be read from a config file if we wanted to make them more flexible
         # self.snr_sigma_threshold = 5
-        self.snr_threshold = 20
+        self.snr_threshold = 15
         self.edge_max_threshold = 0.8
 
         config = configparser.ConfigParser()
@@ -233,7 +233,7 @@ class CutoutPreprocessor:
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
     
-    def select_RLAGN(self, wise_2_mag: np.ndarray, wise_3_mag: np.ndarray, wise_3_magerr: np.ndarray, luminosities: np.ndarray, redshifts: np.ndarray) -> np.ndarray:
+    def select_RLAGN(self, wise_2_mag: np.ndarray, wise_3_mag: np.ndarray, wise_3_magerr: np.ndarray, luminosities: np.ndarray, redshifts: np.ndarray, peak_flux: np.ndarray) -> np.ndarray:
         """
         Calculates a boolean mask of whether or not objects are RLAGN (as opposed to SFGs or RQQs)
         """
@@ -251,6 +251,10 @@ class CutoutPreprocessor:
         sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) ) & ~np.isnan( wise_3_magerr )
         rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 ) & ~np.isnan( wise_3_magerr )
         rlagn_mask = ~sfg_mask & ~rqq_mask
+        
+        # In H25, they work with data after doing some selection cuts; we will make it so any source which would not pass their cuts is labelled as RLAGN, so they are not erroneously filtered out
+        # They cut out peak fluxes below 1.1mjy, and also redshifts lower than 0.01
+        rlagn_mask = rlagn_mask | (peak_flux < 1.1) | (redshifts <= 0.01)
 
         return rlagn_mask
 
@@ -405,7 +409,7 @@ class CutoutPreprocessor:
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
         luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
         redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
-        rlagn_mask = self.select_RLAGN( wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts )
+        rlagn_mask = self.select_RLAGN( wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, global_max*1000)
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
@@ -469,12 +473,14 @@ class CutoutPreprocessor:
             # snr_sigma.append(self.calculate_SNR_sigma_single(img))
             size.append(cat_info[idx]['LAS'])
             noise = cat_info[idx]['Isl_rms']
-            # peak_flux = cat_info[idx]['Peak_flux']
             peak_flux = img.max() * 1000
             snr.append(self.calculate_SNR_single(noise, peak_flux))
             
             edge_max.append(self.calculate_edge_max_single(img))
-            rlagn.append(self.select_RLAGN(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best']))
+            if np.isnan([cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best']]).any():
+                rlagn.append(True) # if we don't have the info to determine if it's an RLAGN, we will assume it is
+            else:
+                rlagn.append(self.select_RLAGN(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best'], peak_flux))
 
         # Apply flags to the dataset
         dataset["incomplete"] = incomplete
@@ -576,58 +582,42 @@ class CutoutPreprocessor:
         # Compute the flags for each image in the dataset
         self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
         
-        # Save the SNR values to a txt file for plotting
-        # np.savetxt('snr_values.txt', dataset["S/N"].values)
+        conditions = [
+            dataset["has_image"],
+            ~dataset["incomplete"],
+            ~dataset["broken"],
+            (dataset["size"] <= 120), # max size of a cutout
+            # (dataset["S/N_sigma"] >= self.snr_threshold),
+            (dataset["S/N"] >= self.snr_threshold),
+            (dataset["edge_max"] <= self.edge_max_threshold),
+            (dataset["rlagn"])
+        ]
+        lengths = [len(dataset)]
+        clean_dataset = dataset
+        for condition in conditions:
+            clean_dataset = clean_dataset[condition]
+            lengths.append(len(clean_dataset))
         
-        # Plot some pixel values for certain S/N ranges for verification
-        # for snr_range in [(0, 1), (1, 2), (2, 2.5), (2.5, 3), (3, 4), (4, 5)]:
-        # for snr_range in [(4,5), (5, 6), (6, 7), (7, 8), (8, 9), (9, 10), 
-        #                   (10, 11), (11, 12), (12, 13), (13, 14), (14, 15),
-        #                   (15, 16), (16, 17), (17, 18), (18, 19), (19, 20),
-        #                   (21, 22), (22, 23), (23, 24), (24, 25), (25, 26), 
-        #                   (26, 27), (27, 28), (28, 29), (29, 30), (30, 31)]:
-        #     subset = dataset[(dataset["S/N"] >= snr_range[0]) & (dataset["S/N"] < snr_range[1])]
-        #     if len(subset) > 0:
-        #         plt.figure(figsize=(10, 10))
-        #         for i in range(min(25, len(subset))):
-        #             plt.subplot(5, 5, i + 1)
-        #             plt.imshow(subset.iloc[i]["pixel_values"], origin='lower', cmap='viridis')
-        #             plt.title(f"S/N: {subset.iloc[i]['S/N']:.2f}")
-        #             plt.axis('off')
-        #         plt.suptitle(f"Pixel values for S/N range {snr_range[0]}-{snr_range[1]}")
-        #         plt.tight_layout()
-        #         plt.savefig(f'pixel_values_snr_{snr_range[0]}_{snr_range[1]}.png')
-        #         plt.close()
-        
-        # Filter the dataset based on the flags
-        clean_dataset = dataset[dataset["has_image"]
-                                      & ~dataset["incomplete"]
-                                      & ~dataset["broken"]
-                                      & (dataset["size"] <= 120) # max size of a cutout
-                                      #& (dataset["S/N_sigma"] >= self.snr_threshold)
-                                      & (dataset["S/N"] >= self.snr_threshold)
-                                      & (dataset["edge_max"] <= self.edge_max_threshold)
-                                      & (dataset["rlagn"]) ]
+        # Log the number of sources removed at each step
+        num_no_image = lengths[0] - lengths[1]
+        num_incomplete = lengths[1] - lengths[2]
+        num_broken = lengths[2] - lengths[3]
+        num_too_large = lengths[3] - lengths[4]
+        # num_low_snr_sigma = lengths[4] - lengths[5]
+        num_low_snr = lengths[4] - lengths[5]
+        num_edge_max = lengths[5] - lengths[6]
+        num_rqqsfg = lengths[6] - lengths[7]
 
-        # Log the number of sources removed by each flag
-        num_no_images = len(dataset) - dataset["has_image"].sum()
-        num_incomplete = dataset["incomplete"].sum()
-        num_broken = dataset["broken"].sum()
-        num_too_large = (dataset["size"] > 120).sum()
-        # num_low_snr_sigma = (dataset["S/N_sigma"] < self.snr_sigma_threshold).sum()
-        num_low_snr = (dataset["S/N"] < self.snr_threshold).sum()
-        num_edge_max = (dataset["edge_max"] > self.edge_max_threshold).sum()
-        num_rqqsfg = (~dataset["rlagn"]).sum()
-        self.logger.info(f"Found {num_no_images} missing images.")
+        self.logger.info(f"Found {num_no_image} missing images.")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as broken: {num_broken}")
         self.logger.info(f"Number of sources removed as too large: {num_too_large}")
         # self.logger.info(f"Number of sources removed as low S/N_sigma: {num_low_snr_sigma}")
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
-        # self.logger.info(f"Total number of sources removed: {num_broken + num_low_snr_sigma + num_edge_max}")
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
-        self.logger.info(f"Total number of sources removed: {num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg}")
+        self.logger.info(f"Total number of sources removed: {num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg}")
+        #self.logger.info(f"Total number of sources removed: {num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
         # Filter the catalogue information to only include the sources in the clean dataset
@@ -643,5 +633,6 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     preprocessor = CutoutPreprocessor()
-    preprocessor.apply_preprocessing( vectorised=True, save_hdf5=True )
+    preprocessor.apply_preprocessing( vectorised=False, save_hdf5=True,
+                                     output_file_path=pths.DATASET_PARENT/f'snr_{preprocessor.snr_threshold}_hardcastle_catalogue.h5' )
     preprocessor.logger.info( 'done' )
