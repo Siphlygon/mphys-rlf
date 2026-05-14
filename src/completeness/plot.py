@@ -165,46 +165,46 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             #estimator.data.model_images = np.load( path_to_subdir / 'model_images.npy', allow_pickle=True )
             #estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
         
-        lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness()
-        print(f"Estimated completeness curve parameters: {fitted_params}")
+        from utils.functions import sigmoid, sigmoid01, richards01, erf01
+        functions_to_use = [sigmoid, sigmoid01, richards01, erf01]
         
-        # save the completeness curve data to a file
-        np.savetxt('completeness_estimate_final.csv', np.array([lb_centres, completeness, yerr]).transpose(), delimiter=',', header='log_flux,completeness,yerr', comments='' )
+        for func in functions_to_use:
+            lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness(func)
+            print(f"Estimated completeness curve parameters: {fitted_params}")
+            
+            # save the completeness curve data to a file
+            np.savetxt('completeness_estimate_final.csv', np.array([lb_centres, completeness, yerr]).transpose(), delimiter=',', header='log_flux,completeness,yerr', comments='' )
+            
+            # save the fitted parameters to a file
+            np.savetxt(f'completeness_fit_params_final_{func.__name__}.csv', np.array(fitted_params), delimiter=',', comments='' )
         
-        # save the fitted parameters to a file
-        np.savetxt('completeness_fit_params_final.csv', np.array(fitted_params), delimiter=',', comments='' )
-        
-    
-    # Plot data from other papers
-    plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
-    plt.plot( dejong_data[ 0 ], dejong_data[ 1 ], marker='s', color='m', label='de jong et al. 2023 data (approximate)' )
-    kondapally_markers = [ '<', '>', '^' ]
-    kondapally_fields = [ 'ELAIS-N1',	'Lockman Hole',	'Boötes' ]
-    for i, marker, field in zip( range( 1, kondapally_data.shape[ 0 ] ), kondapally_markers, kondapally_fields ):
-        plt.plot( kondapally_data[ 0 ][ kondapally_data[ i ] > 0 ], kondapally_data[ i ][ kondapally_data[ i ] > 0 ], color='k', marker=marker, label=f'kondapally et al. 2022 - {field}' )
+            # Plot data from other papers
+            plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
+            plt.plot( dejong_data[ 0 ], dejong_data[ 1 ], marker='s', color='m', label='de jong et al. 2023 data (approximate)' )
+            kondapally_markers = [ '<', '>', '^' ]
+            kondapally_fields = [ 'ELAIS-N1',	'Lockman Hole',	'Boötes' ]
+            for i, marker, field in zip( range( 1, kondapally_data.shape[ 0 ] ), kondapally_markers, kondapally_fields ):
+                plt.plot( kondapally_data[ 0 ][ kondapally_data[ i ] > 0 ], kondapally_data[ i ][ kondapally_data[ i ] > 0 ], color='k', marker=marker, label=f'kondapally et al. 2022 - {field}' )
 
-    # Plot our estimated completeness curve from a file
-    plt.errorbar(lb_centres, completeness, yerr, fmt='.', color='g', label=f'data')
-    plt.plot(lb_centres, completeness, marker='.', linestyle='None', color='g')
-    
-    # Plot our fitted curve from a file
-    from utils.functions import sigmoid
-    
-    # Generate smooth curve for plotting on log scale
-    log_flux_smooth = np.logspace(lb_centres.min(), lb_centres.max(), 200)
-    completeness_fit = sigmoid(log_flux_smooth, *fitted_params)
-    plt.plot(log_flux_smooth, completeness_fit, color='c', label=f'{sigmoid} fit')
+            # Plot our estimated completeness curve from a file
+            plt.errorbar(lb_centres, completeness, yerr, fmt='.', color='g', label=f'data')
+            plt.plot(lb_centres, completeness, marker='.', linestyle='None', color='g')
+                        
+            # Generate smooth curve for plotting on log scale
+            log_flux_smooth = np.logspace(lb_centres.min(), lb_centres.max(), 200)
+            completeness_fit = func(log_flux_smooth, *fitted_params)
+            plt.plot(log_flux_smooth, completeness_fit, color='c', label=f'{func.__name__} fit')
 
-    plt.xscale('log')
-    plt.ylim(0, 1.05)
-    plt.xlim( left=0.01, right=100 )
-    plt.xlabel("Flux Density (mJy)")
-    plt.ylabel("Completeness")
-    plt.title("Flux Density Completeness Curve")
-    plt.grid(True)
-    plt.legend( loc='lower right' )
-    plt.show()
-    plt.savefig(f'cplestim_{config_str}_full_plot.png' )
+            plt.xscale('log')
+            plt.ylim(0, 1.05)
+            plt.xlim( left=0.01, right=100 )
+            plt.xlabel("Flux Density (mJy)")
+            plt.ylabel("Completeness")
+            plt.title("Flux Density Completeness Curve")
+            plt.grid(True)
+            plt.legend( loc='lower right' )
+            plt.show()
+            plt.savefig(f'cplestim_{config_str}_{func.__name__}_full_plot.png' )
 
 
 if __name__ == "__main__":
