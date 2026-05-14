@@ -171,14 +171,23 @@ def main():
     # Load config & dataset
     config = ModelConfig.from_preset("LOFAR_retrained")
     config.__setattr__("model_name", os.environ.get("MODEL_NAME", "sweep_model"))
-
-    dataset = datasets.ImagePathDataset(
-        "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
-    )
-
-    with h5py.File("hardcastle_catalogue/clean_hardcastle_catalogue.h5", "r") as f:
-        las_values = f["cat_info"][:]["LAS"]
-        dataset.set_las_values(las_values)
+    
+    # Load dataset:
+    if "DATASET_PATH" in os.environ:
+        dataset_path = os.environ["DATASET_PATH"]
+    else:
+        dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
+    
+    if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
+        dataset = datasets.TrainDatasetNoScale(dataset_path)
+    else:
+        dataset = datasets.ImagePathDataset(dataset_path)
+    
+    # Get LAS values for the dataset context
+    if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
+        with h5py.File(dataset_path, "r") as f:
+            las_values = f["cat_info"][:]["LAS"]
+            dataset.set_las_values(las_values)
 
     # WandB Logging
     if primary:
