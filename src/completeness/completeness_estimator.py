@@ -71,6 +71,7 @@ class CompletenessEstimator:
     def fit_function(self,
                      bin_centers : np.ndarray[float, np.dtype[np.float64]],
                      completeness : np.ndarray[float, np.dtype[np.float64]],
+                     yerr : np.ndarray[float, np.dtype[np.float64]],
                      function: Callable = sigmoid,
                      initial_guess : list[float] | np.ndarray[float, np.dtype[np.float64]] | None = None,
                      output_file : str | Path | None = None,
@@ -81,6 +82,7 @@ class CompletenessEstimator:
 
         :param bin_centers: The centers of the flux bins used for calculating completeness.
         :param completeness: The completeness values calculated for each flux bin.
+        :param yerr: The errors on the y-axis of the completeness points.
         :param function: The function to fit to the completeness curve. Defaults to sigmoid.
         :param initial_guess: Initial guess for the parameters of the function to be fitted. Defaults to [0.5, 7.0, 1.0, 0.0] for sigmoid.
         :param output_file: Where to save the results. Defaults to None.
@@ -128,9 +130,9 @@ class CompletenessEstimator:
                 self.logger.info(f"Fitting {function.__name__} function to completeness curve...")
 
             if initial_guess is None:
-                popt, pcov = curve_fit(function, bin_centers, completeness, maxfev=10000, **kwargs)
+                popt, pcov = curve_fit(function, bin_centers, completeness, sigma=yerr, maxfev=10000, **kwargs)
             else:
-                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000, **kwargs)
+                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, sigma=yerr, maxfev=10000, **kwargs)
 
             # Save fitted parameters to a file for use in RLF
             if output_file:
