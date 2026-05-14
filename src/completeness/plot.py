@@ -166,6 +166,14 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             #estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
         
         lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness()
+        print(f"Estimated completeness curve parameters: {fitted_params}")
+        
+        # save the completeness curve data to a file
+        np.savetxt('completeness_estimate_final.csv', np.array([lb_centres, completeness, yerr]).transpose(), delimiter=',', header='log_flux,completeness,yerr', comments='' )
+        
+        # save the fitted parameters to a file
+        np.savetxt('completeness_fit_params_final.csv', np.array(fitted_params), delimiter=',', comments='' )
+        
     
     # Plot data from other papers
     plt.plot( shimwell_data[ 0 ], shimwell_data[ 1 ], marker='p', color='r', label='shimwell et al. 2022 data (approximate)' )
