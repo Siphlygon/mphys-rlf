@@ -74,7 +74,8 @@ class CompletenessEstimator:
                      function: Callable = sigmoid,
                      initial_guess : list[float] | np.ndarray[float, np.dtype[np.float64]] | None = None,
                      output_file : str | Path | None = None,
-                     show_progress : bool = True) -> tuple[np.ndarray[float, np.dtype[np.float64]], np.ndarray[float, np.dtype[np.float64]]]:
+                     show_progress : bool = True,
+                     **kwargs) -> tuple[np.ndarray[float, np.dtype[np.float64]], np.ndarray[float, np.dtype[np.float64]]]:
         """
         Fit a function to the completeness curve.
 
@@ -127,9 +128,9 @@ class CompletenessEstimator:
                 self.logger.info(f"Fitting {function.__name__} function to completeness curve...")
 
             if initial_guess is None:
-                popt, pcov = curve_fit(function, bin_centers, completeness, maxfev=10000)
+                popt, pcov = curve_fit(function, bin_centers, completeness, maxfev=10000, **kwargs)
             else:
-                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000)
+                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, maxfev=10000, **kwargs)
 
             # Save fitted parameters to a file for use in RLF
             if output_file:
@@ -158,7 +159,7 @@ class CompletenessEstimator:
         :param popt: The fitted parameters to the function.
         :param save_name: The name of the file to save the plot to. Defaults to None.
         """
-        assert popt, "You need a fitted completeness function to plot."
+        assert popt is not None, "You need a fitted completeness function to plot."
         if save_name is None:
             save_name = f"completeness_curve.png"
     

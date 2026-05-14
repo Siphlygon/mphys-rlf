@@ -1,21 +1,15 @@
 import argparse
 import os
+from pathlib import Path
 
-from scipy.optimize import curve_fit
 import numpy as np
-import scipy.stats
 from tqdm import tqdm
-import astropy.stats
-import pandas as pd
 import matplotlib.pyplot as plt
-from analysis.image_analyzer import ImageAnalyzer
-from utils.img_data_arrays import ImageDataArrays
-import scipy.signal
-from completeness.completeness_estimator import CompletenessEstimator
+from completeness.completeness_estimator import CompletenessEstimator, SizeBinnedCompleteness
 import utils.paths as pths
 
 rms_LOFAR = 95e-6 * 1e3
-beam_width_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
+beam_width_LOFAR = (0.00166667, 0.00166667, 0.0)
 beam_area_LOFAR = beam_width_LOFAR[ 0 ] * beam_width_LOFAR[ 1 ]
 
 # shimwell_data = np.array( [
@@ -104,8 +98,60 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
                 path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["GENERATED_SUBDIR"]
             else:
                 path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
-            estimator.data.model_images = np.load( path_to_subdir / 'model_images.npy', allow_pickle=True )
-            estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
+            
+            # root = pths.STORAGE_PARENT / "src/completeness/"
+            folder_name = "snr15_loguniform_nolas"
+            # paths_to_use=[root / (folder_name + "_catalogs"),
+            #             root / (folder_name + "_images/gaus_model"),
+            #             root / (folder_name + "_logs")]
+            
+            paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
+                            pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
+                            pths.PYBDSF_LOG_PARENT / folder_name]
+            
+            from astropy.io import fits
+            # Get model images 
+            def read_model_images(path: Path):
+                return fits.getdata(path, 0)
+            
+            from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+            from analysis.log_analyzer import get_model_flux
+            rfa = RecursiveFileAnalyzer(paths_to_use[0])
+            
+            print(f"Getting model images...")
+            model_images, mi_indices = rfa.run_pipeline(read_model_images,
+                                            return_nums=True,
+                                            root_dir=paths_to_use[1],
+                                            mode="file",
+                                            pattern=r'.*?\D+(\d+)\.fits$',
+                                            show_progress=False)
+            model_images = np.array(model_images)
+            model_images *= 1e3 # convert from Jy/beam to mJy/beam
+            
+            # Get model fluxes
+            print(f"Getting model fluxes...")
+            model_fluxes, mf_indices = rfa.run_pipeline(get_model_flux,
+                                                return_nums=True,
+                                                pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
+                                                root_dir=paths_to_use[2],
+                                                mode="file",
+                                                show_progress=False)
+            model_fluxes = np.array(model_fluxes)
+            model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
+            
+            # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
+            common_indices = np.intersect1d(mi_indices, mf_indices)
+            print(f"Number of sources with matching indices across all datasets: {len(common_indices)}")
+            model_images = model_images[common_indices]
+            model_fluxes = model_fluxes[common_indices]
+            
+            estimator.data.model_images = model_images
+            estimator.data.model_fluxes = model_fluxes
+            print(max(model_fluxes), min(model_fluxes), np.median(model_fluxes))
+            print(max(estimator.data.model_fluxes), min(estimator.data.model_fluxes), np.median(estimator.data.model_fluxes))
+            
+            #estimator.data.model_images = np.load( path_to_subdir / 'model_images.npy', allow_pickle=True )
+            #estimator.data.model_fluxes = np.load( path_to_subdir / 'model_fluxes.npy', allow_pickle=True )
         
         lb_centres, completeness, yerr, fitted_params = estimator.estimate_completeness()
     
@@ -131,7 +177,7 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
 
     plt.xscale('log')
     plt.ylim(0, 1.05)
-    plt.xlim( left=0.5, right=100 )
+    plt.xlim( left=0.01, right=100 )
     plt.xlabel("Flux Density (mJy)")
     plt.ylabel("Completeness")
     plt.title("Flux Density Completeness Curve")
