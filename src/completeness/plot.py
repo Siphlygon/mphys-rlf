@@ -166,10 +166,10 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
             
             
-            # Filter so only model_fluxes > 0 are included, and apply the same filter to model_images
-            model_fluxes = model_fluxes[model_fluxes > 1.0]
-            mf_indices = np.array(mf_indices)[model_fluxes > 1.0]
-            
+            # Filter so only peak_fluxes > 1 are included, and apply the same filter to model_images
+            peak_fluxes = np.max(model_images, axis=(1, 2))
+            model_fluxes = model_fluxes[peak_fluxes > 1.0]
+            mf_indices = np.array(mf_indices)[peak_fluxes > 1.0]
             
             # Filter the sizes, model images, and model fluxes to only include those with matching indices across all three datasets
             common_indices = np.intersect1d(mi_indices, mf_indices)
