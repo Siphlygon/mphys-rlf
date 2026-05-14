@@ -101,13 +101,13 @@ def plot_completeness(config_str: str, which_dataset: str = 'GENERATED_SUBDIR', 
             
             root = pths.STORAGE_PARENT / "src/completeness/"
             folder_name = "snr15_loguniform_nolas"
-            paths_to_use=[root / (folder_name + "_catalogs"),
-                        root / (folder_name + "_images/gaus_model"),
-                        root / (folder_name + "_logs")]
+            # paths_to_use=[root / (folder_name + "_catalogs"),
+            #             root / (folder_name + "_images/gaus_model"),
+            #             root / (folder_name + "_logs")]
             
-            # paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
-            #                 pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
-            #                 pths.PYBDSF_LOG_PARENT / folder_name]
+            paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
+                             pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
+                             pths.PYBDSF_LOG_PARENT / folder_name]
             
             from astropy.io import fits
             # Get model images 
