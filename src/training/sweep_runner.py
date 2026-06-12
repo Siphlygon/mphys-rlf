@@ -1,3 +1,5 @@
+import json
+
 import wandb
 import subprocess
 import os
@@ -40,6 +42,19 @@ if __name__ == "__main__":
     project = "diffusion-radio-galaxies-sweeps"
 
     # Define the sweep configuration
+    parameters_path = "src/training/sweep_params.json"
+    if os.path.exists(parameters_path):
+        try:
+            with open(parameters_path, 'r') as f:
+                parameters = json.load(f)
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in {parameters_path}")
+    else:
+        raise FileNotFoundError(f"Sweep parameters file not found at {parameters_path}")
+    
+    parameters = parameters.get("parameters")
+    print("Loaded sweep parameters:", parameters)
+    
     sweep_config = {
                 'name': 'hyperparameter_sweep',
                 'method': 'bayes',
@@ -47,21 +62,13 @@ if __name__ == "__main__":
                     'name': 'val_loss',
                     'goal': 'minimize'
                 },
-                'parameters': {
-                    'dropout': {'distribution': 'uniform', 'min': 0.05, 'max': 0.2},
-                    'batch_size': {'values': [16, 32, 64]},
-                    'learning_rate': {'distribution': 'uniform', 'min': 1e-5, 'max': 4e-5},
-                    'iterations': {'value': 20000},
-                    'ema_rate': {'values': [0.999, 0.9999, 0.99999]},
-                    'P_mean': {'distribution': 'uniform', 'min': -5, 'max': -1.25},
-                    'P_std': {'distribution': 'uniform', 'min': 0.9, 'max': 3.6},
-                    'context_dropout': {'distribution': 'uniform', 'min': 0.05, 'max': 0.2}
-                },
+                'parameters': parameters,
                 'early_terminate': {
                     'type': 'hyperband',
                     'min_iter': 1000
                 }
             }
+    print("Constructed sweep configuration:", sweep_config)
 
     # Run the sweep agent to execute the hyperparameter sweep
     if "WANDB_SWEEP_ID" in os.environ:
