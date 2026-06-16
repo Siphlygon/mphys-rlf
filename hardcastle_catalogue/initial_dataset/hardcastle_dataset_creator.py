@@ -111,11 +111,8 @@ class HardcastleDatasetCreator:
         values, indices = rfa.run_pipeline(function=self.load_single_cutout,
                                            pattern=r'.*?cutout(\d+)\.fits$',
                                            return_nums=True)
-
         values = np.array(values, dtype=np.float32)
         indices = np.array(indices, dtype=np.int32)
-
-        print(values.shape, indices.shape)
 
         # Check indices to see any missing cutout images
         true_cutouts = set(range(self.num_counts))

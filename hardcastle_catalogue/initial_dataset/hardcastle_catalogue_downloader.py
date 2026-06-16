@@ -10,9 +10,8 @@ from pathlib import Path
 
 class HardcastleCatalogueDownloader:
     """
-    This is a class to handle downloading cutouts from the LOFAR cutout server based on the Hardcastle catalogue. This is
-    not a standalone step the ~300k output files have not undergone pre-processing and further work is needed (see
-    database_creation.py) to match them to the pre-processed LOFAR dataset.
+    A class to download and extract certain information from the Hardcastle catalogue FITS file. It provides methods to
+    download the catalogue, load it, extract positions, and write those positions to a file.
     """
 
     def __init__(self):
@@ -20,14 +19,20 @@ class HardcastleCatalogueDownloader:
         self.logger = utils.logging.get_logger("hardcastle catalogue downloader", logging.DEBUG)
 
     def download_hardcastle_catalogue(self,
-                                      save_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
+                                      catalogue_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
+                                      ):
         """
-        Downloads the Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
+        Downloads the Hardcastle catalogue FITS file from the specified URL and saves it to the given path. If the file
+        already exists, it skips the download.
 
-        :param save_path: The path to save the downloaded FITS file.
+        Parameters
+        ----------
+        catalogue_path : Path, optional
+            The path to save the downloaded Hardcastle Catalogue FITS file, by default
+            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
         """
-        if os.path.exists(save_path):
-            self.logger.info(f'Hardcastle catalogue already exists at {save_path}. Skipping download.')
+        if os.path.exists(catalogue_path):
+            self.logger.info(f'Hardcastle catalogue already exists at {catalogue_path}. Skipping download.')
             return
 
         url = "https://lofar-surveys.org/public/DR2/catalogues/combined-release-v1.2-LM_opt_mass.fits"
@@ -35,53 +40,41 @@ class HardcastleCatalogueDownloader:
         response = requests.get(url, stream=True)
 
         if response.status_code == 200:
-            with open(save_path, 'wb') as f:
+            with open(catalogue_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            self.logger.info(f'Hardcastle catalogue downloaded and saved to {save_path}.')
+            self.logger.info(f'Hardcastle catalogue downloaded and saved to {catalogue_path}.')
         else:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
-    def load_hardcastle_catalogue(self,
-                                  file_path : Path =paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits")\
-            -> list[dict]:
+    def get_positions_from_hardcastle(self,
+                                      catalogue_path : Path =paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
+                                    ) \
+            -> list[tuple[float, float]]:
         """
-        Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items from the
-        LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the images.
-
-        :param file_path: The path to the Hardcastle catalogue FITS file.
-        :return: A list of resolved items from the catalogue.
+        Extracts the RA and DEC positions of resolved sources from the Hardcastle catalogue FITS file.
+        
+        Parameters
+        ----------
+        catalogue_path : Path, optional
+            The path to the Hardcastle catalogue FITS file, by default
+            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+        
+        Returns
+        -------
+        list[tuple[float, float]]
+            A list of tuples containing the RA and DEC positions of resolved sources.
         """
         try:
-            with fits.open(file_path) as hdul:
+            with fits.open(catalogue_path) as hdul:
                 catalogue_data = hdul[1].data
         except Exception as e:
             self.logger.error(f"Error loading Catalogue file: {e}.")
-            self.logger.debug(f"Deleting the possibly corrupted file at {file_path} and trying again.")
-            try:
-                os.remove(file_path)
-                self.logger.info(f"Deleted corrupted file at {file_path}.")
-                self.download_hardcastle_catalogue()
-            except Exception as del_e:
-                self.logger.error(f"Error deleting corrupted file at {file_path}: {del_e}")
-                raise Exception(f"Failed to load or delete corrupted catalogue file at {file_path}. Please check the file and try again: {del_e}")
+            raise Exception(f"Failed to load catalogue file at {catalogue_path}. Please check the file and try again: {e}")
 
-        # Get the headers of resolved sources
         resolved_items = catalogue_data[catalogue_data['Resolved'] == True]
-
-        return resolved_items
-
-    def get_positions_from_hardcastle(self,
-                                      hardcastle_catalogue: list[dict]) \
-            -> list[tuple[float, float]]:
-        """
-        Extracts the positions (RA, DEC) from the resolved items in the Hardcastle catalogue.
-
-        :param hardcastle_catalogue: The list of resolved items from the Hardcastle catalogue.
-        :return: A list of tuples containing (RA, DEC) for each resolved item.
-        """
         positions = []
-        for item in tqdm(hardcastle_catalogue, desc="Extracting positions..."):
+        for item in tqdm(resolved_items, desc="Extracting positions..."):
             ra = item['RA']
             dec = item['DEC']
             positions.append((ra, dec))
@@ -89,39 +82,53 @@ class HardcastleCatalogueDownloader:
 
     def write_positions_to_file(self,
                                 positions : list[tuple[float, float]],
-                                file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
+                                positions_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
         """
-        Writes the list of positions (RA, DEC) to a text file for future use.
+        Writes the RA and DEC positions to a text file, with each line containing a pair of RA and DEC values.
 
-        :param positions: A list of tuples containing (RA, DEC) for each resolved item.
-        :param file_path: The path to save the positions text file.
+        Parameters
+        ----------
+        positions : list[tuple[float, float]]
+            A list of tuples containing the RA and DEC positions.
+        positions_path : Path, optional
+            The path to save the positions text file, by default paths.INITIAL_DATASET/"resolved_positions.txt"
         """
         try:
-            with open(file_path, 'w') as f:
+            with open(positions_path, 'w') as f:
                 for ra, dec in positions:
                     f.write(f"{ra} {dec}\n")
-            self.logger.info(f'Positions written to {file_path}.')
+            self.logger.info(f'Positions written to {positions_path}.')
         except Exception as e:
             self.logger.error(f"Error writing positions to file: {e}")
 
-    def main(self):
+
+    def main(self,
+             catalogue_path: Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
+             positions_path: Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
+        """
+        Downloads the Hardcastle catalogue, extracts the RA and DEC positions of resolved sources, and writes those
+        positions to a text file. This method orchestrates the entire process and logs the progress.
+        
+        Parameters
+        ----------
+        catalogue_path : Path, optional
+            The path to save the downloaded Hardcastle Catalogue FITS file, by default
+            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+        positions_path : Path, optional
+            The path to save the positions text file, by default paths.INITIAL_DATASET/"resolved_positions.txt"
+        """
         # Download the Hardcastle catalogue if it doesn't exist, and load it
         self.logger.info('Downloading Hardcastle catalogue...')
-        self.download_hardcastle_catalogue()
+        self.download_hardcastle_catalogue(catalogue_path=catalogue_path)
 
         # Load the Hardcastle catalogue and filter for resolved items
-        self.logger.info('Loading Hardcastle catalogue...')
-        hardcastle_catalogue = self.load_hardcastle_catalogue()
-        self.logger.info(f'Loaded Hardcastle catalogue with {len(hardcastle_catalogue)} resolved items.')
-
         self.logger.info(f'Extracting RA/DEC positions...')
-        hdc_positions = self.get_positions_from_hardcastle(hardcastle_catalogue)
+        hdc_positions = self.get_positions_from_hardcastle(catalogue_path=catalogue_path)
 
         self.logger.info(f"Writing positions to file...")
-        self.write_positions_to_file(positions=hdc_positions)
+        self.write_positions_to_file(positions=hdc_positions, positions_path=positions_path)
 
 
 if __name__ == "__main__":
     downloader = HardcastleCatalogueDownloader()
     downloader.main()
-

@@ -8,7 +8,7 @@ import utils.logging
 
 if __name__ == "__main__":
     # Start logging
-    logger = utils.logging.get_logger("dataset master", logging.DEBUG)
+    logger = utils.logging.get_logger("DatasetCreationMaster", logging.DEBUG)
 
     # Step 1: Download the Hardcastle catalogue
     logger.info("Starting download of Hardcastle catalogue.")
