@@ -17,7 +17,10 @@ class CatalogueDistribution:
     """
     def __init__(self,
                  logger_name: str = "CatalogueDistribution",
+                 use_catalogue: bool = True,
+                 data_path: Path | None = None,
                  bin_num: int = 100,
+                 log_scale: bool = False,
                  value_name: str = "Value",
                  units: str = "Units",
                  resolved_only: bool = True):
@@ -26,24 +29,46 @@ class CatalogueDistribution:
 
         Args:
             logger_name (str, optional): The name of the logger to use for this class. Defaults to "CatalogueDistribution".
+            use_catalogue (bool, optional): Whether to load the catalogue data. Defaults to True.
+            data_path (Path | None, optional): The path to the preprocessed data file containing the cutout images. If None, a default path is used. Defaults to None.
             bin_num (int, optional): The number of bins for the histogram. Defaults to 100.
+            log_scale (bool, optional): Whether to use a logarithmic scale for the histogram. Defaults to False.
             value_name (str, optional): The name of the value being represented. Defaults to "Value".
             units (str, optional): The units of the value being represented. Defaults to "Units".
             resolved_only (bool, optional): Whether to consider only resolved sources. Defaults to True.
         """
         self.logger = utils.logging.get_logger(logger_name, logging.DEBUG)
         
+        self.use_catalogue = use_catalogue
+        if not self.use_catalogue:
+            assert data_path is not None, "You must provide a data path if use_catalogue is False"
+            self.path = data_path
+        
         # Initialise attributes
         self.value_name = value_name
         self.units = units
-
+        self.log_scale = log_scale
+        
         # Get the RMS values from the Hardcastle catalogue and filter out NaN values
-        self.catalogue = HardcastleCatalogue(resolved_only=resolved_only)
+        if use_catalogue:
+            self.catalogue = HardcastleCatalogue(resolved_only=resolved_only)
+        else:
+            with h5py.File(self.path, "r") as f:
+                self.catalogue = f["cat_info"][:]
         self.values = self.get_values()
 
         # Fit a histogram to the RMS values and create a random variable distribution
         self.bin_num = bin_num
-        self.hist_tr = np.histogram(self.values, bins=self.bin_num)
+        
+        if self.log_scale:
+            # If using log scale, we need log bins to properly fit the histogram
+            self.logger.info("Using logarithmic bins for histogram fitting...")
+            self.bins = np.logspace(np.log10(self.values.min()), np.log10(self.values.max()), self.bin_num)
+        else:
+            self.bins = self.bin_num
+                
+        self.hist_tr = np.histogram(self.values, bins=self.bins)
+
         self.model_dist = rv_histogram(self.hist_tr, density=False)
     
     def get_values(self) -> np.ndarray:
@@ -79,9 +104,11 @@ class CatalogueDistribution:
             self.units = units
 
         self.logger.info(f"Plotting the histogram of {self.value_name} values...")
-        plt.hist(self.values, bins=self.bin_num, density=False)
+        if self.log_scale:
+            plt.xscale('log')
+        plt.hist(self.values, bins=self.bins, density=False, log=self.log_scale)
         plt.xlabel(f'{self.value_name} ({self.units})')
-        plt.ylabel('Density')
+        plt.ylabel('Frequency')
         plt.title(f'Distribution of {self.value_name} in the Hardcastle Catalogue')
         plt.grid(True)
         plt.savefig('values_histogram.png')
@@ -133,13 +160,19 @@ class RMSDistribution(CatalogueDistribution):
     fits a histogram to the RMS values and creates a random variable distribution that can be used to generate new RMS
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100, resolved_only: bool = True):
+    def __init__(self,
+                 bin_num: int = 100,
+                 resolved_only: bool = True,
+                 use_catalogue: bool = True,
+                 data_path: Path | None = None):
         """
         Initializes the RMSDistribution by extracting RMS values from the Hardcastle catalogue, fitting a histogram to these values, and creating a random variable distribution.
 
         Args:
             bin_num (int, optional): The number of bins for the histogram. Defaults to 100.
             resolved_only (bool, optional): Whether to consider only resolved sources. Defaults to True.
+            use_catalogue (bool, optional): Whether to load the catalogue data. Defaults to True.
+            data_path (Path | None, optional): The path to the preprocessed data file containing the cutout images. If None, a default path is used. Defaults to None.
         """
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
@@ -151,7 +184,15 @@ class RMSDistribution(CatalogueDistribution):
         # Get values from config
         self.percentage_threshold = float(de_config['RMS_PERCENTAGE_THRESHOLD'])
         
-        super().__init__("RMSDistribution", bin_num, "RMS", "mJy/beam", resolved_only=resolved_only)
+        super().__init__(
+            logger_name="RMSDistribution",
+            bin_num=bin_num,
+            value_name="RMS",
+            units="mJy/beam",
+            resolved_only=resolved_only,
+            use_catalogue=use_catalogue,
+            data_path=data_path
+        )
        
     def get_values(self) -> np.ndarray:
         """
@@ -161,8 +202,12 @@ class RMSDistribution(CatalogueDistribution):
             np.ndarray: An array of RMS values that have been filtered to retain a specified percentage of the data.
         """
         # Get all RMS values from the catalogue
-        self.logger.info("Extracting RMS values from the Hardcastle catalogue...")
-        rms_values = self.catalogue.get_values(Source.RMS)
+        if self.use_catalogue:
+            self.logger.info("Extracting RMS values from the Hardcastle catalogue...")
+            rms_values = self.catalogue.get_values(Source.RMS)
+        else:
+            self.logger.info("Extracting RMS values from the preprocessed data...")
+            rms_values = self.catalogue["Isl_rms"]
 
         #  Remove NaN values from the RMS data
         rms_values = np.array(rms_values)
@@ -182,12 +227,18 @@ class LASDistribution(CatalogueDistribution):
     fits a histogram to the LAS values and creates a random variable distribution that can be used to generate new LAS
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100, resolved_only: bool = True):
+    def __init__(self,
+                 bin_num: int = 100,
+                 resolved_only: bool = True,
+                 use_catalogue: bool = True,
+                 data_path: Path | None = None):
         """Initializes the LASDistribution by extracting LAS values from the Hardcastle catalogue, filtering out NaN and zero values, applying a threshold to retain a certain percentage of the data, fitting a histogram to these values, and creating a random variable distribution.
 
         Args:
             bin_num (int, optional): _description_. Defaults to 100.
             resolved_only (bool, optional): _description_. Defaults to True.
+            use_catalogue (bool, optional): _description_. Defaults to True.
+            data_path (Path | None, optional): _description_. Defaults to None.
         """
         
         # # Read parameters from the config.ini file
@@ -202,7 +253,14 @@ class LASDistribution(CatalogueDistribution):
         # self.percentage_threshold = float(de_config['RMS_PERCENTAGE_THRESHOLD'])
         self.percentage_threshold = 0.98
         
-        super().__init__("LASDistribution", bin_num, "LAS", "arcseconds", resolved_only=resolved_only)
+        super().__init__(
+            logger_name="LASDistribution",
+            bin_num=bin_num,
+            value_name="LAS",
+            units="arcseconds",
+            resolved_only=resolved_only,
+            use_catalogue=use_catalogue,
+            data_path=data_path)
     
     def get_values(self) -> np.ndarray:
         """
@@ -212,8 +270,12 @@ class LASDistribution(CatalogueDistribution):
             np.ndarray: An array of LAS values that have been filtered to retain a specified percentage of the data.
         """
         # Get all LAS values from the catalogue
-        self.logger.info("Extracting LAS values from the Hardcastle catalogue...")
-        las_values = self.catalogue.get_values(Source.AngSize)
+        if self.use_catalogue:
+            self.logger.info("Extracting LAS values from the Hardcastle catalogue...")
+            las_values = self.catalogue.get_values(Source.AngSize)
+        else:
+            self.logger.info("Extracting LAS values from the preprocessed data...")
+            las_values = self.catalogue["LAS"]  # Assuming the preprocessed data has an "LAS" field
 
         #  Remove NaN values from the LAS data
         las_values = np.array(las_values)
@@ -236,22 +298,37 @@ class PeakFluxDistribution(CatalogueDistribution):
     fits a histogram to the peak flux values and creates a random variable distribution that can be used to generate new peak flux
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100, resolved_only: bool = True):
+    def __init__(self,
+                 bin_num: int = 100,
+                 resolved_only: bool = True,
+                 use_catalogue: bool = True,
+                 data_path: Path | None = None):
         """Initializes the PeakFluxDistribution by extracting peak flux values from the Hardcastle catalogue, filtering out NaN values, applying a threshold to retain a certain percentage of the data, fitting a histogram to these values, and creating a random variable distribution.
 
         Args:
             bin_num (int, optional): The number of bins for the histogram. Defaults to 100.
             resolved_only (bool, optional): Whether to consider only resolved sources. Defaults to True.
+            use_catalogue (bool, optional): Whether to use the catalogue data. Defaults to True.
+            data_path (Path | None, optional): The path to the preprocessed data file. Defaults to None.
         """
         
         # Get values from config
         # self.percentage_threshold = float(de_config['PEAK_FLUX_PERCENTAGE_THRESHOLD'])
-        self.percentage_threshold = 0.80
+        # self.percentage_threshold = 0.80
+        self.percentage_threshold = 1
         
         # todo: consider having fits to a log distribution instead, as flux values are most definitely lognormally distributed
         # todo: which results in the rv histogram being very poor
 
-        super().__init__("PeakFluxDistribution", bin_num, "Peak Flux", "mJy/beam", resolved_only=resolved_only)
+        super().__init__(
+            logger_name="PeakFluxDistribution",
+            bin_num=bin_num,
+            value_name="Peak Flux",
+            units="mJy/beam",
+            resolved_only=resolved_only,
+            use_catalogue=use_catalogue,
+            data_path=data_path,
+            log_scale=True)
 
     def get_values(self) -> np.ndarray:
         """
@@ -261,8 +338,12 @@ class PeakFluxDistribution(CatalogueDistribution):
             np.ndarray: An array of peak flux values that have been filtered to retain a specified percentage of the data.
         """
         # Get all peak flux values from the catalogue
-        self.logger.info("Extracting peak flux values from the Hardcastle catalogue...")
-        peak_flux_values = self.catalogue.get_values(Source.PeakFlux)
+        if self.use_catalogue:
+            self.logger.info("Extracting peak flux values from the Hardcastle catalogue...")
+            peak_flux_values = self.catalogue.get_values(Source.PeakFlux)
+        else:
+            self.logger.info("Extracting peak flux values from the preprocessed data...")
+            peak_flux_values = self.catalogue["Peak_flux"]  # Assuming the preprocessed data has a "Peak_flux" field
 
         #  Remove NaN values from the peak flux data
         peak_flux_values = np.array(peak_flux_values)
@@ -282,7 +363,9 @@ class PeakPixDistribution(CatalogueDistribution):
     fits a histogram to the peak pixel values and creates a random variable distribution that can be used to generate new peak pixel
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100, path: Path | None = None):
+    def __init__(self,
+                 bin_num: int = 100,
+                 path: Path | None = None):
         """Initializes the PeakPixDistribution by extracting peak pixel values from cutout images of the Hardcastle catalogue, applying a threshold to retain a certain percentage of the data, fitting a histogram to these values, and creating a random variable distribution.
 
         Args:
@@ -301,7 +384,13 @@ class PeakPixDistribution(CatalogueDistribution):
         # todo: consider having fits to a log distribution instead, as flux values are most definitely lognormally distributed
         # todo: which results in the rv histogram being very poor
 
-        super().__init__("PeakPixDistribution", bin_num, "Peak Pixel", "mJy/beam")
+        super().__init__(
+            logger_name="PeakPixDistribution",
+            bin_num=bin_num,
+            value_name="Peak Pixel",
+            units="mJy/beam",
+            use_catalogue=False,
+            data_path=self.path)
     
     def get_values(self, data_path: Path | None = None) -> np.ndarray:
         """
@@ -340,19 +429,32 @@ class RedshiftDistribution(CatalogueDistribution):
     fits a histogram to the redshift values and creates a random variable distribution that can be used to generate new redshift
     values that follow the same distribution as the original data.
     """
-    def __init__(self, bin_num: int = 100, resolved_only: bool = True):
+    def __init__(self,
+                 bin_num: int = 100,
+                 resolved_only: bool = True,
+                 use_catalogue: bool = True,
+                 data_path: Path | None = None):
         """Initializes the RedshiftDistribution by extracting redshift values from the Hardcastle catalogue, filtering out NaN values, applying a threshold to retain a certain percentage of the data, fitting a histogram to these values, and creating a random variable distribution.
 
         Args:
             bin_num (int, optional): The number of bins for the histogram. Defaults to 100.
             resolved_only (bool, optional): Whether to consider only resolved sources. Defaults to True.
+            use_catalogue (bool, optional): Whether to use the catalogue data. Defaults to True.
+            data_path (Path | None, optional): The path to the preprocessed data file. Defaults to None.
         """
         
         # Get values from config
         # self.percentage_threshold = float(de_config['REDSHIFT_PERCENTAGE_THRESHOLD'])
         self.percentage_threshold = 0.98
         
-        super().__init__("RedshiftDistribution", bin_num, "Redshift", "z", resolved_only=resolved_only)
+        super().__init__(
+            logger_name="RedshiftDistribution",
+            bin_num=bin_num,
+            value_name="Redshift",
+            units="z",
+            resolved_only=resolved_only,
+            use_catalogue=use_catalogue,
+            data_path=data_path)
     
     def get_values(self) -> np.ndarray:
         """
@@ -362,8 +464,12 @@ class RedshiftDistribution(CatalogueDistribution):
             np.ndarray: An array of redshift values that have been filtered to retain a specified percentage of the data.
         """
         # Get all redshift values from the catalogue
-        self.logger.info("Extracting redshift values from the Hardcastle catalogue...")
-        redshift_values = self.catalogue.get_values(Source.Redshift)
+        if self.use_catalogue:
+            self.logger.info("Extracting redshift values from the Hardcastle catalogue...")
+            redshift_values = self.catalogue.get_values(Source.Redshift)
+        else:
+            self.logger.info("Extracting redshift values from the preprocessed data...")
+            redshift_values = self.catalogue["z_best"] 
 
         #  Remove NaN values from the redshift data
         redshift_values = np.array(redshift_values)
