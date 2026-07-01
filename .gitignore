@@ -6,6 +6,7 @@
 *.txt
 *.fits
 *.csv
+*.npy
 
 # IDE folders
 .vscode/
