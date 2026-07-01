@@ -1,37 +1,73 @@
-# This file was created by Ashley and Luna. It provides a complete application that can be used to sample
-# images according to the LOFAR model with certain parameters, and it provides a function that can be used
-# to access that application through other files. This application can be distributed across multiple nodes.
+"""
+This file was created by Ashley and Luna. It provides a complete application that can be used to sample images according
+to the LOFAR model with certain parameters, and it provides a function that can be used to access that application
+through other files. This application can be distributed across multiple nodes.
+"""
+
+import argparse
+import configparser
+import logging
+import math
+from pathlib import PurePath
 
 import numpy as np
-import math
-import argparse
-import model.sampler
-from analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
-import utils.paths
-import utils.logging
-import torch
-from utils.distributed import DistributedUtils
-import utils.paths as pth
-import logging
-from pathlib import PurePath
 import scipy.stats
+import torch
+
+import model.sampler
+import utils.logging
+import utils.paths as pth
+from analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
+from utils.distributed import DistributedUtils
 from utils.power_transform import PeakFluxPowerTransformer
-import configparser
 
 
-def get_path_from_index( index: int, subdir: str, bin_size: int ):
+def get_path_from_index( index: int,
+                        subdir: str,
+                        bin_size: int ) -> tuple[ PurePath, PurePath ]:
+    """
+    Given an index, a subdirectory, and a bin size, this function returns the full path to the FITS file corresponding
+    to that index, as well as the postfix path (the part of the path after the subdirectory).
+
+    Parameters
+    ----------
+    index : int
+        The index of the image
+    subdir : str
+        The subdirectory containing the FITS files
+    bin_size : int
+        The size of each bin
+
+    Returns
+    -------
+    PurePath
+        The full path to the FITS file corresponding to the given index
+    PurePath
+        The postfix path (the part of the path after the subdirectory)
+    """
     lower_bound = int( math.floor( ( index ) / bin_size ) * bin_size )
     upper_bound = int( math.ceil( ( index + 1 ) / bin_size ) * bin_size ) - 1
     postfix = PurePath( *[ f"{lower_bound}-{upper_bound}", f"image{index}.fits" ] )
     full_image_path = ( utils.paths.FITS_PARENT / subdir ) / postfix
     return full_image_path, postfix
 
-def sample( args ):
+
+def sample( args : argparse.Namespace ):
+    """
+    A function to sample images according to the LOFAR model with certain parameters. This function can be distributed
+    across multiple nodes, and it will save the generated images to disk as they are created.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The command-line arguments
+    """
     logger = utils.logging.get_logger( __name__, logging.DEBUG )
 
-
     #Do a sampling loop of batch_size samples and save them to the disk as they're generated, until we reach n_samples
-    model_sampler = model.sampler.Sampler( n_samples=args.batch_size, timesteps=args.timesteps, distribute_model=(not args.use_cpu) )
+    model_sampler = model.sampler.Sampler( n_samples=args.batch_size,
+                                          timesteps=args.timesteps,
+                                          distribute_model=not args.use_cpu )
 
     #SLURM distribution w/ batching
     du = DistributedUtils()
@@ -63,6 +99,8 @@ def sample( args ):
         fpeak_model_dist = lambda n : pt.transform( scipy.stats.uniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
     elif args.distribution == 'loguniform':
         fpeak_model_dist = lambda n : pt.transform( scipy.stats.loguniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
+    else:
+        raise ValueError( f"Unknown distribution {args.distribution}" )
 
 
     # Generate/Sample the samples
@@ -70,13 +108,17 @@ def sample( args ):
     sample_index = bin_start
     image_analyzer = ImageAnalyzer( args.generated_subdir )
     while sample_generated_count < n_samples_to_generate:
-        batch_size = min( args.batch_size, n_samples_to_generate - sample_generated_count ) #to not double-generate at the borders
+         #to not double-generate at the borders
+        batch_size = min( args.batch_size, n_samples_to_generate - sample_generated_count )
         context = fpeak_model_dist( batch_size )[ :, np.newaxis ]
         # if las conditioning is enabled, add it to context
         if args.las_conditioning_enabled:
             context = np.concatenate( (context, scipy.stats.uniform.rvs( 6, 120, size=batch_size )[ :, np.newaxis ]), axis=1 )
 
-        samples = model_sampler.quick_sample( f"{args.model_name}", context=torch.from_numpy( context ), n_samples=batch_size, distribute_model=(not args.use_cpu) )
+        samples = model_sampler.quick_sample( f"{args.model_name}",
+                                             context=torch.from_numpy( context ),
+                                             n_samples=batch_size,
+                                             distribute_model=not args.use_cpu )
         sample_generated_count += batch_size
 
         for i in range( samples.shape[ 0 ] ):
@@ -97,27 +139,31 @@ def sample( args ):
                 las = context[ i, 1 ]
 
             full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
+            # todo: apparently you can't do PurePath.exists() ?
             while full_image_path.exists():
                 sample_index += 1
                 full_image_path, postfix = get_path_from_index( sample_index, args.generated_subdir, args.folder_size )
             if args.las_conditioning_enabled:
-                image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled, LASIZE=las )
+                image_analyzer.save_image_to_fits( image, postfix, FXSCLD=fscaled, LASIZE=las )
             else:
-                image_analyzer.save_image_to_FITS( image, postfix, FXSCLD=fscaled )
+                image_analyzer.save_image_to_fits( image, postfix, FXSCLD=fscaled )
 
             if sample_index > bin_end:
                 logger.error( 'Sample index %i has gone outside allowed value %i', sample_index, bin_end )
             elif sample_index == bin_end:
-                logger.info( 'Sample index %i has reached bin end %i - generated sample count %i/%i', sample_index, bin_end, sample_generated_count, n_samples_to_generate )
+                logger.info( 'Sample index %i has reached bin end %i - generated sample count %i/%i',
+                            sample_index, bin_end, sample_generated_count, n_samples_to_generate )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to use for image generation, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument( "--config",
+                        help=f"Which config to use for image generation, as defined in {pth.PROGRAM_CONFIG.name}",
+                        type=str )
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
     config.read( pth.PROGRAM_CONFIG )
-    for arg in [ 'generated_subdir', 
+    for arg in [ 'generated_subdir',
                  'batch_size', 
                  'n_samples',
                  'folder_size',
