@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
+from .catalogue_downloader import CATALOGUES, CatalogueDownloader
 
 
 class Source(Enum):
@@ -53,72 +54,22 @@ class HardcastleCatalogue:
         NotImplementedError
             If an unsupported catalogue is specified
         """
-        self.logger = get_logger("HardcastleCatalogue", LoggingLevels.DEBUG)
+        self.logger = get_logger("HardcastleCatalogue", LoggingLevels.DEBUG.value)
 
         # Option to only consider resolved sources or not
         self.resolved_only = resolved_only
 
-        # Choice of which catalogue to use; the hardcastle2023 catalogue, or the hardcastle2025 for AGN selection
-        match cat:
-            case "hardcastle2019":
-                self.catalogue_data = self.load_hardcastle_catalogue(cat, paths.DATASET_PARENT / "agn_sample.fits")
-            case "hardcastle2023":
-                self.catalogue_data = self.load_hardcastle_catalogue()
-            case "hardcastle2025":
-                self.catalogue_data = self.load_hardcastle_catalogue(cat, paths.DATASET_PARENT / "agn-v1.1.fits")
-            case _:
-                raise NotImplementedError("Invalid catalogue")
+        # Load the catalogue data
+        if cat not in CATALOGUES:
+            raise NotImplementedError(
+                f"Catalogue {cat} is not supported. Supported catalogues: {list(CATALOGUES.keys())}")
+
+        self.catalogue_data = self._load_hardcastle_catalogue(cat=cat, file_path=paths.CATALOGUE_PATH)
 
 
-    def download_hardcastle_catalogue(
-        self,
-cat : str = "hardcastle2023",
-        save_path : Path = paths.CATALOGUE_PATH):
-        """
-        Downloads a Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
-
-        Parameters
-        ----------
-        cat : str, optional
-            The catalogue to use, by default "hardcastle2023"
-        save_path : Path, optional
-            The path to save the downloaded FITS file, by default paths.CATALOGUE_PATH
-
-        Raises
-        ------
-        NotImplementedError
-            If an unsupported catalogue is specified
-        """
-        if os.path.exists(save_path):
-            self.logger.info(f'Hardcastle catalogue already exists at {save_path}. Skipping download.')
-            return
-
-        match cat:
-            case "hardcastle2019":
-                url = "https://lofar-surveys.org/public/agn_sample.fits"
-            case "hardcastle2023":
-                url = "https://lofar-surveys.org/public/DR2/catalogues/combined-release-v1.2-LM_opt_mass.fits"
-            case "hardcastle2025":
-                url = "https://lofar-surveys.org/public/DR2/AGN_selection/agn-v1.1.fits"
-            case _:
-                raise NotImplementedError("Invalid catalogue")
-        self.logger.info(f'Downloading Hardcastle catalogue from {url}. This will take a while...')
-        response = requests.get(url, stream=True)
-
-        if response.status_code == 200:
-            with open(save_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            self.logger.info(f'Hardcastle catalogue downloaded and saved to {save_path}.')
-        else:
-            self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
-
-
-    def load_hardcastle_catalogue(
-        self,
-        cat : str = "hardcastle2023",
-        file_path : Path = paths.PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
-        ) -> list[tuple]:
+    def _load_hardcastle_catalogue(self,
+                                  cat : str = "hardcastle2023",
+                                  file_path : Path = paths.CATALOGUE_PATH) -> fits.FITS_rec:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
         from the LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the
@@ -129,15 +80,16 @@ cat : str = "hardcastle2023",
         cat : str, optional
             The catalogue to use, by default "hardcastle2023"
         file_path : Path, optional
-            The path to the FITS file containing the Hardcastle catalogue, by default
-            paths.PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
+            The path to the FITS file containing the Hardcastle catalogue, by default paths.CATALOGUE_PATH.
             
         Returns
         -------
-        list[tuple]
-            A list of tuples containing the data for each resolved item in the Hardcastle catalogue.
+        fits.FITS_rec
+            A FITS_rec array containing the data for each resolved item in the Hardcastle catalogue.
         """
-        self.download_hardcastle_catalogue(cat, save_path=file_path)
+        # Download the catalogue if it doesn't exist
+        CatalogueDownloader().download_catalogue(cat, catalogue_path=file_path)
+
         self.logger.info(f"Loading Hardcastle catalogue from {file_path}")
         try:
             with fits.open(file_path) as hdul:
@@ -156,27 +108,9 @@ cat : str = "hardcastle2023",
         return catalogue_data
 
 
-    def get_positions(self) -> list[tuple[float, float]]:
+    def get_value_column(self, value : Source | str) -> np.ndarray:
         """
-        Extracts the positions (RA, DEC) from the resolved items in the Hardcastle catalogue.
-
-        Returns
-        -------
-        list[tuple[float, float]]
-            A list of tuples containing the RA and DEC positions of resolved sources.
-        """
-        positions = []
-        for item in tqdm(self.catalogue_data, desc="Extracting positions..."):
-            ra = item['RA']
-            dec = item['DEC']
-            positions.append((ra, dec))
-        return positions
-
-
-    def get_values(self,
-                   value : Source | str) -> list:
-        """
-        Extracts a specific value from the resolved items in the Hardcastle catalogue.
+        Extracts a specific value column from the items in the loaded Hardcastle catalogue.
 
         Parameters
         ----------
@@ -185,17 +119,16 @@ cat : str = "hardcastle2023",
 
         Returns
         -------
-        list
-            A list of the specified value for each resolved item.
+        np.ndarray
+            A numpy array of all values for the specified value in the catalogue.
         """
         key = value.value if isinstance(value, Source) else value
         return self.catalogue_data[key]
 
 
-    def get_multiple_values(self,
-                            *args : Source | str) -> np.ndarray:
+    def get_multiple_value_columns(self, *args : Source | str) -> np.ndarray:
         """
-        Extracts multiple specified values from the resolved items in the Hardcastle catalogue.
+        Extracts multiple specified value columns from the items in the loaded Hardcastle catalogue.
 
         Parameters
         ----------
@@ -205,8 +138,8 @@ cat : str = "hardcastle2023",
         Returns
         -------
         np.ndarray
-            A 2D numpy array where each column corresponds to one of the specified values and each row correspondsto a
-            resolved item.
+            A 2D numpy array where each column corresponds to one of the specified values and each row corresponds to a
+            different item in the catalogue.
         """
         # Account for the ability to input enum e.g., Source.RA instead of "RA"
         keys = [arg.value if isinstance(arg, Source) else arg for arg in args]
@@ -220,5 +153,5 @@ cat : str = "hardcastle2023",
 if __name__ == "__main__":
     catalogue = HardcastleCatalogue()
     print(f"Loaded {len(catalogue.catalogue_data)} resolved items from the Hardcastle catalogue.")
-    # print(catalogue.get_values(Property.PeakFlux.value)[1])
-    # print(catalogue.get_multiple_values("Source_Name", "Mosaic_ID", "S_Code", "objid")[1])
+    # print(catalogue.get_value_column(Source.PeakFlux)[1])
+    # print(catalogue.get_multiple_value_columns(Source.Name, Source.Mosaic_ID, Source.S_Code, Source.objid)[1])
