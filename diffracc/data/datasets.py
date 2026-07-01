@@ -14,7 +14,6 @@ from tqdm import tqdm
 from ..plotting.image_plots import plot_image_grid
 from ..utils import paths
 from ..utils.logger import get_logger
-from .firstgalaxydata import FIRSTGalaxyData
 from .transforms import EvalTransform, ToTensor, TrainTransform, TrainTransformNoScale
 
 # Assuming this is in datasets.datasets or a similar module
@@ -277,19 +276,6 @@ class TrainDataset(ImagePathDataset):
     def __init__(self, path, img_size=80, **kwargs):
         super().__init__(path, transforms=TrainTransform(img_size), **kwargs)
 
-
-class TrainDatasetFIRST(FIRSTGalaxyData):
-    def __init__(self, img_size=80, **kwargs):
-        super().__init__(
-            selected_split=["train", "test", "valid"],
-            is_balanced=True,
-            transform=TrainTransform(img_size),
-            **kwargs,
-        )
-
-    def set_context(self, *args):
-        logger.warning("FIRSTGalaxyData has class labels as fixed context.")
-        return
 
 class TrainDatasetNoScale(ImagePathDataset):
     def __init__(self, path, img_size=80, **kwargs):

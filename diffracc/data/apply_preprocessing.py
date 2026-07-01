@@ -1,6 +1,5 @@
 import argparse
 import configparser
-import logging
 import time
 from pathlib import Path
 
@@ -12,9 +11,9 @@ import pandas as pd
 from astropy.io import fits
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as pths
-from utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
+from ..utils import paths
+from ..utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
+from ..utils.logger import LoggingLevels, get_logger
 
 
 class CutoutPreprocessor:
@@ -39,14 +38,14 @@ class CutoutPreprocessor:
         exclusive : bool, optional
             Whether to use exclusive criteria for RLAGN selection, by default False
         """
-        self.logger = utils.logging.get_logger('CutoutPreprocessor', logging.DEBUG)
+        self.logger = get_logger('CutoutPreprocessor', LoggingLevels.DEBUG.value)
 
         self.snr_threshold = snr_threshold
         self.edge_max_threshold = edge_max_threshold
         self.exclusive = exclusive
 
         config = configparser.ConfigParser()
-        config.read(pths.PROGRAM_CONFIG)
+        config.read(paths.PROGRAM_CONFIG)
         config = config['DEFAULT']
 
         # Cosmological Parameters
@@ -59,7 +58,7 @@ class CutoutPreprocessor:
 
     def load_catalogue_data_from_fits(self,
                             memmap=True,
-                            dataset_file_path: Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits') \
+                            dataset_file_path: Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits') \
                                 -> tuple[np.ndarray, list[np.ndarray]]:
         """
         Loads the Hardcastle dataset from a FITS file, extracting the catalogue information and pixel values of each
@@ -71,7 +70,7 @@ class CutoutPreprocessor:
             Whether to use memory mapping when loading the FITS file, by default True
         dataset_file_path : Path, optional
             The path to the FITS file containing the Hardcastle dataset, by
-            default pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
+            default paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
 
         Returns
         -------
@@ -96,7 +95,7 @@ class CutoutPreprocessor:
 
 
     def load_initial_dataset(self,
-                             dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
+                             dataset_file_path : Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
                             -> tuple[pd.DataFrame, np.ndarray] | tuple[pd.DataFrame, list[tuple]]:
         """
         Loads the initial dataset with pixel values from a .h5 or .fits file.
@@ -105,7 +104,7 @@ class CutoutPreprocessor:
         ----------
         dataset_file_path : Path, optional
             The path to the initial dataset file with pixel values, by default
-            pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+            paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
 
         Returns
         -------
@@ -528,7 +527,7 @@ class CutoutPreprocessor:
     def save_clean_dataset_to_fits(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
-                           output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+                           output_file_path: Path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
         """
         Saves the cleaned dataset to a FITS file.
 
@@ -539,7 +538,8 @@ class CutoutPreprocessor:
         clean_cat_info : list
             The cleaned catalogue information to save.
         output_file_path : Path, optional
-            The path to save the cleaned dataset FITS file, by default pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+            The path to save the cleaned dataset FITS file, by default
+            paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
         """
         self.logger.info(f"Saving cleaned dataset to {output_file_path}...")
         hdu_list = []
@@ -584,7 +584,7 @@ class CutoutPreprocessor:
                                   clean_dataset: pd.DataFrame,
                                   clean_cat_info: list,
                                   indices: list,
-                                  output_file_path: Path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'):
+                                  output_file_path: Path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'):
         """
         Saves the cleaned dataset to an HDF5 file.
 
@@ -597,7 +597,8 @@ class CutoutPreprocessor:
         indices : list
             The indices of the cleaned dataset.
         output_file_path : Path, optional
-            The path to save the cleaned dataset HDF5 file, by default pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
+            The path to save the cleaned dataset HDF5 file, by default
+            paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
         """
         images = np.stack(clean_dataset['pixel_values'].values, axis=0)
 
@@ -613,7 +614,7 @@ class CutoutPreprocessor:
     def apply_preprocessing(self,
                             vectorised: bool = False,
                             save_hdf5: bool = True,
-                            dataset_file_path: Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5',
+                            dataset_file_path: Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5',
                             output_file_path: Path | None = None):
         """
         Applies the pre-processing steps to the Hardcastle dataset, filtering out images that do not meet the specified
@@ -626,15 +627,15 @@ class CutoutPreprocessor:
         save_hdf5 : bool, optional
             Whether to save the cleaned dataset as an HDF5 file (True) or a FITS file (False), by default True
         dataset_file_path : Path, optional
-            The path to the initial dataset file, by default pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+            The path to the initial dataset file, by default paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
         output_file_path : Path | None, optional
             The path to save the cleaned dataset file, by default None
         """
         if output_file_path is None:
             if save_hdf5:
-                output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
+                output_file_path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
             else:
-                output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+                output_file_path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
 
         # Load the initial dataset with pixel values
         dataset, cat_info = self.load_initial_dataset(dataset_file_path)
@@ -705,14 +706,14 @@ if __name__ == "__main__":
                         action='store_true')
     parser.add_argument("--dataset_file_path",
                         help="The path to the initial dataset file with pixel values, as a .h5 or .fits file. Default "
-                        f"{pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'}",
+                        f"{paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'}",
                         type=Path,
-                        default=pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5')
+                        default=paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5')
     parser.add_argument("--output_file_path",
                         help="The path to save the cleaned dataset file, as a .h5 or .fits file. Default "
-                        f"{pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'}",
+                        f"{paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'}",
                         type=Path,
-                        default=pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5')
+                        default=paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5')
     parser.add_argument("--snr_threshold",
                         help="The S/N threshold to apply when filtering the dataset. Default 15.",
                         type=float,

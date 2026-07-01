@@ -1,5 +1,4 @@
 import configparser
-import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,9 +8,9 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as pths
-from utils.distributed import distribute
+from ..utils import paths
+from ..utils.distributed import distribute
+from ..utils.logger import LoggingLevels, get_logger
 
 
 class CutoutDownloader:
@@ -30,11 +29,11 @@ class CutoutDownloader:
         creating a reusable requests session with connection pooling. It also initializes a counter for recent errors
         and a timestamp for the last request to implement rate limiting.
         """
-        self.logger = utils.logging.get_logger("CutoutDownloader", logging.DEBUG)
+        self.logger = get_logger("CutoutDownloader", LoggingLevels.DEBUG.value)
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(pths.PROGRAM_CONFIG)
+        config.read(paths.PROGRAM_CONFIG)
         de_config = config['DEFAULT']
         self.folder_size = int(de_config['FOLDER_SIZE'])
 
@@ -51,7 +50,7 @@ class CutoutDownloader:
 
     # ---------- SET UP ----------
     def read_positions(self,
-                       file_path : Path = pths.INITIAL_DATASET/"resolved_positions.txt")\
+                       file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt")\
             -> list[tuple[float, float]]:
         """
         Reads the RA and DEC positions of resolved sources from a text file and returns them as a list of tuples.
@@ -60,7 +59,7 @@ class CutoutDownloader:
         ----------
         file_path : Path, optional
             The path to the text file containing the RA and DEC positions, by default
-            pths.INITIAL_DATASET/"resolved_positions.txt"
+            paths.INITIAL_DATASET/"resolved_positions.txt"
 
         Returns
         -------
@@ -83,7 +82,7 @@ class CutoutDownloader:
 
     def make_folder(self,
                     folder_num : int,
-                    directory_path : Path = pths.DATASET_PARENT / "dr2_cutouts_download")\
+                    directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download")\
             -> Path:
         """
         Creates a folder for storing cutout files. The folder will be named in the format "start_index-end_index", where
@@ -220,7 +219,7 @@ class CutoutDownloader:
 
 
     def download_all_cutouts(self,
-                             directory_path : Path = pths.DATASET_PARENT / "dr2_cutouts_download",
+                             directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download",
                              custom_positions : list[tuple[float, float]] | None = None):
         """
         Downloads cutouts for all positions in the Hardcastle catalogue, or for a custom list of positions if provided.
@@ -229,7 +228,7 @@ class CutoutDownloader:
         ----------
         directory_path : Path, optional
             The path to the directory where the cutout files will be saved, by default
-            pths.DATASET_PARENT/"dr2_cutouts_download"
+            paths.DATASET_PARENT/"dr2_cutouts_download"
         custom_positions : list[tuple[float, float]] | None, optional
             A list of RA and DEC positions to use instead of loading from the Hardcastle catalogue. This is useful for
             testing or if you want to download a specific subset of cutouts, by default None
@@ -247,7 +246,7 @@ class CutoutDownloader:
             os.makedirs(target_directory)
 
         # Clean the error log file for this run
-        error_log_path = pths.INITIAL_DATASET / "download_errors.log"
+        error_log_path = paths.INITIAL_DATASET / "download_errors.log"
         if os.path.exists(error_log_path):
             self.logger.info(f'Cleaning existing error log file {error_log_path}...')
             os.remove(error_log_path)
@@ -284,7 +283,7 @@ class CutoutDownloader:
                 i, err = f.result()
 
                 if err and err != "exists":
-                    with open(pths.INITIAL_DATASET / "download_errors.log", "a", encoding="utf-8") as log:
+                    with open(paths.INITIAL_DATASET / "download_errors.log", "a", encoding="utf-8") as log:
                         log.write(f"{i}: {err}\n")
 
 

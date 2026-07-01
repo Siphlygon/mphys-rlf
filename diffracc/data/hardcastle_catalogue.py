@@ -1,4 +1,3 @@
-import logging
 import os
 from enum import Enum
 from pathlib import Path
@@ -8,8 +7,8 @@ import requests
 from astropy.io import fits
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as pths
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
 
 
 class Source(Enum):
@@ -54,7 +53,7 @@ class HardcastleCatalogue:
         NotImplementedError
             If an unsupported catalogue is specified
         """
-        self.logger = utils.logging.get_logger("HardcastleCatalogue", logging.DEBUG)
+        self.logger = get_logger("HardcastleCatalogue", LoggingLevels.DEBUG)
 
         # Option to only consider resolved sources or not
         self.resolved_only = resolved_only
@@ -62,18 +61,18 @@ class HardcastleCatalogue:
         # Choice of which catalogue to use; the hardcastle2023 catalogue, or the hardcastle2025 for AGN selection
         match cat:
             case "hardcastle2019":
-                self.catalogue_data = self.load_hardcastle_catalogue(cat, pths.DATASET_PARENT / "agn_sample.fits")
+                self.catalogue_data = self.load_hardcastle_catalogue(cat, paths.DATASET_PARENT / "agn_sample.fits")
             case "hardcastle2023":
                 self.catalogue_data = self.load_hardcastle_catalogue()
             case "hardcastle2025":
-                self.catalogue_data = self.load_hardcastle_catalogue(cat, pths.DATASET_PARENT / "agn-v1.1.fits")
+                self.catalogue_data = self.load_hardcastle_catalogue(cat, paths.DATASET_PARENT / "agn-v1.1.fits")
             case _:
                 raise NotImplementedError("Invalid catalogue")
 
 
     def download_hardcastle_catalogue(self,
                                       cat : str = "hardcastle2023",
-                                      save_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
+                                      save_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
         """
         Downloads a Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -83,7 +82,7 @@ class HardcastleCatalogue:
             The catalogue to use, by default "hardcastle2023"
         save_path : Path, optional
             The path to save the downloaded FITS file, by default
-            pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
 
         Raises
         ------
@@ -117,7 +116,7 @@ class HardcastleCatalogue:
 
     def load_hardcastle_catalogue(self,
                                   cat : str = "hardcastle2023",
-                                  file_path : Path = pths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
+                                  file_path : Path = paths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
                                   ) -> list[tuple]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
@@ -130,7 +129,7 @@ class HardcastleCatalogue:
             The catalogue to use, by default "hardcastle2023"
         file_path : Path, optional
             The path to the FITS file containing the Hardcastle catalogue, by default
-            pths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
+            paths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
             
         Returns
         -------

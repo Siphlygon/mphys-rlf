@@ -1,15 +1,14 @@
 import configparser
-import logging
 import os
 from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
-from cutout_downloader import CutoutDownloader
 
-import utils.logging
-import utils.paths as pths
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from .cutout_downloader import CutoutDownloader
 
 
 class CutoutDownloadVerifier:
@@ -26,11 +25,11 @@ class CutoutDownloadVerifier:
         Initialises the CutoutDownloadVerifier by setting up logging and reading configuration parameters from the
         config.ini file.
         """
-        self.logger = utils.logging.get_logger("CutoutDownloadVerifier", logging.DEBUG)
+        self.logger = get_logger("CutoutDownloadVerifier", LoggingLevels.DEBUG.value)
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(pths.PROGRAM_CONFIG)
+        config.read(paths.PROGRAM_CONFIG)
         de_config = config['DEFAULT']
         self.folder_size = int(de_config['FOLDER_SIZE'])
 
@@ -62,7 +61,7 @@ class CutoutDownloadVerifier:
 
 
     def verify_downloads(self,
-                         download_path : Path = pths.DATASET_PARENT/"dr2_cutouts_download"):
+                         download_path : Path = paths.DATASET_PARENT/"dr2_cutouts_download"):
         """
         Verifies the completeness of downloaded cutout files in the specified download path. It checks for missing or
         corrupted files and re-downloads them if necessary.
@@ -71,7 +70,7 @@ class CutoutDownloadVerifier:
         ----------
         download_path : Path, optional
             The path to the directory containing the downloaded cutout files, by default
-            pths.DATASET_PARENT/"dr2_cutouts_download"
+            paths.DATASET_PARENT/"dr2_cutouts_download"
         """
         self.logger.info('Starting verification of downloaded cutouts...')
         downloader = CutoutDownloader()
@@ -108,7 +107,7 @@ class CutoutDownloadVerifier:
             for pos_num in files_to_redownload:
                 ra, dec = hdc_positions[pos_num]
                 requested_positions.append([ra, dec])
-            self.logger.info(f'Re-downloading missing cutout files...')
+            self.logger.info('Re-downloading missing cutout files...')
             downloader.download_all_cutouts(custom_positions=requested_positions)
             self.logger.info("Finished re-downloading. Note that some files from the LOFAR API will always be missing.")
             # Count the number of files present in dr2_cutouts directly

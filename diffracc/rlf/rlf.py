@@ -9,8 +9,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 from tqdm import tqdm
 
-from hardcastle_catalogue import HardcastleCatalogue, Source
-
+from ..data.hardcastle_catalogue import HardcastleCatalogue, Source
 from ..utils import functions as func
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger

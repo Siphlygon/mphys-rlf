@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import h5py
@@ -6,9 +5,9 @@ import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as pths
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 class HardcastleDatasetCreator:
@@ -17,7 +16,7 @@ class HardcastleDatasetCreator:
     pixel values from downloaded cutout files.
     """
     def __init__(self):
-        self.logger = utils.logging.get_logger("hardcastle dataset creator", logging.DEBUG)
+        self.logger = get_logger("hardcastle dataset creator", LoggingLevels.DEBUG.value)
 
         # Initialise class attributes
         self.save_hdf5 = True  # Whether to save the dataset in HDF5 format or FITS format
@@ -26,7 +25,7 @@ class HardcastleDatasetCreator:
 
     # ---------- FILE INPUT ----------
     def load_hardcastle_header(self,
-                               file_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits") \
+                               file_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits") \
             -> tuple[list[tuple], fits.Header] | tuple[list[tuple], fits.column.ColDefs]:
         """
         Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items,
@@ -94,7 +93,7 @@ class HardcastleDatasetCreator:
 
 
     def load_cutout_images(self,
-                           folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/'
+                           folder_path : Path = paths.DATASET_PARENT/'dr2_cutouts_download/'
                            )-> tuple[np.ndarray, np.ndarray]:
         """
         Loads all cutout images from a specified folder, returning the pixel values and their corresponding indices.
@@ -103,7 +102,7 @@ class HardcastleDatasetCreator:
         ----------
         folder_path : Path, optional
             The path to the folder containing the cutout FITS files, by default
-            pths.DATASET_PARENT/'dr2_cutouts_download/'
+            paths.DATASET_PARENT/'dr2_cutouts_download/'
 
         Returns
         -------
@@ -171,7 +170,7 @@ class HardcastleDatasetCreator:
                      cat_header : fits.Header,
                      pixel_values : np.ndarray,
                      indices : list[int],
-                     save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
+                     save_path : Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'):
         """
         Saves the full Hardcastle catalogue with pixel values to a FITS file.
 
@@ -186,7 +185,7 @@ class HardcastleDatasetCreator:
         indices : list[int]
             The list of indices corresponding to the pixel values, to link back to the original catalogue information.
         save_path : Path, optional
-            The path to save the FITS file, by default pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
+            The path to save the FITS file, by default paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
         """
         self.logger.info(f"Saving Hardcastle catalogue to {save_path}")
         hdu_list = []
@@ -237,7 +236,7 @@ class HardcastleDatasetCreator:
                    columns : fits.column.ColDefs,
                    pixel_values : np.ndarray,
                    indices : list[int],
-                   save_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
+                   save_path : Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'):
         """
         Saves the full Hardcastle catalogue with pixel values to an HDF5 file.
 
@@ -322,8 +321,8 @@ class HardcastleDatasetCreator:
     # ---------- MAIN ----------
     def create_hardcastle_dataset(self,
                                   save_hdf5: bool = True,
-                                  file_path : Path = pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
-                                  folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/',
+                                  file_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
+                                  folder_path : Path = paths.DATASET_PARENT/'dr2_cutouts_download/',
                                   save_path : Path | None = None):
         """
         Creates the full Hardcastle dataset by combining catalogue information with pixel values from cutout images,
@@ -335,9 +334,9 @@ class HardcastleDatasetCreator:
             Whether to save the dataset in HDF5 format, by default True
         file_path : Path, optional
             The path to the FITS file containing the Hardcastle catalogue headers, by default
-            pths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
         folder_path : Path, optional
-            The path to the folder containing the cutout images, by default pths.DATASET_PARENT/'dr2_cutouts_download/'
+            The path to the folder containing the cutout images, by default paths.DATASET_PARENT/'dr2_cutouts_download/'
         save_path : Path | None, optional
             The path where the dataset will be saved, by default None
         """
@@ -358,9 +357,9 @@ class HardcastleDatasetCreator:
         # Save file
         if save_path is None:
             if self.save_hdf5:
-                save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+                save_path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
             else:
-                save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
+                save_path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
 
         if self.save_hdf5:
             self.save_to_h5(catalogue_info, columns, hardcastle_catalogue, indices, save_path)
