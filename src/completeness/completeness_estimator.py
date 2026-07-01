@@ -1,22 +1,23 @@
 import argparse
-from scipy.optimize import curve_fit
-import numpy as np
-from tqdm import tqdm
-import astropy.stats
-import pandas as pd
-import matplotlib.pyplot as plt
-import scipy.signal
-from pathlib import Path
-from typing import Callable
+import configparser
 import inspect
 import logging
-import configparser
+from pathlib import Path
+from typing import Callable
 
-from utils.catalogue_dist import RMSDistribution
-from utils.img_data_arrays import ImageDataArrays
-import utils.paths as pth
+import astropy.stats
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scipy.signal
+from scipy.optimize import curve_fit
+from tqdm import tqdm
+
 import utils.logging
+import utils.paths as pth
+from utils.catalogue_dist import RMSDistribution
 from utils.functions import sigmoid
+from utils.img_data_arrays import ImageDataArrays, SubdirData
 
 
 class CompletenessEstimator:
@@ -32,17 +33,21 @@ class CompletenessEstimator:
         A class to estimate the completeness of the dataset by creating mock images with noise and checking if they are
         detectable based on a peak-flux limit. 
 
-        Args:
-            config_str (str): The specific configuration in the config file to use.
-            which_dataset (str, optional): Which of the two subdir to use in the analysis. Defaults to "GENERATED_SUBDIR"
-            override_data (bool, optional): Whether to not use ImageDataArrays as the source of data. Defaults to False.
+        Parameters
+        ----------
+        config_str : str
+            The specific configuration in the config file to use.
+        which_dataset : str | None, optional
+            Which of the two subdir to use in the analysis. Defaults to "GENERATED_SUBDIR".
+        override_data : bool, optional
+            Whether to not use ImageDataArrays as the source of data. Defaults to False.
         """
         self.logger = utils.logging.get_logger("CompletenessEstimator", logging.DEBUG)
 
-        assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"], "which_dataset must be either 'GENERATED_SUBDIR' or 'DATASET_SUBDIR'"
+        assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"],(
+            "which_dataset must be either 'GENERATED_SUBDIR' or 'DATASET_SUBDIR'")
         self.which_dataset = which_dataset.split("_")[0].lower()  # "generated" or "dataset"
 
-        # Initialise the RMS distribution finder
         self.rms_dist = RMSDistribution()
 
         # Read parameters from the config.ini file
@@ -57,15 +62,16 @@ class CompletenessEstimator:
 
         if not override_data:
             # Extract all the relevant arrays from the specified dataset
-            self.logger.info(f"Extracting data arrays for dataset")
+            self.logger.info("Extracting data arrays for dataset")
             config_data_arrays = ImageDataArrays(self.config)
             self.data = config_data_arrays.__getattribute__(self.which_dataset + "_data")
         else:
-            self.data = Data()
+            self.data = SubdirData()
+
 
 
     # ---------- FITTING FUNCTION ----------
-    def fit_function(self,
+    def _fit_function(self,
                      bin_centers : np.ndarray,
                      completeness : np.ndarray,
                      yerr : np.ndarray,
@@ -75,12 +81,12 @@ class CompletenessEstimator:
                      show_progress : bool = True,
                      **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """
-        Fit a function to the completeness curve.
+        Fit a function to a completeness curve and return the fitted parameters and covariance matrix.
 
         Parameters
         ----------
         bin_centers : np.ndarray
-            The centers of the flux bins used for calculating completeness.
+            The centers of the flux bins used for calculating completeness. Already expected to be in log10(flux) space.
         completeness : np.ndarray
             The completeness values calculated for each flux bin.
         yerr : np.ndarray
@@ -100,15 +106,18 @@ class CompletenessEstimator:
 
         Returns
         -------
-        tuple[np.ndarray, np.ndarray]
-            A tuple containing the fitted parameters and the covariance matrix of the fit.
+        popt : np.ndarray
+            The fitted parameters for the given function.
+        pcov : np.ndarray
+            The covariance matrix of the fitted parameters.
         """
-        # `bin_centers` are expected to already be in log10(flux) space.
         bin_centers = np.asarray(bin_centers, dtype=float)
         completeness = np.asarray(completeness, dtype=float)
         yerr = np.asarray(yerr, dtype=float)
+
         # Provide a sensible default initial guess based on the function signature.
         if initial_guess is None:
+            # Determine the number of parameters in the function signature, excluding the first parameter (the data).
             try:
                 sig = inspect.signature(function)
                 params = list(sig.parameters.values())[1:]  # drop x
@@ -124,11 +133,13 @@ class CompletenessEstimator:
             else:
                 x0_guess = float(np.median(bin_centers))
 
+            # Guess the slope/width based on the range of the bin centers.
             span = float(np.ptp(bin_centers)) if bin_centers.size > 1 else 1.0
             span = span if span > 0 else 1.0
             k_guess = 5.0 / span
             width_guess = span / 5.0
 
+            # Guess the initial parameters based on the number of parameters.
             if n_params == 4:
                 initial_guess = [x0_guess, k_guess, 1.0, 0.0]
             elif n_params == 3:
@@ -148,7 +159,8 @@ class CompletenessEstimator:
 
             if bin_centers.shape != completeness.shape:
                 raise ValueError(
-                    f"bin_centers and completeness must have the same shape; got {bin_centers.shape} vs {completeness.shape}"
+                    f"bin_centers and completeness must have the same shape; got {bin_centers.shape}"
+                    f" vs {completeness.shape}"
                 )
             if yerr.shape != completeness.shape:
                 raise ValueError(
@@ -166,13 +178,15 @@ class CompletenessEstimator:
                 bin_centers = bin_centers[mask]
                 completeness = completeness[mask]
                 yerr = yerr[mask]
+
             if show_progress:
                 self.logger.info(f"Fitting {function.__name__} function to completeness curve...")
 
             if initial_guess is None:
                 popt, pcov = curve_fit(function, bin_centers, completeness, sigma=yerr, maxfev=100000, **kwargs)
             else:
-                popt, pcov = curve_fit(function, bin_centers, completeness, p0=initial_guess, sigma=yerr, maxfev=100000, **kwargs)
+                popt, pcov = curve_fit(function, bin_centers, completeness,
+                                       p0=initial_guess, sigma=yerr, maxfev=100000, **kwargs)
 
             # Save fitted parameters to a file for use in RLF
             if output_file:
@@ -188,7 +202,8 @@ class CompletenessEstimator:
 
         except Exception as e:
             self.logger.error(f"Error: {function.__name__} fit failed: {e}")
-            return None, None
+            return np.array([]), np.array([])
+
 
     def plot_completeness(self,
                           bin_centers: np.ndarray,
@@ -203,7 +218,7 @@ class CompletenessEstimator:
         Parameters
         ----------
         bin_centers : np.ndarray
-            The centers of the flux bins used for calculating completeness.
+            The centers of the flux bins used for calculating completeness. Already expected to be in log10(flux) space.
         completeness : np.ndarray
             The completeness values calculated for each flux bin.
         yerr : np.ndarray
@@ -216,10 +231,7 @@ class CompletenessEstimator:
             The name of the file to save the plot. If None, the plot will not be saved. Defaults to None.
         """
         assert popt is not None, "You need a fitted completeness function to plot."
-        if save_name is None:
-            save_name = f"completeness_curve.png"
 
-        # `bin_centers` are in log10(flux) throughout this module.
         # Plot in linear flux on a log-scaled x-axis for readability.
         flux_centers = 10 ** bin_centers
 
@@ -237,11 +249,14 @@ class CompletenessEstimator:
         plt.xlabel("Integrated Flux Density (mJy/beam)")
         plt.ylabel("Completeness")
         plt.legend()
-        plt.savefig(dpi=1000, fname=save_name)
+        if save_name is not None:
+            plt.savefig(dpi=1000, fname=save_name)
         plt.show()
 
+
+
     # ---------- COMPLETENESS CALCULATION ----------
-    def create_beam_corr_noise(self,
+    def _create_beam_corr_noise(self,
                                filter_kernel: np.ndarray,
                                rms : float | np.ndarray = 95e-3,
                                shape: tuple[int, int, int] = (5, 80, 80),
@@ -272,7 +287,8 @@ class CompletenessEstimator:
         noise = scipy.signal.fftconvolve(noise, filter_kernel, mode='same')
         return noise
 
-    def detect_mock_sources(self,
+
+    def _detect_mock_sources(self,
                             images: np.ndarray,
                             model_fluxes: np.ndarray,
                             show_progress: bool = True) -> tuple[np.ndarray, np.ndarray]:
@@ -291,26 +307,31 @@ class CompletenessEstimator:
         
         Returns
         -------
-        tuple[np.ndarray, np.ndarray]
-            A tuple containing two numpy arrays:
-            - mock_fluxes: The fluxes of the mock sources created by adding noise patches to the input images.
-            - detectable: A boolean array indicating whether each mock source is detectable based on the peak-flux threshold.
+        mock_fluxes : np.ndarray
+            The fluxes of the mock sources created by adding noise patches to the input images.
+        detectable : np.ndarray
+            A boolean array indicating whether each mock source is detectable based on the peak-flux threshold.
         """
         # Precompute correlation / blur parameters used to create beam-correlated noise.
         # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
         correlation_scale = 6 / 1.5
         x = np.arange(-correlation_scale, correlation_scale)
         y = np.arange(-correlation_scale, correlation_scale)
-        X, Y = np.meshgrid(x, y)
-        dist = np.sqrt(X * X + Y * Y)
+        x, y = np.meshgrid(x, y)
+
+        # Compute the distance from the center of the kernel for each pixel
+        dist = np.sqrt(x * x + y * y)
         dist = dist[np.newaxis, :, :]
-        _filter_kernel_2d = np.exp(-dist ** 2 / (2 * correlation_scale)) * (1 / (2 * np.pi * correlation_scale ** 2))  # Normalise the kernel
+
+        # Normalise the kernel
+        _filter_kernel_2d = np.exp(-dist**2 / (2*correlation_scale)) * (1 / (2*np.pi*correlation_scale**2))
 
         # Initialise empty arrays to store the mock fluxes (real images w/ noise) and whether they are detectable
         mock_fluxes = np.empty((images.shape[0] * self.num_noise_patches), dtype=float)
         detectable = np.empty((images.shape[0] * self.num_noise_patches), dtype=bool)
 
-        for i in tqdm(range(images.shape[0]), desc='Creating mock images and running detection logic', disable=not show_progress):
+        for i in tqdm(range(images.shape[0]),
+                      desc='Creating mock images and running detection logic', disable=not show_progress):
             # Use start/end indices so each image occupies a contiguous block of the arrays.
             start = i * self.num_noise_patches
             end = start + self.num_noise_patches
@@ -320,7 +341,8 @@ class CompletenessEstimator:
 
             # Create and apply noise patches for every input image
             mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
-            noise_patches = self.create_beam_corr_noise(_filter_kernel_2d, rms=rms, shape=(self.num_noise_patches, 80, 80))
+            noise_patches = self._create_beam_corr_noise(_filter_kernel_2d,
+                                                        rms=rms, shape=(self.num_noise_patches, 80, 80))
 
             # Ensure the image slice is 2D so it can broadcast against (n_patches, 80, 80).
             # Some FITS readers return shapes like (1, 80, 80) for a single image.
@@ -337,30 +359,40 @@ class CompletenessEstimator:
             threshold = self.sigma_threshold * rms
             detectable[start:end] = peak_fluxes >= threshold
 
-        # save mock fluxes to a file for later use        if show_progress:
-        self.logger.info(f"Saving mock fluxes and detectability to file...")
-        with open("mock_fluxes_detectability.txt", "w") as f:
+        # save mock fluxes to a file for later use
+        if show_progress:
+            self.logger.info("Saving mock fluxes and detectability to file...")
+        with open("mock_fluxes_detectability.txt", "w", encoding="utf-8") as f:
             f.write("Mock_Flux(mJy/beam)\tDetectable\n")
             for flux, detect in zip(mock_fluxes, detectable):
                 f.write(f"{flux}\t{detect}\n")
 
         return mock_fluxes, detectable
 
-    def compute_completeness_per_bin(self,
+
+    def _compute_completeness_per_bin(self,
                              int_flux_bins : np.ndarray,
                              mock_sources : pd.DataFrame,
                              show_progress: bool = True) -> tuple[np.ndarray, np.ndarray]:
         """
-        Computes the completeness by calculating the fraction of detectable sources in every integrated flux bin.
-        Also produces y-axis errors for these values based on the Poisson 1-sigma confidence itnervals.
+        Computes the completeness by calculating the fraction of detectable sources in every integrated flux bin. Also
+        produces y-axis errors for these values based on the Poisson 1-sigma confidence itnervals.
 
-        Args:
-            int_flux_bins (np.ndarray): The integrated flux bins.
-            mock_sources (pd.DataFrame): A dataframe containing the mock fluxes and whether they were detected.
-            show_progress (bool, optional): Whether to show progress bars for the different stages of the completeness estimation. Defaults to True.
+        Parameters
+        ----------
+        int_flux_bins : np.ndarray
+            The integrated flux bins.
+        mock_sources : pd.DataFrame
+            A dataframe containing the mock fluxes and whether they were detected.
+        show_progress : : bool, optional
+            Whether to show progress bars for the different stages of the completeness estimation. Defaults to True.
 
-        Returns:
-            tuple(np.ndarray, np.ndarray): The completeness values and calculated y errors for each integrated flux bin.
+        Returns
+        -------
+        completeness : np.ndarray
+            The completeness values for each flux bin.
+        yerr : np.ndarray
+            The errors on the y-axis of the completeness points, based on Poisson statistics.
         """
         # Count detected sources in each bin and calculate completeness
         n_bins = len(int_flux_bins) - 1
@@ -370,9 +402,11 @@ class CompletenessEstimator:
         # For all bins
         for i in tqdm(range(n_bins), desc='Calculating completeness per flux bin', disable=not show_progress):
             # Select sources in this flux bin
-            in_bin = (mock_sources['mock_flux'] >= int_flux_bins[i]) & (mock_sources['mock_flux'] < int_flux_bins[i + 1])
+            in_bin = (mock_sources['mock_flux'] >= int_flux_bins[i]) & (
+                mock_sources['mock_flux'] < int_flux_bins[i+1])
 
-            self.logger.info(f"Flux bin {int_flux_bins[i]:.3f} - {int_flux_bins[i + 1]:.3f} mJy/beam: {np.sum(in_bin)} sources")
+            self.logger.info(f"Flux bin {int_flux_bins[i]:.3f} - {int_flux_bins[i+1]:.3f}"
+                             f" mJy/beam: {np.sum(in_bin)} sources")
 
             # Calculate the fraction of detectable sources in this bin
             n_detect = mock_sources[
@@ -394,16 +428,17 @@ class CompletenessEstimator:
 
         # Handle confidence interval which is the error on our completeness
         conf_interval = astropy.stats.poisson_conf_interval(np.array(completeness) * total_counts,
-                                                            interval='frequentist-confidence', sigma=1.0)
+                                                            interval='frequentist-confidence', sigma=1)
         conf_interval /= total_counts
         conf_interval[:, zero_counts] = 0
         yerr = np.array(conf_interval[1] - conf_interval[0])
 
         return completeness, yerr
 
+
     def estimate_completeness(self,
                               function: Callable = sigmoid,
-                              initial_guess : list[float] | np.ndarray[float, np.dtype[np.float64]] | None = None,
+                              initial_guess : list[float] | np.ndarray | None = None,
                               comp_output_file : str | Path | None = None,
                               func_output_file : str | Path | None = None,
                               plot_completeness : bool = True,
@@ -422,7 +457,7 @@ class CompletenessEstimator:
         ----------
         function : Callable, optional
             The function to fit to the completeness curve. Defaults to sigmoid.
-        initial_guess : list[float] | np.ndarray[float, np.dtype[np.float64]] | None, optional
+        initial_guess : list[float] | np.ndarray | None, optional
             Initial guess for the parameters of the function to be fitted. Defaults to None.
         comp_output_file : str | Path | None, optional
             The file to save the binned completeness estimates to. Defaults to None.
@@ -434,9 +469,23 @@ class CompletenessEstimator:
             The name of the file to save the completeness plot to. Defaults to None.
         show_progress : bool, optional
             Whether to show progress bars for the different stages of the completeness estimation. Defaults to True.
+
+        Returns
+        -------
+        log_bin_centers : np.ndarray
+            The log10 of the bin centers used for calculating completeness.
+        completeness : np.ndarray
+            The completeness values calculated for each flux bin.
+        yerr : np.ndarray
+            The errors on the y-axis of the completeness points, based on Poisson statistics.
+        fitted_params : np.ndarray
+            The fitted parameters for the given function.
+        pcov : np.ndarray
+            The covariance matrix of the fitted parameters.
         """
         # Get the mock fluxes and whether they are detectable for all the images in the dataset
-        mock_fluxes, detectable = self.detect_mock_sources(self.data.model_images, self.data.model_fluxes,  show_progress)
+        mock_fluxes, detectable = self._detect_mock_sources(self.data.model_images,
+                                                            self.data.model_fluxes, show_progress)
 
         # Combine these into a dataframe for easier analysis
         mock_sources = pd.DataFrame()
@@ -446,20 +495,20 @@ class CompletenessEstimator:
         # Calculate completeness per bin and y errors, and save to a file if desired
         int_flux_bins = np.logspace(self.min_log_flux, self.max_log_flux, num=self.num_flux_bins)  # in mJy
         bin_centers = 0.5 * (int_flux_bins[1:] + int_flux_bins[:-1])
-        completeness, yerr = self.compute_completeness_per_bin(int_flux_bins, mock_sources, show_progress)
+        completeness, yerr = self._compute_completeness_per_bin(int_flux_bins, mock_sources, show_progress)
 
         # Store in a file for later use
         if comp_output_file is not None:
             if show_progress:
-                self.logger.info(f"Saving binned completeness estimates to file...")
-            with open(comp_output_file, "w") as f:
+                self.logger.info("Saving binned completeness estimates to file...")
+            with open(comp_output_file, "w", encoding="utf-8") as f:
                 f.write("Flux_bin_center(mJy/beam)\tCompleteness\tError\n")
                 for center, comp, err in zip(bin_centers, completeness, yerr):
                     f.write(f"{center}\t{comp}\t{err}\n")
 
-        # Fit a function to the completeness curve and plot
+        # Fit a function to the completeness curve. Even if not plotting, if this fit fails something is wrong
         log_bin_centers = np.log10(bin_centers)
-        fitted_params, pcov = self.fit_function(
+        fitted_params, pcov = self._fit_function(
             log_bin_centers,
             completeness,
             yerr,
@@ -475,29 +524,12 @@ class CompletenessEstimator:
         return log_bin_centers, completeness, yerr, fitted_params, pcov
 
 
-class Data(object):
-    pass
-
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument(
+        "--config",
+        help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str)
     args = parser.parse_args()
 
-    # completeness_estim = SizeBinnedCompleteness(args.config)
-    do_size_binned_completeness = True
-    if do_size_binned_completeness:
-        root = pth.STORAGE_PARENT / "src/completeness/"
-        folder_name = "snr5_exclusive_50k"
-        completeness_estim = SizeBinnedCompleteness(folder_name, override_data=True,
-            paths_to_use=[root / (folder_name + "_catalogs"),
-                        root / (folder_name + "_images/gaus_model"),
-                        root / (folder_name + "_logs")],
-            output_file=f"estimated_angular_sizes_{folder_name}.csv"
-        )
-        completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
-        completeness_estim.plot_size_binned_completeness(completeness_results)
-    else:
-        completeness_estim = CompletenessEstimator(args.config)
-        completeness_estim.estimate_completeness()
+    completeness_estim = CompletenessEstimator(args.config)
+    completeness_estim.estimate_completeness()

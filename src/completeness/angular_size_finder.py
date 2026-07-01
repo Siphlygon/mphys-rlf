@@ -1,17 +1,18 @@
-from pathlib import Path
-from astropy.io import fits
-from tqdm import tqdm
 import logging
-import numpy as np
-import matplotlib.pyplot as plt
-from shapely.geometry import Polygon, MultiPolygon
-from shapely.ops import unary_union
-import pandas as pd
-import os 
-from matplotlib import transforms
+import os
+from pathlib import Path
 
-import utils.paths as paths
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from astropy.io import fits
+from matplotlib import transforms
+from shapely.geometry import MultiPolygon, Polygon
+from shapely.ops import unary_union
+from tqdm import tqdm
+
 import utils.logging
+import utils.paths as paths
 from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
@@ -54,7 +55,7 @@ class MakeShape():
         # Calculate the convex hull of the combined shape, and find the maximum distance between any two points on the
         # convex hull, which will be used as an estimate of the angular size of the source
         self.hull = self.combined_polygon.convex_hull
-        hull_points = np.asarray(self.hull.exterior.coords)
+        hull_points = np.asarray(self.hull.exterior.coords)  # type: ignore
 
         self.best_coords, self.mdist2 = self.find_furthest_points(hull_points)
         self.hull_points = hull_points
@@ -108,6 +109,7 @@ class MakeShape():
         p[:, 1] = y0 + a * sa * ct + b * ca * st
         return Polygon(p)
 
+
     def create_ellipse_list(self, clist : pd.DataFrame) -> list[Polygon]:
         """
         A function to create a list of Polygon objects representing the ellipses for each component in the component
@@ -126,7 +128,8 @@ class MakeShape():
             A list of Shapely Polygon objects representing the ellipses for each component.
         """
         ellist = []
-        for component in tqdm(clist.iterrows(), desc="Creating ellipses for components...", disable=not self.show_progress):
+        for component in tqdm(clist.iterrows(),
+                              desc="Creating ellipses for components...", disable=not self.show_progress):
             ra_n = component[1]['RA']
             dec_n = component[1]['DEC']
 
@@ -145,6 +148,7 @@ class MakeShape():
             ellist.append(new_polygon)
 
         return ellist
+
 
     def find_furthest_points(self, points: np.ndarray) -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
         """
@@ -182,6 +186,7 @@ class MakeShape():
 
         return best_coords, mdist2
 
+
     def plot(self):
         """
         A method to plot the combined shape of the source and its convex hull, along with the points on the convex hull
@@ -196,10 +201,10 @@ class MakeShape():
                 x, y = geom.exterior.xy
                 plt.plot(x, y, label='Combined Shape', color='blue')
         else:
-            x, y = self.combined_polygon.exterior.xy
+            x, y = self.combined_polygon.exterior.xy  # type: ignore
             plt.plot(x, y, label='Combined Shape', color='blue')
 
-        xh, yh = self.hull.exterior.xy
+        xh, yh = self.hull.exterior.xy  # type: ignore
         plt.plot(xh, yh, label='Convex Hull', color='orange')
 
         xh_points, yh_points = self.hull_points[:, 0], self.hull_points[:, 1]
@@ -232,6 +237,7 @@ class MakeShape():
         plt.axis('equal')
         plt.show()
 
+
     def length(self):
         """
         A method to calculate the angular size of the source based on the maximum distance between points on the convex
@@ -245,9 +251,15 @@ class MakeShape():
         return np.sqrt(self.mdist2)
 
 
+
 class AngularSizeFinder:
     """
-    A class to estimate the angular size of a radio galaxy image on a 80x80 grid.
+    A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
+    extracted from PyBDSF catalogue FITS files.
+    
+    The class processes the FITS files, filters the components based on total flux, and estimates the angular size of
+    the sources by creating a shape from the components and calculating the maximum distance between points on the
+    convex hull of this shape.
     """
     def __init__(self,
                  root_dir: Path = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs",
@@ -280,7 +292,7 @@ class AngularSizeFinder:
     # ---------- ASSEMBLING SIZE ESTIMATES ----------
     def extract_component_data(self, file_path: Path) -> list[tuple]:
         """
-        Process a single FITS file to extract the component data necessary for estimating the angular size of the source.
+        Process a single FITS file to extract the component data for estimating the angular size of the source.
         
         Parameters
         ----------
@@ -295,11 +307,12 @@ class AngularSizeFinder:
         """
         components = []
         with fits.open(file_path) as hdul:
-            data = hdul[1].data
+            data = hdul[1].data  # type: ignore
             for row in data:
                 components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
 
         return self.filter_components(components)
+
 
     def filter_components(self, components: list[tuple]) -> list[tuple]:
         """
@@ -327,6 +340,8 @@ class AngularSizeFinder:
         if sum_flux == 0:
             return []
 
+        # Filter components based on their contribution to the total flux, removing the dimmest components while keeping
+        # total flux above the specified threshold
         filtered_components = []
         cumulative_flux = 0
         for component in components:
@@ -336,6 +351,7 @@ class AngularSizeFinder:
                 break
 
         return filtered_components
+
 
     def fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
         """
@@ -355,7 +371,7 @@ class AngularSizeFinder:
             points on the convex hull of the combined shape formed by the components.
         """
         assert components, "No components to create shape from. Check the filtering step and the input data."
-        
+
         # Create a shape representing the source from the filtered components by taking the union of ellipses
         # representing each component, where the ellipses are defined by the major and minor axes and position angle of
         # the components. The angular size is estimated as the maximum distance between any two points on the convex
@@ -366,7 +382,7 @@ class AngularSizeFinder:
 
     # ---------- RUNNING THE PIPELINE ----------
     def estimate_angular_sizes(self,
-            dir : str | Path | None = None,
+            fits_dir : str | Path | None = None,
             pattern : str = r'.*?\D+(\d+)\.fits$',
             output_file : str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -375,7 +391,7 @@ class AngularSizeFinder:
 
         Parameters
         ----------
-        dir : str | Path | None, optional
+        fits_dir : str | Path | None, optional
             The root directory containing the FITS files, by default None.
         pattern : str, optional
             The regex pattern to match FITS files, by default r'.*?\D+(\d+)\.fits$'.
@@ -393,45 +409,47 @@ class AngularSizeFinder:
         # indices
         if output_file is not None and os.path.exists(output_file):
             try:
-                sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
+                ang_sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
             except Exception as e:
                 raise Exception(f"Failed to read {output_file}. Please check the file and try again: {e}") from e
-            _, indices = self.rfa.get_unwrapped_list(path=dir, pattern=pattern, return_nums=True)
+            _, fits_indices = self.rfa.get_unwrapped_list(path=fits_dir, pattern=pattern, return_nums=True)
 
-            return np.array(indices), sizes
+            return np.array(fits_indices), ang_sizes
 
         # Run the pipeline to extract component data from each FITS file,
-        if dir:
-            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data, root_dir=dir,
-                                                             pattern=pattern, return_nums=True, mode="file")
+        if fits_dir:
+            components_list, fits_indices = self.rfa.run_pipeline(function=self.extract_component_data,
+                                                                  root_dir=fits_dir,
+                                                                  pattern=pattern, return_nums=True, mode="file")
         else:
-            components_list, indices = self.rfa.run_pipeline(function=self.extract_component_data,
-                                                             pattern=pattern, return_nums=True, mode="file")
+            components_list, fits_indices = self.rfa.run_pipeline(function=self.extract_component_data,
+                                                                  pattern=pattern, return_nums=True, mode="file")
 
         # Estimate the angular size of each image based on the component data
-        sizes = []
+        ang_sizes = []
         for components in components_list:
-            # If there's only one component, either originally or after filtering, return an angular size based on DC_Maj
+            # If there's only one component, either originally or after filtering, return a size based on DC_Maj
             if len(components) == 1:
-                sizes.append(2 * components[0][3] * 3600)
+                ang_sizes.append(2 * components[0][3] * 3600)
             else:
                 angular_size = self.fit_shape_and_estimate_size(components)
-                sizes.append(angular_size)
+                ang_sizes.append(angular_size)
 
         # Save the estimated angular sizes to a CSV file if an output file name is provided
         if output_file:
-            df = pd.DataFrame(sizes, columns=['Estimated Angular Size (arcseconds)'])
+            df = pd.DataFrame(ang_sizes, columns=['Estimated Angular Size (arcseconds)'])
             df.to_csv(output_file, index=False)
 
-        return np.array(indices), np.array(sizes)
+        return np.array(fits_indices), np.array(ang_sizes)
+
 
 
 if __name__ == "__main__":
     root = paths.STORAGE_PARENT / "src/completeness/dr2_cutouts_download_catalogs"
-    output_file = 'estimated_angular_sizes.csv'
+    SAVE_FILE = 'estimated_angular_sizes.csv'
 
     ang_size_finder = AngularSizeFinder(root)
-    indices, sizes = ang_size_finder.estimate_angular_sizes(output_file=output_file)
+    indices, sizes = ang_size_finder.estimate_angular_sizes(output_file=SAVE_FILE)
 
     # Check for estimated angular sizes that are above 250 arcseconds - "outliers"
     outliers = np.where(sizes > 250)[0]
@@ -449,5 +467,5 @@ if __name__ == "__main__":
     plt.xlabel('Estimated Angular Size (arcseconds)')
     plt.ylabel('Number of Sources')
     plt.grid(axis='y', alpha=0.75)
-    plt.savefig('angular_size_distribution_cutouts.png')
+    plt.savefig(SAVE_FILE.replace('.csv', '_distribution.png'))
     plt.show()
