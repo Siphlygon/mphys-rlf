@@ -71,7 +71,7 @@ class CatalogueDownloader:
             self.logger.error(f'Failed to download catalogue. Status code: {response.status_code}')
 
 
-    def get_positions_from_hardcastle(self, catalogue_path: Path = paths.CATALOGUE_PATH) -> list[tuple[float, float]]:
+    def _get_positions_from_hardcastle(self, catalogue_path: Path = paths.CATALOGUE_PATH) -> list[tuple[float, float]]:
         """
         Extracts the RA and DEC positions of resolved sources from the Hardcastle catalogue FITS file.
         
@@ -103,7 +103,7 @@ class CatalogueDownloader:
         return positions
 
 
-    def write_positions_to_file(self,
+    def _write_positions_to_file(self,
                                 positions: list[tuple[float, float]],
                                 positions_path: Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt"):
         """
@@ -143,10 +143,10 @@ class CatalogueDownloader:
         self.download_catalogue(cat="hardcastle2023", catalogue_path=catalogue_path)
 
         # Load the Hardcastle catalogue and filter for resolved items
-        hdc_positions = self.get_positions_from_hardcastle(catalogue_path=catalogue_path)
+        hdc_positions = self._get_positions_from_hardcastle(catalogue_path=catalogue_path)
 
         self.logger.info("Writing positions to file...")
-        self.write_positions_to_file(positions=hdc_positions, positions_path=positions_path)
+        self._write_positions_to_file(positions=hdc_positions, positions_path=positions_path)
 
 
 if __name__ == "__main__":
