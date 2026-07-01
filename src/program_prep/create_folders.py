@@ -1,14 +1,20 @@
+"""
+Creates the necessary folders for the program to run.
+"""
+
 import utils.paths as pth
-import shutil
-from utils.distributed import DistributedUtils
+
 
 def make_folders():
+    """
+    Creates the necessary folders for the program to run.
+    """
     # Create folders and symlinks
     for p in [pth.MODEL_PARENT,
-              pth.ANALYSIS_PARENT, 
-              pth.IMG_DATA_PARENT, 
-              pth.FITS_PARENT, 
-              pth.PYBDSF_PARENT, 
+              pth.ANALYSIS_PARENT,
+              pth.IMG_DATA_PARENT,
+              pth.FITS_PARENT,
+              pth.PYBDSF_PARENT,
               pth.NP_ARRAY_PARENT]:
         # Make folder if it doesn't exist
         if not p.exists():
@@ -35,12 +41,14 @@ def make_folders():
             if not (f/f"{name}_model").exists():
                 (f/f"{name}_model").mkdir()
 
-    for f in [pth.PRETRAINED_PARENT, 
+    # create the folders for the pretrained models and the mosaic/cutouts folders
+    for f in [pth.PRETRAINED_PARENT,
               pth.MOSAIC_DIR,
               pth.CUTOUTS_DIR]:
         if not f.exists():
             f.mkdir()
 
+    # create the subfolders for the fits images, pybdsf outputs, and nparrays
     for f in [pth.FITS_PARENT,
               pth.PYBDSF_CATALOG_PARENT,
               pth.PYBDSF_EXPORT_IMAGE_PARENT,

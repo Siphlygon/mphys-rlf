@@ -1,10 +1,17 @@
-import utils.paths as pth
-import urllib.request
-from utils.logging import show_dl_progress
+"""
+Downloads the pretrained models from the provided links and saves them to the specified paths.
+"""
 import shutil
-from utils.distributed import DistributedUtils
+import urllib.request
+
+import utils.paths as pth
+from utils.logging import show_dl_progress
+
 
 def download_models():
+    """
+    Downloads the pretrained models from the provided links and saves them to the specified paths.
+    """
     models = [ pth.PRETRAINED_PARENT / f'parameters_{name}.pt' for name in pth.MODEL_NAMES ]
 
     # dict to make sure ordering is correct
