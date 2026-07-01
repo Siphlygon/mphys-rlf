@@ -5,8 +5,6 @@ recursively, as this is useful for multiprocessing or other scenareos where know
 helpful. The HistogramErrorDrawer is a utility class to house its Draw function, which draws a histogram and calculates
 its errors with astropy.stats.poisson_conf_interval
 """
-
-import logging
 import os
 import re
 import time
@@ -17,12 +15,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import astropy.stats
-from matplotlib.axes import Axes
 import numpy as np
 from astropy.io import fits
+from matplotlib.axes import Axes
 from tqdm import tqdm
 
-from utils.logging import get_logger
+from .logger import LoggingLevels, get_logger
 
 
 # Utility functions for for_each
@@ -79,7 +77,7 @@ class RecursiveFileAnalyzer:
     names. It also provides methods to process files in parallel using either file mode (one file per task) or batch
     mode (one batch per task), with options for progress display and output to a file.
     """
-    def __init__( self, path: Path | str, log_level: int = logging.INFO ):
+    def __init__( self, path: Path | str, log_level: int = LoggingLevels.INFO.value ):
         """
         Initialises the RecursiveFileAnalyzer with a given path and log level.
 
@@ -87,10 +85,10 @@ class RecursiveFileAnalyzer:
         ----------
         path: Path | str
             The root directory to recursively search under
-        log_level: int = logging.INFO
+        log_level: int = LoggingLevels.INFO.value
             The log level for the recursive file analyzer logger. When set to DEBUG, will log a message to the console
             when a directory is entered or a file read, with an index associated with each read file. Useful for slow
-            operations to provide feedback on progress. Default logging.INFO
+            operations to provide feedback on progress. Default LoggingLevels.INFO.value
         """
         if path is not Path:
             path = Path( path )
@@ -126,13 +124,13 @@ class RecursiveFileAnalyzer:
             A list of file paths, and optionally a list of file numbers if return_nums is True.
         """
         if return_nums:
-            paths, idxs = map( list, zip( *self._quick_scan( path, pattern, numeric_range, return_nums ) ) )
+            file_paths, idxs = map( list, zip( *self._quick_scan( path, pattern, numeric_range, return_nums ) ) )
             # sort paths and idxs by idxs
-            idxs, paths = map(list, zip( *sorted( zip( idxs, paths ) ) ))
-            return paths, idxs
+            idxs, file_paths = map(list, zip( *sorted( zip( idxs, file_paths ) ) ))
+            return file_paths, idxs
 
-        paths = list( self._quick_scan( path, pattern, numeric_range ) )
-        return paths
+        file_paths = list( self._quick_scan( path, pattern, numeric_range ) )
+        return file_paths
 
 
     def _quick_scan( self,

@@ -2,9 +2,9 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from skimage.transform import resize
 from astropy.stats import sigma_clipped_stats
+from skimage.transform import resize
+from tqdm import tqdm
 
 
 def clip_image(image, f_clip=1.5):

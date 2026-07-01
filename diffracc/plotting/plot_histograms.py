@@ -1,18 +1,16 @@
 import argparse
-import logging
-
-import h5py
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
-import numpy as np
 
 import analysis.log_analyzer as la
-import utils.logging
-import utils.paths
-import utils.recursive_file_analyzer as rfa
-from analysis.log_analyzer import LogAnalyzer
-from utils.recursive_file_analyzer import HistogramErrorDrawer
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+
+from ..analysis.log_analyzer import LogAnalyzer
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import HistogramErrorDrawer, RecursiveFileAnalyzer, get_fits_primaryhdu_data
 
 
 class HistogramPlotter:
@@ -48,7 +46,7 @@ class HistogramPlotter:
         self.dataset_subdir = dataset_subdir
         self.train_data_path = train_data_path
         self.config_name = config_name
-        self.logger = utils.logging.get_logger(__name__, logging.DEBUG)
+        self.logger = get_logger(__name__, LoggingLevels.DEBUG.value)
 
         self.hist_err_drwer = HistogramErrorDrawer()
 
@@ -113,7 +111,7 @@ class HistogramPlotter:
         for subdir, c in zip( [ self.generated_subdir, self.dataset_subdir ], [ 'g', 'b' ] ):
 
             # -- Get model fluxes; will need to get them from PyBDSF if non-existing --
-            fluxes_path = utils.paths.NP_ARRAY_PARENT / subdir / 'integrated_fluxes_normalized.npy'
+            fluxes_path = paths.NP_ARRAY_PARENT / subdir / 'integrated_fluxes_normalized.npy'
             if fluxes_path.exists():
                 normalized_model_fluxes = np.load( fluxes_path )
             else:
@@ -124,7 +122,7 @@ class HistogramPlotter:
                 np.save( fluxes_path, normalized_model_fluxes )
 
             # -- Get the other histogram data --
-            data_path = utils.paths.NP_ARRAY_PARENT / subdir / 'histogram_data.npy'
+            data_path = paths.NP_ARRAY_PARENT / subdir / 'histogram_data.npy'
             if data_path.exists():
                 data = np.load( data_path )
             else:
@@ -133,10 +131,10 @@ class HistogramPlotter:
                         data = h5file['images'][:]
                         #don't save to numpy, no need to duplicate
                 else:
-                    rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
+                    rf = RecursiveFileAnalyzer( paths.FITS_PARENT / subdir )
                     # todo: add progress_bar_desc to run_pipeline
                     # progress_bar_desc=f'{subdir} data...' )
-                    data = np.array( rf.run_pipeline( function = rfa.get_fits_primaryhdu_data ))
+                    data = np.array( rf.run_pipeline( function = get_fits_primaryhdu_data ))
                     np.save( data_path, data )
 
             means = np.mean( data, axis=(1,2) )
@@ -175,9 +173,9 @@ if __name__ == "__main__":
     parser.add_argument( "--config", help="Config to use to get dataset/generated directories/paths", type=str )
     args = parser.parse_args()
     verbose = args.verbose
-    log_level = logging.DEBUG if verbose else logging.INFO
+    log_level = LoggingLevels.DEBUG.value if verbose else LoggingLevels.INFO.value
 
-    config = utils.paths.config[ args.config ]
+    config = paths.config[ args.config ]
     generated_subdir = config[ 'generated_subdir' ]
     dataset_subdir = config[ 'dataset_subdir' ]
     train_data_path = None if config[ 'train_data_path' ] == 'None' else config[ 'train_data_path' ]

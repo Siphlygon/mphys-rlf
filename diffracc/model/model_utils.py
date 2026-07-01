@@ -3,12 +3,12 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-import utils.logging
-import model.unet as unet
-import utils.paths as paths
-from model.config import ModelConfig
+from ..utils import paths
+from ..utils.logger import get_logger
+from . import unet
+from .config import ModelConfig
 
-logger = utils.logging.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 def load_model(

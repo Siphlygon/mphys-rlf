@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from utils.paths import cast_to_Path
-from data.cutouts import save_images_hpy5
-from data.image_utils import clip_image, threshold_mask
+from ..utils.paths import cast_to_Path
+from .cutouts import save_images_hpy5
+from .image_utils import clip_image, threshold_mask
 
 
 def clip_cutouts(

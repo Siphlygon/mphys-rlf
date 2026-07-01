@@ -1,11 +1,11 @@
-import numpy as np
-from utils.power_transform import PeakFluxPowerTransformer
-import utils.paths as pth
-from astropy.io import fits
 import matplotlib.pyplot as plt
+import numpy as np
+from astropy.io import fits
 
+from ..utils import paths
+from ..utils.power_transform import PeakFluxPowerTransformer
 
-img_directory = pth.FITS_PARENT / 'retrained_loguniform'
+img_directory = paths.FITS_PARENT / 'retrained_loguniform'
 power_transformer = PeakFluxPowerTransformer( 'retrained_loguniform' )
 
 peak_fluxes_conditioned = []

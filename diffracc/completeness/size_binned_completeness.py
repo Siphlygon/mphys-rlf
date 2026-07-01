@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import matplotlib as mpl
@@ -6,14 +5,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 
-import utils.logging
-import utils.paths as pth
-from analysis.log_analyzer import get_model_flux
-from completeness.angular_size_finder import AngularSizeFinder
-from completeness.completeness_estimator import CompletenessEstimator
-from utils.functions import sigmoid
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
-from utils.img_data_arrays import SubdirData, ImageDataArrays
+from ..analysis.log_analyzer import get_model_flux
+from ..completeness.angular_size_finder import AngularSizeFinder
+from ..completeness.completeness_estimator import CompletenessEstimator
+from ..utils import paths
+from ..utils.functions import sigmoid
+from ..utils.img_data_arrays import SubdirData
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 class SizeBinnedCompleteness(CompletenessEstimator):
@@ -46,7 +45,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
             The file to save the output to. Defaults to None.
         """
         super().__init__(config_str, which_dataset, override_data)
-        self.logger = utils.logging.get_logger("SizeBinnedCompleteness", logging.DEBUG)
+        self.logger = get_logger("SizeBinnedCompleteness", LoggingLevels.DEBUG.value)
 
         # Add functionality to extract angular sizes and model images/fluxes if not using ImageDataArrays
         if override_data:
@@ -222,15 +221,15 @@ class SizeBinnedCompleteness(CompletenessEstimator):
 
 
 if __name__ == "__main__":
-    do_size_binned_completeness = True
-    if do_size_binned_completeness:
-        root = pth.STORAGE_PARENT / "src/completeness/"
-        folder_name = "snr5_exclusive_50k"
-        completeness_estim = SizeBinnedCompleteness(folder_name, override_data=True,
-            paths_to_use=[root / (folder_name + "_catalogs"),
-                        root / (folder_name + "_images/gaus_model"),
-                        root / (folder_name + "_logs")],
-            output_file=f"estimated_angular_sizes_{folder_name}.csv"
+    DO_SIZE_BINNED_COMPLETENESS = True
+    if DO_SIZE_BINNED_COMPLETENESS:
+        root = paths.STORAGE_PARENT / "diffracc/completeness/"
+        FOLDER_NAME = "snr5_exclusive_50k"
+        estim = SizeBinnedCompleteness(FOLDER_NAME, override_data=True,
+            paths_to_use=[root / (FOLDER_NAME + "_catalogs"),
+                        root / (FOLDER_NAME + "_images/gaus_model"),
+                        root / (FOLDER_NAME + "_logs")],
+            output_file=f"estimated_angular_sizes_{FOLDER_NAME}.csv"
         )
-        completeness_results = completeness_estim.estimate_size_binned_completeness(show_progress=False)
-        completeness_estim.plot_size_binned_completeness(completeness_results)
+        results = estim.estimate_size_binned_completeness(show_progress=False)
+        estim.plot_size_binned_completeness(results)

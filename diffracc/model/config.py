@@ -1,9 +1,9 @@
 import json
-from typing import Any
-from pathlib import Path
 from inspect import signature
+from pathlib import Path
+from typing import Any
 
-import utils.paths as paths
+from ..utils import paths
 
 
 class ModelConfig(object):

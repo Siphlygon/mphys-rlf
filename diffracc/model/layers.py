@@ -1,9 +1,9 @@
 import math
-from functools import partial
 from abc import abstractmethod
+from functools import partial
 
-import torch
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, reduce

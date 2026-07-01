@@ -6,10 +6,11 @@ import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 
-import data.datasets as datasets
 import wandb
-from model.config import ModelConfig
-from training.trainer import DiffusionTrainer
+
+from ..data import datasets
+from ..model.config import ModelConfig
+from .trainer import DiffusionTrainer
 
 
 class HyperparameterSweep(DiffusionTrainer):

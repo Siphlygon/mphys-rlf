@@ -1,5 +1,4 @@
 import configparser
-import logging
 from pathlib import Path
 
 import astropy.cosmology
@@ -10,11 +9,11 @@ import numpy as np
 from scipy.optimize import curve_fit
 from tqdm import tqdm
 
-import utils.functions as functions
-import utils.paths as pth
 from hardcastle_catalogue import HardcastleCatalogue, Source
-from utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3, sigmoid
-from utils.logging import get_logger
+
+from ..utils import functions as func
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
 
 
 # from Hardcastle et al. 2022, https://github.com/mhardcastle/agn-selection/blob/main/plots.py
@@ -107,7 +106,7 @@ class RLF:
             Whether to use the PDE method, by default False
         """
         # Start logging
-        self.logger = get_logger("RLF", logging.DEBUG)
+        self.logger = get_logger("RLF", LoggingLevels.DEBUG.value)
 
         # init parameters
         self.debug_flux_lum_relation = debug_flux_lum_relation
@@ -122,7 +121,7 @@ class RLF:
         self.use_pde = use_pde
 
         if completeness_path is None:
-            completeness_path = pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
+            completeness_path = paths.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
         if isinstance( completeness_path, str ):
             completeness_path = Path( completeness_path )
         if completeness_path.exists():
@@ -134,7 +133,7 @@ class RLF:
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(pth.PROGRAM_CONFIG)
+        config.read(paths.PROGRAM_CONFIG)
         default_config = config['DEFAULT']
 
         # RLF parameters
@@ -204,7 +203,7 @@ class RLF:
         completeness_args[ 0 ] = np.log10( 10**completeness_args[ 0 ] + self.bias )
         #self.logger.debug( f'x\'0: {completeness_args[ 0 ]} - S\'0: {10**completeness_args[ 0 ]}' )
 
-        sigmoid_completeness = sigmoid( np.log10( integ_fluxes * 1000 ), *completeness_args )
+        sigmoid_completeness = func.sigmoid( np.log10( integ_fluxes * 1000 ), *completeness_args )
         resolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0 )
         
         # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
@@ -272,7 +271,7 @@ class RLF:
 
         # Find the luminosity distance & convert into flux with a k-correction
         d_l = self.cosmo.luminosity_distance(z).to(u.m).value
-        s = 1e26 * l / (4 * np.pi * d_l**2) * k_corr_factor( z, spectral_index = self.spectral_index )
+        s = 1e26 * l / (4 * np.pi * d_l**2) * func.k_corr_factor( z, spectral_index = self.spectral_index )
         return s
 
 
@@ -439,14 +438,14 @@ class RLF:
         # because of errors on the margin, disregard passed luminosity
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
         luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
-            / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
+            / func.k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
 
         if self.debug_flux_lum_relation:
             #ensure luminosities and redshifts are consistent with total flux
             # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
             luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
             flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
-                / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
+                / func.k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
             self.logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
             residuals = flux_luminosities / luminosities
             plt.scatter( flux_luminosities, residuals, s=0.001 )
@@ -622,7 +621,7 @@ class RLF:
 
         # fit a dual power law to each redshift RLF
         bin_centres = ( self.l_bins[ :-1 ] + self.l_bins[ 1: ] ) / 2
-        
+
         # (4,2) being 4 parameters, with [:, 0] being values and [:, 1] being errors
         self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
         self.chi_sqr = np.zeros( (self.n_z_bins) ) 
@@ -635,7 +634,7 @@ class RLF:
                 fit_bin_centres = fit_bin_centres[ 1: ]
                 fit_phi = fit_phi[ 1: ]
                 fit_phi_err = fit_phi_err[ 1: ]
-            popt, pcov = curve_fit( functions.rlf_power_law,
+            popt, pcov = curve_fit( func.rlf_power_law,
                                     fit_bin_centres,
                                     fit_phi,
                                     p0=[ 0.5, 1.5, -5.5, 26 ],
@@ -651,7 +650,7 @@ class RLF:
             self.logger.info( f'    Log10C={popt[ 2 ]:.3f} +/- {perr[ 2 ]:.3f}' )
             self.logger.info( f'    Log10Lstar={popt[ 3 ]:.3f} +/- {perr[ 3 ]:.3f}' )
 
-            model_values = functions.rlf_power_law( bin_centres[ self.phi[ i_z ] > 0 ], *popt )
+            model_values = func.rlf_power_law( bin_centres[ self.phi[ i_z ] > 0 ], *popt )
             residuals = self.phi[ i_z ][ self.phi[ i_z ] > 0 ] - model_values
             self.chi_sqr[ i_z ] = np.sum( ( residuals / self.phi_err[ i_z ][ self.phi[ i_z ] > 0 ] )**2 )
             self.chi_sqr[ i_z ] /= residuals.shape[ 0 ] - 4
@@ -697,7 +696,7 @@ class RLF:
         
 
         #fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
-        fn_powerlaw = functions.rlf_power_law_evolution
+        fn_powerlaw = func.rlf_power_law_evolution
 
         self.rlf_fit_params = np.zeros( (len( p0_powerlaw ), 2) ) 
 
@@ -746,13 +745,13 @@ class RLF:
 
             if self.rlf_fit_params.ndim == 3:
                 fit_params = self.rlf_fit_params[ i_z, :, 0 ]
-                fitted_rlf = functions.rlf_power_law( luminosity_space, *fit_params )
+                fitted_rlf = func.rlf_power_law( luminosity_space, *fit_params )
             else:
                 redshift = bin_centres[ i_z ]
                 redshift_space = np.repeat( redshift, luminosity_space.shape[ 0 ] )
                 fit_params = self.rlf_fit_params[ :, 0 ]
-                #fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
-                fn_powerlaw = functions.rlf_power_law_evolution
+                #fn_powerlaw = func.rlf_pde if self.use_pde else func.rlf_ple
+                fn_powerlaw = func.rlf_power_law_evolution
                 fitted_rlf = fn_powerlaw( (luminosity_space, z_bin_centres[ i_z ]), *fit_params )
                 #self.logger.debug( fitted_rlf )
 
@@ -845,8 +844,8 @@ def get_catalog_info( cosmo : astropy.cosmology.Cosmology,
                  f'count={wise_2_mag.shape[ 0 ]}' )
 
     # use wise bands 2/3 to calculate spectral indices for the k-correction
-    wise_3_flux = mag_to_flux_w3( wise_3_mag )
-    wise_2_flux = mag_to_flux_w2( wise_2_mag )
+    wise_3_flux = func.mag_to_flux_w3( wise_3_mag )
+    wise_2_flux = func.mag_to_flux_w2( wise_2_mag )
     wise_3_freq = 3e8 / 12e-6
     wise_2_freq = 3e8 / 4.6e-6
     spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
@@ -857,7 +856,7 @@ def get_catalog_info( cosmo : astropy.cosmology.Cosmology,
                  f'count={spectral_inds.shape[ 0 ]}' )
 
     wise_3_absmag = wise_3_mag - 5 * ( np.log10( cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) \
-        + k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+        + func.k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
     rqq_xpt = -27.923076923076923 #mag
@@ -913,7 +912,7 @@ if __name__ == "__main__":
 
     # Read parameters from the config.ini file
     config = configparser.ConfigParser()
-    config.read(pth.PROGRAM_CONFIG)
+    config.read(paths.PROGRAM_CONFIG)
     default_config = config['DEFAULT']
 
     # Cosmological Parameters

@@ -1,4 +1,3 @@
-import logging
 import os
 from pathlib import Path
 
@@ -11,9 +10,9 @@ from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as paths
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 class MakeShape():
@@ -38,7 +37,7 @@ class MakeShape():
         show_progress : bool, optional
             Whether to show a progress bar for the processing of components, by default False.
         """
-        self.logger = utils.logging.get_logger("MakeShape", logging.DEBUG)
+        self.logger = get_logger("MakeShape", LoggingLevels.DEBUG.value)
         self.show_progress = show_progress
 
         # Set the RA and DEC of the source to the mean RA and DEC of its components
@@ -262,7 +261,7 @@ class AngularSizeFinder:
     convex hull of this shape.
     """
     def __init__(self,
-                 root_dir: Path = paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs",
+                 root_dir: Path = paths.STORAGE_PARENT / "diffrac/completeness/retrained_loguniform_catalogs",
                  flux_threshold: float = 0.95):
         """
         This class processes PyBDSF catalogue FITS files containing Gaussian component data for radio sources, filters
@@ -273,12 +272,12 @@ class AngularSizeFinder:
         ----------
         root_dir : Path, optional
             The root directory containing the FITS files to be processed, by default
-            paths.STORAGE_PARENT / "src/completeness/retrained_loguniform_catalogs"
+            paths.STORAGE_PARENT / "diffrac/completeness/retrained_loguniform_catalogs"
         flux_threshold : float, optional
             The fraction of total flux to keep when filtering components, by default 0.95. Components contributing to
             the dimmest flux are removed while keeping total flux above this threshold.
         """
-        self.logger = utils.logging.get_logger("AngularSizeFinder", logging.DEBUG)
+        self.logger = get_logger("AngularSizeFinder", LoggingLevels.DEBUG.value)
         self.root_dir = root_dir
 
         # Decide a flux threshold for filtering components. PyBDSF can sometimes fit islands to noise and so we sort and
@@ -445,7 +444,7 @@ class AngularSizeFinder:
 
 
 if __name__ == "__main__":
-    root = paths.STORAGE_PARENT / "src/completeness/dr2_cutouts_download_catalogs"
+    root = paths.STORAGE_PARENT / "diffrac/completeness/dr2_cutouts_download_catalogs"
     SAVE_FILE = 'estimated_angular_sizes.csv'
 
     ang_size_finder = AngularSizeFinder(root)

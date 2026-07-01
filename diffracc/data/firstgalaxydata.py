@@ -1,25 +1,24 @@
 from __future__ import print_function
-import os
+
 import copy
-import logging
-import zipfile
 import warnings
+import zipfile
 from pathlib import Path
 
 import h5py
-import torch
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-from PIL import Image
 from astropy import units as u
-from torch.utils.data import DataLoader
 from astropy.coordinates import SkyCoord
+from PIL import Image
 from torchvision.datasets.utils import download_url
 
-import utils.logging
-from utils.paths import IMG_DATA_PARENT
+from ..utils.logger import get_logger
+from ..utils.paths import IMG_DATA_PARENT
+
 FIRST_DATA_PARENT = IMG_DATA_PARENT/"FIRST"
 
 
@@ -154,7 +153,7 @@ class FIRSTGalaxyData(data.Dataset):
 
         # Set logger
         if logger is None:
-            logger = utils.logging.get_logger(__name__)
+            logger = get_logger(__name__)
         self.logger = logger
 
         # Set data paths

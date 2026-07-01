@@ -1,17 +1,17 @@
 from pathlib import Path
 
 import h5py
-import wget
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from astropy.io import fits
-from astropy.wcs import WCS
-from astropy.nddata import Cutout2D
+import wget
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.nddata import Cutout2D
+from astropy.wcs import WCS
+from tqdm import tqdm
 
-import data.image_utils as imgutil
-from utils.paths import cast_to_Path, MOSAIC_DIR, CUTOUTS_DIR, LOFAR_RES_CAT
+from ..utils.paths import CUTOUTS_DIR, LOFAR_RES_CAT, MOSAIC_DIR, cast_to_Path
+from . import image_utils as imgutil
 
 
 def single_cutout(

@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
-from matplotlib import colormaps as cm
 import numpy as np
 import torch
+from matplotlib import colormaps as cm
 
 
 def random_image_grid(dset, n_img=25, idx_titles=False, **kwargs):

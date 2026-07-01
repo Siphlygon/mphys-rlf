@@ -1,23 +1,23 @@
 import logging
 import os
 from datetime import datetime
-import wandb
+from typing import Any, Literal, Union, cast
 
 import torch
-from torch import Tensor
-from torch import optim
+from torch import Tensor, optim
+from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel
-from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, random_split
-
-import model.unet as unet
-import training.train_utils as train_utils
 from utils.paths import MODEL_PARENT
-from training.output_manager import OutputManager
-from utils.device_utils import visible_gpus_by_space
-from model.model_utils import load_parameters
-from model.config import ModelConfig
-from typing import Any, cast, Literal, Union
+
+import wandb
+
+from ..model import unet
+from ..model.config import ModelConfig
+from ..model.model_utils import load_parameters
+from ..utils.device_utils import visible_gpus_by_space
+from . import train_utils
+from .output_manager import OutputManager
 
 
 class DiffusionTrainer:

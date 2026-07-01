@@ -6,19 +6,18 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
-import utils.paths as pth
-from utils.img_data_arrays import ImageDataArrays
-
+from ..utils import paths
+from ..utils.img_data_arrays import ImageDataArrays
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
                         help=f"Which config to to use for Dataset/Generated subdirs, as defined in " 
-                        f" {pth.PROGRAM_CONFIG.name}",
+                        f" {paths.PROGRAM_CONFIG.name}",
                         type=str )
     args = parser.parse_args()
 
-    config = pth.config[ args.config ]
+    config = paths.config[ args.config ]
     dataset_subdir = config[ 'dataset_subdir' ]
     generated_subdir = config[ 'generated_subdir' ]
 

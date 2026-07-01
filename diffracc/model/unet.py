@@ -9,8 +9,8 @@ from typing import Any
 
 import torch.nn as nn
 
-from model.layers import *
-from model.config import ModelConfig
+from .config import ModelConfig
+from .layers import *
 
 
 class configModuleBase(nn.Module):

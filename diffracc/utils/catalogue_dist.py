@@ -1,5 +1,4 @@
 import configparser
-import logging
 from pathlib import Path
 
 import h5py
@@ -7,10 +6,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import rv_histogram
 
-import utils.logging
-import utils.paths as pths
 from hardcastle_catalogue import HardcastleCatalogue, Source
 
+from . import paths
+from .logger import LoggingLevels, get_logger
 
 
 class CatalogueDistribution:
@@ -51,7 +50,7 @@ class CatalogueDistribution:
         resolved_only : bool
             Whether to consider only resolved sources from the catalogue. Defaults to True.
         """
-        self.logger = utils.logging.get_logger(logger_name, logging.DEBUG)
+        self.logger = get_logger(logger_name, LoggingLevels.DEBUG.value)
 
         self.use_catalogue = use_catalogue
         if not self.use_catalogue:
@@ -228,7 +227,7 @@ class RMSDistribution(CatalogueDistribution):
         """
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(pths.PROGRAM_CONFIG)
+        config.read(paths.PROGRAM_CONFIG)
 
         # we are using sources generated in a loguniform way
         de_config = config['DEFAULT']
@@ -308,7 +307,7 @@ class LASDistribution(CatalogueDistribution):
         """
         # # Read parameters from the config.ini file
         # config = configparser.ConfigParser()
-        # config.read(pths.PROGRAM_CONFIG)
+        # config.read(paths.PROGRAM_CONFIG)
 
         # # we are using sources generated in a loguniform way
         # de_config = config['DEFAULT']
@@ -463,7 +462,7 @@ class PeakPixDistribution(CatalogueDistribution):
             Defaults to None.
         """
         if path is None:
-            self.path = pths.DATASET_PARENT / "clean_hardcastle_catalogue.h5"
+            self.path = paths.DATASET_PARENT / "clean_hardcastle_catalogue.h5"
         else:
             self.path = path
 

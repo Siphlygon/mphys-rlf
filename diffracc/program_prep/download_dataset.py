@@ -3,8 +3,8 @@ Downloads the dataset from the provided link and saves it to a hardcoded path.
 """
 import urllib.request
 
-from utils.logging import show_dl_progress
-from utils.paths import LOFAR_DATA_PATH
+from ..utils.logger import show_dl_progress
+from ..utils.paths import LOFAR_DATA_PATH
 
 
 def download_dataset():

@@ -9,9 +9,9 @@ import h5py
 import torch
 import torch.distributed as dist
 
-import data.datasets as datasets
-from model.config import ModelConfig
-from training.trainer import DiffusionTrainer
+from ..data import datasets
+from ..model.config import ModelConfig
+from .trainer import DiffusionTrainer
 
 
 def ddp_setup():

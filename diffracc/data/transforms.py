@@ -1,8 +1,9 @@
 import random
-import torch
 
+import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
+
 
 def safe_to_tensor(img):
     if isinstance(img, torch.Tensor):

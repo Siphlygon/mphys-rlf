@@ -1,12 +1,10 @@
 import numpy as np
-from tqdm import tqdm
 import torch
-import numpy as np
 from tqdm import tqdm
 
-import utils.logging
+from ..utils.logger import get_logger
 
-logger = utils.logging.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @torch.no_grad()

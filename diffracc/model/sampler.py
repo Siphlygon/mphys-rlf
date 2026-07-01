@@ -1,17 +1,15 @@
 import inspect
+from pathlib import Path
 
 import h5py
-import torch
 import numpy as np
+import torch
 from scipy.stats import rv_histogram
 from sklearn.preprocessing import PowerTransformer
 
-import utils.logging
-import utils.paths as paths
-import model.diffusion as diffusion
-import model.model_utils as model_utils
-import utils.device_utils as device_utils
-from pathlib import Path
+from ..utils import device_utils, paths
+from ..utils.logger import get_logger
+from . import diffusion, model_utils
 
 
 class Sampler:
@@ -54,7 +52,7 @@ class Sampler:
         """
 
         # Logger
-        self.logger = utils.logging.get_logger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
 
         # Root for output
         self.out_root = out_root

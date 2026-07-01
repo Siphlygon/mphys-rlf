@@ -9,8 +9,6 @@ project, dataset and generated. In all the parent directories, e.g. fits_images,
 folder and a generated folder, so the subdirectory organization allows that to be implemented more simply than
 specifying the whole path for two different analyzers
 """
-
-import logging
 import multiprocessing.pool
 import os
 from pathlib import Path, PurePath
@@ -20,11 +18,11 @@ import bdsf.image
 import numpy as np
 from astropy.io import fits
 
-import utils.logging
-import utils.paths
-from utils.distributed import DistributedUtils
-from utils.paths import cast_to_Path
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from ..utils import paths
+from ..utils.distributed import DistributedUtils
+from ..utils.logger import LoggingLevels
+from ..utils.paths import cast_to_Path
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 #Neccesary pool extention - PyBDSF uses daemon processes but only sometimes, and we want to batch the files themselves
@@ -77,13 +75,13 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
 
     def __init__( self,
                   subdir: str | PurePath,
-                  fits_input_dir: str | Path = utils.paths.FITS_PARENT,
-                  log_dir: str | Path = utils.paths.PYBDSF_LOG_PARENT,
-                  catalog_dir: str | Path = utils.paths.PYBDSF_CATALOG_PARENT,
-                  img_dir: str | Path = utils.paths.PYBDSF_EXPORT_IMAGE_PARENT,
+                  fits_input_dir: str | Path = paths.FITS_PARENT,
+                  log_dir: str | Path = paths.PYBDSF_LOG_PARENT,
+                  catalog_dir: str | Path = paths.PYBDSF_CATALOG_PARENT,
+                  img_dir: str | Path = paths.PYBDSF_EXPORT_IMAGE_PARENT,
                   write_catalog: bool = True,
                   export_images: list[ str ] | None = None,
-                  log_level: int = logging.INFO,
+                  log_level: int = LoggingLevels.INFO.value,
                   **kwargs: dict ):
         """
         Initialises an ImageAnalyzer object, which is a recursive analyzer for fits_input_dir/subdir, with additional

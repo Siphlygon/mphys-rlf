@@ -2,19 +2,19 @@ import numpy as np
 from scipy.special import erf
 
 
-def sigmoid(x : float,
+def sigmoid(x : np.ndarray,
             x0: float,
             k: float,
             a: float,
-            b: float) -> float:
+            b: float) -> np.ndarray:
     """
     A generalized logistic function (also known as a sigmoid function) that can be used to model growth processes.
     Sigmoid function: a / (1 + exp(-k*(x-x0))) + b
 
     Parameters
     ----------
-    x : float
-        The input value for which the sigmoid function is to be calculated.
+    x : np.ndarray
+        The input values for which the sigmoid function is to be calculated.
     x0 : float
         The x-value of the sigmoid's midpoint.
     k : float
@@ -26,13 +26,13 @@ def sigmoid(x : float,
 
     Returns
     -------
-    float
-        The output value of the sigmoid function.
+    np.ndarray
+        The output values of the sigmoid function.
     """
     return a / (1 + np.exp(-k * (x - x0))) + b
 
 
-def sigmoid01(x : float, x0: float, k: float) -> float:
+def sigmoid01(x : np.ndarray, x0: float, k: float) -> np.ndarray:
     """
     Standard logistic in (0, 1) with fixed asymptotes.
 
@@ -41,8 +41,8 @@ def sigmoid01(x : float, x0: float, k: float) -> float:
 
     Parameters
     ----------
-    x : float
-        The input value for which the sigmoid function is to be calculated.
+    x : np.ndarray
+        The input values for which the sigmoid function is to be calculated.
     x0 : float
         The x-value of the sigmoid's midpoint.
     k : float
@@ -50,13 +50,13 @@ def sigmoid01(x : float, x0: float, k: float) -> float:
 
     Returns
     -------
-    float
-        The output value of the sigmoid function.
+    np.ndarray
+        The output values of the sigmoid function.
     """
     return 1.0 / (1.0 + np.exp(-k * (x - x0)))
 
 
-def richards01(x : float, x0: float, k: float, nu: float) -> float:
+def richards01(x : np.ndarray, x0: float, k: float, nu: float) -> np.ndarray:
     """
     Richards / generalized logistic with fixed asymptotes 0 and 1.
 
@@ -68,8 +68,8 @@ def richards01(x : float, x0: float, k: float, nu: float) -> float:
     
     Parameters
     ----------
-    x : float
-        The input value for which the Richards function is to be calculated.
+    x : np.ndarray
+        The input values for which the Richards function is to be calculated.
     x0 : float
         The x-value of the Richards function's midpoint.
     k : float
@@ -79,13 +79,13 @@ def richards01(x : float, x0: float, k: float, nu: float) -> float:
 
     Returns
     -------
-    float
-        The output value of the Richards function.
+    np.ndarray
+        The output values of the Richards function.
     """
     return 1.0 / (1.0 + np.exp(-k * (x - x0))) ** nu
 
 
-def erf01(x : float, x0: float, sigma: float) -> float:
+def erf01(x : np.ndarray, x0: float, sigma: float) -> np.ndarray:
     """
     Error-function CDF with fixed asymptotes 0 and 1.
 
@@ -94,8 +94,8 @@ def erf01(x : float, x0: float, sigma: float) -> float:
     
     Parameters
     ----------
-    x : float
-        The input value for which the error function is to be calculated.
+    x : np.ndarray
+        The input values for which the error function is to be calculated.
     x0 : float
         The x-value of the error function's midpoint.
     sigma : float
@@ -103,54 +103,54 @@ def erf01(x : float, x0: float, sigma: float) -> float:
         
     Returns
     -------
-    float
-        The output value of the error function.
+    np.ndarray
+        The output values of the error function.
     """
     z = (x - x0) / (np.sqrt(2.0) * sigma)
     return 0.5 * (1.0 + erf(z))
 
 
-def mag_to_flux_w3( mag : float ) -> float:
+def mag_to_flux_w3( mag : np.ndarray ) -> np.ndarray:
     """
     Converts magnitude to flux for W3 band.
 
     Parameters
     ----------
-    mag : float
-        The magnitude to convert to flux.
+    mag : np.ndarray
+        The magnitudes to convert to flux.
 
     Returns
     -------
-    float
-        The corresponding flux in Jy for the W3 band.
+    np.ndarray
+        The corresponding fluxes in Jy for the W3 band.
     """
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
     F_v0 = 31.674
     return F_v0 * 10**(-mag / 2.5)
 
 
-def mag_to_flux_w2( mag : float ) -> float:
+def mag_to_flux_w2( mag : np.ndarray ) -> np.ndarray:
     """
     Converts magnitude to flux for W2 band.
 
     Parameters
     ----------
-    mag : float
-        The magnitude to convert to flux.
+    mag : np.ndarray
+        The magnitudes to convert to flux.
 
     Returns
     -------
-    float
-        The corresponding flux in Jy for the W2 band.
+    np.ndarray
+        The corresponding fluxes in Jy for the W2 band.
     """
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
     F_v0 = 171.787
     return F_v0 * 10**(-mag / 2.5)
 
 
-def k_corr_factor( redshift : float,
+def k_corr_factor( redshift : np.ndarray,
                   mag_space: bool = False,
-                  spectral_index: float = -0.7 ) -> float:
+                  spectral_index: float = -0.7 ) -> np.ndarray:
     """
     Returns the k-correction factor for one or more objects at given redshifts
     
@@ -159,8 +159,8 @@ def k_corr_factor( redshift : float,
 
     Parameters
     ----------
-    redshift : float
-        The redshift of the object(s) for which to calculate the k-correction factor.
+    redshift : np.ndarray
+        The redshifts of the object(s) for which to calculate the k-correction factor.
     mag_space : bool, optional
         If True, returns the k-correction factor in magnitude space. If False, returns the k-correction factor in
         luminosity space. Default is False.
@@ -169,8 +169,8 @@ def k_corr_factor( redshift : float,
     
     Returns
     -------
-    float
-        The k-correction factor for the given redshift(s) in either magnitude or luminosity space, depending on the
+    np.ndarray
+        The k-correction factors for the given redshift(s) in either magnitude or luminosity space, depending on the
         value of `mag_space`.
     """
     k_corr_lum_space = ( 1 + redshift ) ** ( 1 - spectral_index )
@@ -179,11 +179,11 @@ def k_corr_factor( redshift : float,
     return -2.5 * np.log10( k_corr_lum_space )
 
 
-def rlf_power_law( luminosity : float,
+def rlf_power_law( luminosity : np.ndarray,
                   alpha : float,
                   beta : float,
                   Log10C : float,
-                  Log10Lstar : float ) -> float:
+                  Log10Lstar : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity using a double power-law model.
     
@@ -191,8 +191,8 @@ def rlf_power_law( luminosity : float,
 
     Parameters
     ----------
-    luminosity : float
-        The luminosity at which to calculate the RLF.
+    luminosity : np.ndarray
+        The luminosities at which to calculate the RLF.
     alpha : float
         The first power-law index.
     beta : float
@@ -204,19 +204,19 @@ def rlf_power_law( luminosity : float,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity.
+    np.ndarray
+        The values of the RLF at the given luminosity.
     """
     C = 10**Log10C
     Lstar = 10**Log10Lstar
     return C / ( ( luminosity / Lstar )**alpha + ( luminosity / Lstar )**beta )
 
 
-def rlf_schechter( luminosity : float,
+def rlf_schechter( luminosity : np.ndarray,
                   beta : float,
                   gamma : float,
                   Log10Phi : float,
-                  Log10Lstar : float ) -> float:
+                  Log10Lstar : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity using a Schechter function model.
 
@@ -224,8 +224,8 @@ def rlf_schechter( luminosity : float,
 
     Parameters
     ----------
-    luminosity : float
-        The luminosity at which to calculate the RLF.
+    luminosity : np.ndarray
+        The luminosities at which to calculate the RLF.
     beta : float
         The beta parameter of the Schechter function.
     gamma : float
@@ -237,8 +237,8 @@ def rlf_schechter( luminosity : float,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity.
+    np.ndarray
+        The values of the RLF at the given luminosity.
     """
     phi = 10**Log10Phi
     Lstar = 10**Log10Lstar
@@ -251,7 +251,7 @@ def rlf_power_law_evolution( x : np.ndarray,
                             Log10C : float,
                             Log10Lstar : float,
                             alphaD : float,
-                            alphaL : float ) -> float:
+                            alphaL : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution.
@@ -278,8 +278,8 @@ def rlf_power_law_evolution( x : np.ndarray,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity and redshift.
+    np.ndarray
+        The values of the RLF at the given luminosities and redshifts.
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
@@ -292,7 +292,7 @@ def rlf_pde( x : np.ndarray,
             beta : float,
             Log10C : float,
             Log10Lstar : float,
-            alphaD : float ) -> float:
+            alphaD : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with pure density evolution (PDE).
@@ -317,8 +317,8 @@ def rlf_pde( x : np.ndarray,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity and redshift.
+    np.ndarray
+        The values of the RLF at the given luminosities and redshifts.
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
@@ -330,7 +330,7 @@ def rlf_ple( x : np.ndarray,
             beta : float,
             Log10C : float,
             Log10Lstar : float,
-            alphaL : float ) -> float:
+            alphaL : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with pure luminosity evolution (PLE).
@@ -352,8 +352,8 @@ def rlf_ple( x : np.ndarray,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity and redshift.
+    np.ndarray
+        The values of the RLF at the given luminosities and redshifts.
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
@@ -368,7 +368,7 @@ def yuan_evolution_a( x : np.ndarray,
                      m : float,
                      z0 : float,
                      zsigma : float,
-                     k1 : float ) -> float:
+                     k1 : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution as described in Yuan et al. (2018).
@@ -398,8 +398,8 @@ def yuan_evolution_a( x : np.ndarray,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity and redshift.
+    np.ndarray
+        The values of the RLF at the given luminosities and redshifts.
     """
     l = x[ 0 ]
     z = x[ 1 ]
@@ -418,7 +418,7 @@ def yuan2018_evolution_a( x : np.ndarray,
                          Log10Lstar : float,
                          beta : float,
                          gamma : float,
-                         k1 : float ) -> float:
+                         k1 : float ) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution as described in Yuan et al. (2018a).
@@ -449,8 +449,8 @@ def yuan2018_evolution_a( x : np.ndarray,
 
     Returns
     -------
-    float
-        The value of the RLF at the given luminosity and redshift.
+    np.ndarray
+        The values of the RLF at the given luminosities and redshifts.
     """
     l = x[ 0 ]
     z = x[ 1 ]

@@ -1,25 +1,24 @@
 import copy
 import random
-from pathlib import Path
 from collections.abc import Iterable
+from pathlib import Path
 
 import h5py
-import torch
 import numpy as np
 import pandas as pd
+import torch
 from PIL import Image
-from tqdm import tqdm
 from sklearn.preprocessing import PowerTransformer
+from tqdm import tqdm
 
-import utils.logging
-import utils.paths as paths
-from data.firstgalaxydata import FIRSTGalaxyData
-from plotting.image_plots import plot_image_grid
-from data.transforms import EvalTransform, ToTensor, TrainTransform, TrainTransformNoScale
-
+from ..plotting.image_plots import plot_image_grid
+from ..utils import paths
+from ..utils.logger import get_logger
+from .firstgalaxydata import FIRSTGalaxyData
+from .transforms import EvalTransform, ToTensor, TrainTransform, TrainTransformNoScale
 
 # Assuming this is in datasets.datasets or a similar module
-logger = utils.logging.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ImagePathDataset(torch.utils.data.Dataset):
@@ -289,7 +288,7 @@ class TrainDatasetFIRST(FIRSTGalaxyData):
         )
 
     def set_context(self, *args):
-        logger.warn("FIRSTGalaxyData has class labels as fixed context.")
+        logger.warning("FIRSTGalaxyData has class labels as fixed context.")
         return
 
 class TrainDatasetNoScale(ImagePathDataset):

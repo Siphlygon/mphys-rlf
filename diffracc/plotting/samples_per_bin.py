@@ -4,14 +4,14 @@ import astropy.stats
 import matplotlib.pyplot as plt
 import numpy as np
 
-import utils.paths as pth
-from analysis.image_analyzer import ImageAnalyzer
-from utils.img_data_arrays import ImageDataArrays
-
+from ..analysis.image_analyzer import ImageAnalyzer
+from ..utils import paths
+from ..utils.img_data_arrays import ImageDataArrays
 
 RMS_LOFAR = 71e-6 * 1e3
 BEAM_WIDTH_LOFAR = ImageAnalyzer.LOFAR_process_arg_defaults[ 'process_beam' ][ :-1 ]
 BEAM_AREA_LOFAR = BEAM_WIDTH_LOFAR[ 0 ] * BEAM_WIDTH_LOFAR[ 1 ]
+
 
 def get_noise(data : np.ndarray) -> float:
     """
@@ -40,7 +40,8 @@ def get_noise(data : np.ndarray) -> float:
     for _ in range(10):
         ind = np.where(np.abs(m - med) < rmsold * cut)[0]
         rms = np.std(m[ind])
-        if np.abs((rms - rmsold)//rmsold) < diff: break
+        if np.abs((rms - rmsold)//rmsold) < diff:
+            break
         rmsold = rms
     return rms
 
@@ -94,7 +95,7 @@ def get_completeness_estim( config_name: str ):
     config_name : str
         The name of the configuration to use
     """
-    config = pth.config[ config_name ]
+    config = paths.config[ config_name ]
     config_data_arrays = ImageDataArrays( config_name )
 
     plt.figure(figsize = (8, 5))
@@ -147,7 +148,7 @@ def get_completeness_estim( config_name: str ):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to use, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument( "--config", help=f"Which config to use, as defined in {paths.PROGRAM_CONFIG.name}", type=str )
     args = parser.parse_args()
 
     get_completeness_estim(config_name=args.config)

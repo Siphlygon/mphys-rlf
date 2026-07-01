@@ -1,14 +1,14 @@
 import csv
 import json
 import logging
-from datetime import datetime
-from inputimeout import inputimeout, TimeoutOccurred
 import math
+from datetime import datetime
 
 import torch
+from inputimeout import TimeoutOccurred, inputimeout
 
-import utils.logging
-from utils.paths import MODEL_PARENT
+from ..utils.logger import get_logger
+from ..utils.paths import MODEL_PARENT
 
 
 class OutputManager:
@@ -103,7 +103,7 @@ class OutputManager:
         self.parent_dir = parent_dir
 
         # Set up logger
-        self.logger = utils.logging.get_logger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         
         if self.write_output:
             self._setup_files()

@@ -1,9 +1,11 @@
-import matplotlib.pyplot as plt
-import numpy as np
-from pathlib import Path
-import math
 import argparse
-import utils.recursive_file_analyzer as rfa
+import math
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+
+from ..utils import recursive_file_analyzer as rfa
+
 
 class FitsViewer:
     """

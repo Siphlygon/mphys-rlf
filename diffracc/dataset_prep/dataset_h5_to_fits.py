@@ -14,8 +14,8 @@ import numpy as np
 from sklearn.preprocessing import PowerTransformer
 from tqdm import tqdm
 
-import utils.paths as pth
-from analysis.image_analyzer import ImageAnalyzer
+from ..analysis.image_analyzer import ImageAnalyzer
+from ..utils import paths
 
 
 def convert_lofar_h5_to_fits( lofar_data_h5: Path,
@@ -90,7 +90,7 @@ def validate_lofar_fits_images( subdir: str,
     bin_size : int | None
         Directory bins to sort the images into for ease of use. Compliance with the bin structure is enforced.
     """
-    fits_dataset_folder = pth.FITS_PARENT / subdir
+    fits_dataset_folder = paths.FITS_PARENT / subdir
 
     # For now, if the fits dataset folder doesn't exist, we just return.
     if not fits_dataset_folder.exists():
@@ -125,7 +125,7 @@ def validate_lofar_fits_images( subdir: str,
         elif num_files == cutoff:
             return
 
-    convert_lofar_h5_to_fits( pth.LOFAR_DATA_PATH, subdir, cutoff, bin_size )
+    convert_lofar_h5_to_fits( paths.LOFAR_DATA_PATH, subdir, cutoff, bin_size )
 
 
 
@@ -133,12 +133,12 @@ if __name__ == "__main__":
     # allow for bin sizes to be specified manually as command-line arguments, or use config if nothing specified
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
-                        help=f"Which config to use for image generation, as defined in " f"{pth.PROGRAM_CONFIG.name}",
+                        help=f"Which config to use for image generation, as defined in " f"{paths.PROGRAM_CONFIG.name}",
                         type=str )
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
-    config.read( pth.PROGRAM_CONFIG )
+    config.read( paths.PROGRAM_CONFIG )
     config = config[ args.config ]
 
     cutoff = int( config[ 'VM_FITS_COUNT_CUTOFF' ] ) if config[ 'VM_FITS_COUNT_CUTOFF' ] != 'None' else None

@@ -1,7 +1,7 @@
-from pathlib import Path
-from indexed import IndexedOrderedDict
 import configparser
+from pathlib import Path
 
+from indexed import IndexedOrderedDict
 
 # Base directories for code base & storage
 BASE_PARENT = Path(__file__).parent.parent.parent

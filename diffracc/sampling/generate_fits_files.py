@@ -6,7 +6,6 @@ through other files. This application can be distributed across multiple nodes.
 
 import argparse
 import configparser
-import logging
 import math
 from pathlib import PurePath
 
@@ -14,12 +13,12 @@ import numpy as np
 import scipy.stats
 import torch
 
-import model.sampler
-import utils.logging
-import utils.paths as pth
-from analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
-from utils.distributed import DistributedUtils
-from utils.power_transform import PeakFluxPowerTransformer
+from ..analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
+from ..model import sampler
+from ..utils import paths
+from ..utils.distributed import DistributedUtils
+from ..utils.logger import LoggingLevels, get_logger
+from ..utils.power_transform import PeakFluxPowerTransformer
 
 
 def get_path_from_index( index: int,
@@ -48,7 +47,7 @@ def get_path_from_index( index: int,
     lower_bound = int( math.floor( ( index ) / bin_size ) * bin_size )
     upper_bound = int( math.ceil( ( index + 1 ) / bin_size ) * bin_size ) - 1
     postfix = PurePath( *[ f"{lower_bound}-{upper_bound}", f"image{index}.fits" ] )
-    full_image_path = ( utils.paths.FITS_PARENT / subdir ) / postfix
+    full_image_path = ( paths.FITS_PARENT / subdir ) / postfix
     return full_image_path, postfix
 
 
@@ -62,10 +61,10 @@ def sample( args : argparse.Namespace ):
     args : argparse.Namespace
         The command-line arguments
     """
-    logger = utils.logging.get_logger( __name__, logging.DEBUG )
+    logger = get_logger( __name__, LoggingLevels.DEBUG.value )
 
     #Do a sampling loop of batch_size samples and save them to the disk as they're generated, until we reach n_samples
-    model_sampler = model.sampler.Sampler( n_samples=args.batch_size,
+    model_sampler = sampler.Sampler( n_samples=args.batch_size,
                                           timesteps=args.timesteps,
                                           distribute_model=not args.use_cpu )
 
@@ -79,7 +78,7 @@ def sample( args : argparse.Namespace ):
     # Figure out initial count based on number of fits files already in the directory
     logger.debug( 'Getting initial count...' )
     initial_count = 0
-    generated_images_dir = utils.paths.FITS_PARENT / args.generated_subdir
+    generated_images_dir = paths.FITS_PARENT / args.generated_subdir
     if generated_images_dir.exists():
         analyzer = RecursiveFileAnalyzer( generated_images_dir )
         initial_count = len( analyzer.get_unwrapped_list( None, r'.*?image(\d+)\.fits$', (bin_start, bin_end) ) )
@@ -94,7 +93,7 @@ def sample( args : argparse.Namespace ):
     # Get the power transformer for the peak fluxes and the appropriate distribution function
     pt = PeakFluxPowerTransformer( args.generated_subdir )
     if args.distribution == 'dataset':
-        fpeak_model_dist = model_sampler.get_fpeak_model_dist( None, pth.NP_ARRAY_PARENT / args.generated_subdir / pth.MAXVALS )
+        fpeak_model_dist = model_sampler.get_fpeak_model_dist( None, paths.NP_ARRAY_PARENT / args.generated_subdir / paths.MAXVALS )
     elif args.distribution == 'uniform':
         fpeak_model_dist = lambda n : pt.transform( scipy.stats.uniform.rvs( args.lower_bound, args.upper_bound, size=n ) )
     elif args.distribution == 'loguniform':
@@ -157,12 +156,12 @@ def sample( args : argparse.Namespace ):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
-                        help=f"Which config to use for image generation, as defined in {pth.PROGRAM_CONFIG.name}",
+                        help=f"Which config to use for image generation, as defined in {paths.PROGRAM_CONFIG.name}",
                         type=str )
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
-    config.read( pth.PROGRAM_CONFIG )
+    config.read( paths.PROGRAM_CONFIG )
     for arg in [ 'generated_subdir',
                  'batch_size', 
                  'n_samples',

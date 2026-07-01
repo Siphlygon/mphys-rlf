@@ -1,9 +1,9 @@
 import numpy as np
 from sklearn.preprocessing import PowerTransformer
 
-import utils.paths as pth
-from utils.distributed import DistributedUtils
-from utils.logging import get_logger
+from . import paths
+from .distributed import DistributedUtils
+from .logger import get_logger
 
 # DEPENDENCIES
 # make_folders_and_copy_config
@@ -39,7 +39,7 @@ class PeakFluxPowerTransformer:
         self.du = DistributedUtils()
 
         self.subdir = subdir
-        self.maxvals_path = pth.NP_ARRAY_PARENT / subdir / pth.MAXVALS
+        self.maxvals_path = paths.NP_ARRAY_PARENT / subdir / paths.MAXVALS
 
         if not self.maxvals_path.exists():
             if maxvals is None:

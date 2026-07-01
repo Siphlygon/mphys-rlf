@@ -10,15 +10,13 @@ import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
 
-import analysis.log_analyzer as la
-import utils.paths as pth
-from analysis.log_analyzer import LogAnalyzer
-from completeness.angular_size_finder import AngularSizeFinder
-from utils.distributed import DistributedUtils
-from utils.logging import get_logger
-from utils.power_transform import PeakFluxPowerTransformer
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
-
+from ..analysis import log_analyzer as la
+from ..completeness.angular_size_finder import AngularSizeFinder
+from ..utils import paths
+from .distributed import DistributedUtils
+from .logger import get_logger
+from .power_transform import PeakFluxPowerTransformer
+from .recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 @dataclass
@@ -83,7 +81,7 @@ class ImageDataArrays:
         """
         self.logger = get_logger( __name__, logging.DEBUG )
         self.du = DistributedUtils()
-        self.config = pth.config[ config_name ]
+        self.config = paths.config[ config_name ]
 
         # Set of subdirectories that need to be processed and saved to disk, either because they were not loaded from
         # files or because they were marked as dirty due to a failed load attempt
@@ -303,7 +301,7 @@ class ImageDataArrays:
             An instance of SubdirData containing the loaded numpy arrays.
         """
         self.logger.debug( 'Attempting to load from files' )
-        parent = pth.NP_ARRAY_PARENT
+        parent = paths.NP_ARRAY_PARENT
         subdir_data = SubdirData()
         for array_name in subdir_data.get_array_names():
             try:
@@ -339,7 +337,7 @@ class ImageDataArrays:
             A tuple containing the log analyzer arrays: (normalized_model_fluxes, sigma_clipped_means,
             sigma_clipped_rmsds, unclipped_rmsds) and the indexes corresponding to the log analyzer values.
         """
-        log_analyzer = LogAnalyzer( subdir )
+        log_analyzer = la.LogAnalyzer( subdir )
         normalized_model_fluxes, log_analyzer_inds = log_analyzer.for_each( la.get_model_flux, return_nums=True )
         normalized_model_fluxes = np.array( normalized_model_fluxes )
         sigma_clipped_means = np.array( log_analyzer.for_each( la.get_sigma_clipped_mean ) ) / 1000 #normalized Jy units
@@ -366,7 +364,7 @@ class ImageDataArrays:
         tuple[list[np.ndarray], np.ndarray]
             A tuple containing the residual arrays and their corresponding indexes.
         """
-        residual_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
+        residual_files = RecursiveFileAnalyzer( paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
         residual_images, residual_indexes = residual_files.run_pipeline( function=self.get_fits_primaryhdu_data,
                                                                         pattern=r'.*?\D+(\d+)\.fits$',
                                                                         return_nums=True )
@@ -391,7 +389,7 @@ class ImageDataArrays:
         tuple[list[np.ndarray], np.ndarray]
             A tuple containing the model arrays and their corresponding indexes.
         """
-        model_files = RecursiveFileAnalyzer( pth.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model' )
+        model_files = RecursiveFileAnalyzer( paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model' )
         model_images, model_indexes = model_files.run_pipeline( function=self.get_fits_primaryhdu_data,
                                                                 pattern=r'.*?\D+(\d+)\.fits$',
                                                                 return_nums=True )
@@ -445,7 +443,7 @@ class ImageDataArrays:
             A tuple containing the dataset arrays and their corresponding indexes.
         """
         self.logger.debug( f'Not using dataset h5 for {subdir}' )
-        data_files = RecursiveFileAnalyzer( pth.FITS_PARENT / subdir )
+        data_files = RecursiveFileAnalyzer( paths.FITS_PARENT / subdir )
         images, data_inds = data_files.run_pipeline( function=self.get_fits_primaryhdu_data,
                                                     pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
         images = np.asarray( images )
@@ -476,9 +474,9 @@ class ImageDataArrays:
             A tuple containing the catalog arrays and their corresponding indexes.
         """
         asf = AngularSizeFinder()
-        output_file = pth.NP_ARRAY_PARENT / subdir / 'las_values.csv'
+        output_file = paths.NP_ARRAY_PARENT / subdir / 'las_values.csv'
         las_values, catalog_indexes = asf.estimate_angular_sizes(output_file=output_file,
-                                                                 fits_dir=pth.PYBDSF_CATALOG_PARENT / subdir,
+                                                                 fits_dir=paths.PYBDSF_CATALOG_PARENT / subdir,
                                                                  pattern=r'.*?\D+(\d+)\.fits$')
         catalog_values = [ las_values ]
 
@@ -495,7 +493,7 @@ class ImageDataArrays:
         only_subdirs : set[str] | None, optional
             Which specific subdirectories to save arrays for, by default None
         """
-        parent = pth.NP_ARRAY_PARENT
+        parent = paths.NP_ARRAY_PARENT
         dataset_dict = vars( self.dataset_data )
         generated_dict = vars( self.generated_data )
         for subdir_dict, subdir in zip( [ dataset_dict, generated_dict ],
@@ -519,7 +517,7 @@ class ImageDataArrays:
             The numpy arrays to be saved, passed as keyword arguments where the key is the array name and the value is
             the numpy array itself.
         """
-        parent = pth.NP_ARRAY_PARENT
+        parent = paths.NP_ARRAY_PARENT
         for key, val in arrays.items():
             if isinstance( val, np.ndarray ):
                 np.save( parent / subdir / ( key + '.npy' ), val )
@@ -528,7 +526,7 @@ class ImageDataArrays:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
-                        help=f"Which config to use for image data arrays, as defined in {pth.PROGRAM_CONFIG.name}",
+                        help=f"Which config to use for image data arrays, as defined in {paths.PROGRAM_CONFIG.name}",
                         type=str )
     args = parser.parse_args()
 

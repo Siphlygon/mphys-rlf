@@ -1,11 +1,10 @@
-import logging
 import re
 from pathlib import Path, PurePath
 from typing import Callable
 
-import utils.paths
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
-
+from ..utils import paths
+from ..utils.logger import LoggingLevels
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 def get_flux( path: Path ):
@@ -26,7 +25,8 @@ def get_flux( path: Path ):
         filedata = file.read()
     exp = re.compile( r"Flux from sum of \(non-blank\) pixels ..... : (\d+\.\d+) Jy" )
     match : re.Match[str] = exp.search( filedata )
-    if match is None: print( str( path ) )
+    if match is None:
+        print( str( path ) )
     flux = float( match.group( 1 ) )
     return flux
 
@@ -49,8 +49,10 @@ def get_model_flux( path: Path ):
         filedata = file.read()
     exp = re.compile( r"Total flux density in model ............. : (\d+\.\d+) Jy" )
     match = exp.search( filedata )
-    if match is None: flux = 0 # Log won't have this line if no flux is found - so set model flux to 0
-    else: flux = float( match.group( 1 ) )
+    if match is None:
+        flux = 0 # Log won't have this line if no flux is found - so set model flux to 0
+    else:
+        flux = float( match.group( 1 ) )
     return flux
 
 
@@ -94,7 +96,8 @@ def get_sigma_clipped_mean( path: Path ):
         filedata = file.read()
     exp = re.compile( r"sigma clipped mean \(Stokes I\) =  -?(\d+\.\d+) mJy" )
     match = exp.search( filedata )
-    if match is None: print( str( path ) )
+    if match is None:
+        print( str( path ) )
     mean = float( match.group( 1 ) )
     return mean
 
@@ -117,7 +120,8 @@ def get_rms( path: Path ):
         filedata = file.read()
     exp = re.compile( r"raw rms =  (\d+\.\d+) mJy" )
     match = exp.search( filedata )
-    if match is None: print( str( path ) )
+    if match is None:
+        print( str( path ) )
     rms = float( match.group( 1 ) )
     return rms
 
@@ -140,7 +144,8 @@ def get_sigma_clipped_rms( path: Path ):
         filedata = file.read()
     exp = re.compile( r"sigma clipped rms =  (\d+\.\d+) mJy" )
     match = exp.search( filedata )
-    if match is None: print( str( path ) )
+    if match is None:
+        print( str( path ) )
     rms = float( match.group( 1 ) )
     return rms
 
@@ -168,7 +173,8 @@ def get_flux_mean_rms( path: Path ):
     #include re.DOTALL to make the .*? able to expand over newlines
     exp = re.compile( r"Raw mean \(Stokes I\) =  (\d+\.\d+) mJy and raw rms =  (\d+\.\d+) mJy.*?Flux from sum of \(non-blank\) pixels ..... : (\d+\.\d+) Jy", re.DOTALL )
     match = exp.search( filedata )
-    if match is None: print( str( path ) )
+    if match is None:
+        print( str( path ) )
     mean = float( match.group( 1 ) )
     rms = float( match.group( 2 ) )
     flux = float( match.group( 3 ) )
@@ -182,9 +188,11 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
     """
     def __init__( self,
                  subdir: PurePath | str,
-                 log_file_dir: Path = utils.paths.PYBDSF_LOG_PARENT,
-                 log_level: int = logging.INFO ):
-        """_summary_
+                 log_file_dir: Path = paths.PYBDSF_LOG_PARENT,
+                 log_level: int = LoggingLevels.INFO.value ):
+        """
+        Initialises a LogAnalyzer object, which is a recursive analyzer for log_file_dir/subdir, with additional
+        functionality to extract flux, mean, and rms from the log files.
 
         Parameters
         ----------
@@ -209,7 +217,7 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
                  *args, **kwargs ):
         """
         A method to perform a generic function on all files within the log directory and return the output, along with
-        optionally a number as gathered from the first capture group in pattern applied to the file paths.
+        optionally a number as gathered from the first capture group in pattern applied to the file pth.
 
         Parameters
         ----------

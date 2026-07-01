@@ -1,8 +1,8 @@
 import argparse
 
-import utils.paths as pth
-from analysis.image_analyzer import ImageAnalyzer
-from utils.logging import get_logger
+from ..analysis.image_analyzer import ImageAnalyzer
+from ..utils import paths
+from ..utils.logger import get_logger
 
 logger = get_logger( __name__ )
 
@@ -20,7 +20,7 @@ def analyze( subdirs: list[ str ], fits_input_dir: str | None = None ):
     """
     for subdir in subdirs:
         if fits_input_dir is None:
-            fits_input_dir = pth.FITS_PARENT   # type: ignore
+            fits_input_dir = paths.FITS_PARENT   # type: ignore
 
         analyzer = ImageAnalyzer(subdir=subdir,
                                  fits_input_dir=fits_input_dir,
@@ -46,4 +46,4 @@ if __name__ == '__main__':
         analyze( args.SUBDIRS, args.input_dir )
     else:
         logger.info( "Analyzing default subdirectories from utils.paths.SUBDIRS" )
-        analyze( pth.SUBDIRS )
+        analyze( paths.SUBDIRS )

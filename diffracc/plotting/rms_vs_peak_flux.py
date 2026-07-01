@@ -6,23 +6,22 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
-import utils.paths as pth
-from utils.img_data_arrays import ImageDataArrays
-
+from ..utils import paths
+from ..utils.img_data_arrays import ImageDataArrays
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to use, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument( "--config", help=f"Which config to use, as defined in {paths.PROGRAM_CONFIG.name}", type=str )
     args = parser.parse_args()
 
-    config = pth.config[ args.config ]
+    config = paths.config[ args.config ]
 
     config_data_arrays = ImageDataArrays( args.config )
     # Plotting peak flux vs RMS of residuals
     for subdir, c, data_arrays in zip( [ config[ 'generated_subdir' ], config[ 'dataset_subdir' ] ],
                                       [ 'g', 'b' ],
                                       [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
-        plt.scatter( data_arrays.peak_fluxes, np.std( data_arrays.resid_images, axis=(1,2) ),
+        plt.scatter( data_arrays.peak_fluxes, np.std( data_arrays.residual_images, axis=(1,2) ),
                     label=subdir, c=c, s=0.01 )
 
     plt.xscale( 'log' )

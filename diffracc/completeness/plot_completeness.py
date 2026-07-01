@@ -7,15 +7,13 @@ import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
 
-import utils.paths as pths
-from analysis.log_analyzer import get_model_flux
-from completeness.completeness_estimator import (
-    CompletenessEstimator,
-    SizeBinnedCompleteness,
-)
-from utils.functions import erf01, richards01, sigmoid, sigmoid01
-from utils.power_transform import PeakFluxPowerTransformer
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_header
+from ..analysis.log_analyzer import get_model_flux
+from ..completeness.completeness_estimator import CompletenessEstimator
+from ..completeness.size_binned_completeness import SizeBinnedCompleteness
+from ..utils import paths
+from ..utils.functions import erf01, richards01, sigmoid, sigmoid01
+from ..utils.power_transform import PeakFluxPowerTransformer
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_header
 
 RMS_LOFAR = 95e-6 * 1e3
 BEAM_WIDTH_LOFAR = (0.00166667, 0.00166667, 0.0)
@@ -104,7 +102,7 @@ def plot_completeness(config_str: str,
     # Check if the completeness estimate file exists, and if not, create it
     if not os.path.exists( 'completeness_estimate.csv' ):
         estimator = CompletenessEstimator(config_str, which_dataset=which_dataset, override_data=override_data)
-        root = pths.STORAGE_PARENT / "src/completeness/"
+        root = paths.STORAGE_PARENT / "diffracc/completeness/"
 
         model_images_path = root / 'model_images.npy'
         peak_fluxes_path = root / 'peak_fluxes.npy'
@@ -119,9 +117,9 @@ def plot_completeness(config_str: str,
 
         else:
             if which_dataset == 'GENERATED_SUBDIR':
-                path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["GENERATED_SUBDIR"]
+                path_to_subdir = paths.NP_ARRAY_PARENT / estimator.config["GENERATED_SUBDIR"]
             else:
-                path_to_subdir = pths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
+                path_to_subdir = paths.NP_ARRAY_PARENT / estimator.config["DATASET_SUBDIR"]
 
             folder_name = "snr15_loguniform_nolas"
             paths_to_use=[root / (folder_name + "_fits_images"),
@@ -130,9 +128,9 @@ def plot_completeness(config_str: str,
 
             maxvals = np.load( root / 'maxvals.npy' )
 
-            #paths_to_use = [pths.PYBDSF_CATALOG_PARENT / folder_name,
-            #                 pths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
-            #                 pths.PYBDSF_LOG_PARENT / folder_name]
+            #paths_to_use = [paths.PYBDSF_CATALOG_PARENT / folder_name,
+            #                 paths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
+            #                 paths.PYBDSF_LOG_PARENT / folder_name]
 
             # Get model images 
             def read_model_images(path: Path):
@@ -298,7 +296,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
                         help="Which config to to use for Dataset/Generated subdirs, as defined in "
-                        f" {pths.PROGRAM_CONFIG.name}", type=str)
+                        f" {paths.PROGRAM_CONFIG.name}", type=str)
     args = parser.parse_args()
 
     plot_completeness(args.config)

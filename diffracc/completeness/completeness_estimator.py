@@ -1,7 +1,6 @@
 import argparse
 import configparser
 import inspect
-import logging
 from pathlib import Path
 from typing import Callable
 
@@ -13,11 +12,11 @@ import scipy.signal
 from scipy.optimize import curve_fit
 from tqdm import tqdm
 
-import utils.logging
-import utils.paths as pth
-from utils.catalogue_dist import RMSDistribution
-from utils.functions import sigmoid
-from utils.img_data_arrays import ImageDataArrays, SubdirData
+from ..utils import paths
+from ..utils.catalogue_dist import RMSDistribution
+from ..utils.functions import sigmoid
+from ..utils.img_data_arrays import ImageDataArrays, SubdirData
+from ..utils.logger import LoggingLevels, get_logger
 
 
 class CompletenessEstimator:
@@ -42,7 +41,7 @@ class CompletenessEstimator:
         override_data : bool, optional
             Whether to not use ImageDataArrays as the source of data. Defaults to False.
         """
-        self.logger = utils.logging.get_logger("CompletenessEstimator", logging.DEBUG)
+        self.logger = get_logger("CompletenessEstimator", LoggingLevels.DEBUG.value)
 
         assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"],(
             "which_dataset must be either 'GENERATED_SUBDIR' or 'DATASET_SUBDIR'")
@@ -52,8 +51,8 @@ class CompletenessEstimator:
 
         # Read parameters from the config.ini file
         _config = configparser.ConfigParser()
-        _config.read(pth.PROGRAM_CONFIG)
-        self.config = _config[config_str]
+        _config.read(paths.PROGRAM_CONFIG)
+        self.config = dict(_config[config_str])
         self.sigma_threshold = int(self.config['DETECTION_SIGMA_THRESHOLD'])
         self.num_flux_bins = int(self.config['COMPLETENESS_FLUX_BINS'])
         self.min_log_flux = float(self.config['COMPLETENESS_MIN_LOG_FLUX'])
@@ -63,7 +62,7 @@ class CompletenessEstimator:
         if not override_data:
             # Extract all the relevant arrays from the specified dataset
             self.logger.info("Extracting data arrays for dataset")
-            config_data_arrays = ImageDataArrays(self.config)
+            config_data_arrays = ImageDataArrays(config_str)
             self.data = config_data_arrays.__getattribute__(self.which_dataset + "_data")
         else:
             self.data = SubdirData()
@@ -124,6 +123,8 @@ class CompletenessEstimator:
                 param_names = [p.name for p in params]
                 n_params = max(len(params), 0)
             except Exception:
+                self.logger.warning(
+                    f"Could not determine function signature for {function.__name__}, using default initial guess")
                 param_names = []
                 n_params = 0
 
@@ -528,7 +529,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config",
-        help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str)
+        help=f"Which config to to use for Dataset/Generated subdirs, as defined in {paths.PROGRAM_CONFIG.name}",
+        type=str)
     args = parser.parse_args()
 
     completeness_estim = CompletenessEstimator(args.config)

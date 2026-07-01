@@ -1,12 +1,10 @@
 import os
-import nvidia_smi
 
-import torch
+import nvidia_smi
 import pandas as pd
+import torch
 from torch.nn import DataParallel
 from torch.nn.parallel import DistributedDataParallel as DDP
-
-
 
 
 def physical_gpu_df():

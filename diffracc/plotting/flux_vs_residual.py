@@ -1,11 +1,12 @@
-import matplotlib.pyplot as plt
-import numpy as np
 import argparse
 
-import utils.paths as pth
-from utils.img_data_arrays import ImageDataArrays
-from utils.logging import get_logger
-from utils.power_transform import PeakFluxPowerTransformer
+import matplotlib.pyplot as plt
+import numpy as np
+
+from ..utils import paths
+from ..utils.img_data_arrays import ImageDataArrays
+from ..utils.logger import get_logger
+from ..utils.power_transform import PeakFluxPowerTransformer
 
 logger = get_logger( __name__ )
 
@@ -19,7 +20,7 @@ def plot_flux_vs_residuals( config_name: str ):
     config_name : str
         The name of the config to use for the analysis, as defined in utils.paths.PROGRAM_CONFIG
     """
-    config = pth.config[ config_name ]
+    config = paths.config[ config_name ]
     config_data_arrays = ImageDataArrays( config_name )
 
     for subdir, color, data_arrays in zip( [ config[ 'generated_subdir' ], config[ 'dataset_subdir' ] ],
@@ -61,7 +62,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config",
                         help=f"Which config to to use for Dataset/Generated subdirs, as defined in"
-                        f" {pth.PROGRAM_CONFIG.name}",
+                        f" {paths.PROGRAM_CONFIG.name}",
                         type=str )
     args = parser.parse_args()
 
