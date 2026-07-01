@@ -1,15 +1,17 @@
-import os
-import requests
-import logging
-import utils.logging
-import utils.paths as paths
-from tqdm import tqdm
-from utils.distributed import distribute
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tenacity import retry, wait_exponential, stop_after_attempt
-import time
 import configparser
+import logging
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential
+from tqdm import tqdm
+
+import utils.logging
+import utils.paths as pths
+from utils.distributed import distribute
 
 
 class CutoutDownloader:
@@ -17,19 +19,22 @@ class CutoutDownloader:
     This is a class to handle downloading cutouts from the LOFAR cutout server based on the Hardcastle catalogue, and
     storing them in appropriately binned folders.
     """
-
     # Requests params - note, do not overload the server - please be polite to LOFAR!
     MAX_WORKERS = 64
     RATE_DELAY = 0.03
     RETRIES = 6
 
     def __init__(self):
-        # Set up logging
+        """
+        Initialises the CutoutDownloader by setting up logging, reading parameters from the config.ini file, and
+        creating a reusable requests session with connection pooling. It also initializes a counter for recent errors
+        and a timestamp for the last request to implement rate limiting.
+        """
         self.logger = utils.logging.get_logger("CutoutDownloader", logging.DEBUG)
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
-        config.read(paths.PROGRAM_CONFIG)
+        config.read(pths.PROGRAM_CONFIG)
         de_config = config['DEFAULT']
         self.folder_size = int(de_config['FOLDER_SIZE'])
 
@@ -46,10 +51,16 @@ class CutoutDownloader:
 
     # ---------- SET UP ----------
     def read_positions(self,
-                       file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt")\
+                       file_path : Path = pths.INITIAL_DATASET/"resolved_positions.txt")\
             -> list[tuple[float, float]]:
         """
         Reads the RA and DEC positions of resolved sources from a text file and returns them as a list of tuples.
+        
+        Parameters
+        ----------
+        file_path : Path, optional
+            The path to the text file containing the RA and DEC positions, by default
+            pths.INITIAL_DATASET/"resolved_positions.txt"
 
         Returns
         -------
@@ -58,7 +69,7 @@ class CutoutDownloader:
         """
         try:
             positions = []
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     ra, dec = map(float, line.split())
                     positions.append((ra, dec))
@@ -66,11 +77,13 @@ class CutoutDownloader:
             return positions
         except Exception as e:
             self.logger.error(f"Error reading positions from text file: {e}.")
-            raise Exception(f"Failed to read positions from text file at {file_path}. Please check the file and try again: {e}")
+            raise Exception(f"Failed to read positions from text file at {file_path}. "
+                            f"Please check the file and try again") from e
+
 
     def make_folder(self,
                     folder_num : int,
-                    directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download")\
+                    directory_path : Path = pths.DATASET_PARENT / "dr2_cutouts_download")\
             -> Path:
         """
         Creates a folder for storing cutout files. The folder will be named in the format "start_index-end_index", where
@@ -110,6 +123,7 @@ class CutoutDownloader:
             time.sleep(0.5)
         elif getattr(self, "recent_errors", 0) > 0:
             time.sleep(0.15)
+
 
     # This method was comes from the LOFAR API, with changes made to optimise it for large-batch requests.
     # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
@@ -178,6 +192,12 @@ class CutoutDownloader:
         """
         Downloads a single cutout based on the provided RA and DEC positions, and saves it to the specified path. If the
         cutout file already exists, it skips the download. If the download fails, it returns an error message.
+        
+        Parameters
+        ----------
+        args : tuple[int, float, float, Path]
+            A tuple containing the index of the cutout, the RA and DEC positions, and the path to save the downloaded
+            cutout FITS file.
 
         Returns
         -------
@@ -198,8 +218,9 @@ class CutoutDownloader:
             self.recent_errors += 1
             return i, str(e)
 
+
     def download_all_cutouts(self,
-                             directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download",
+                             directory_path : Path = pths.DATASET_PARENT / "dr2_cutouts_download",
                              custom_positions : list[tuple[float, float]] | None = None):
         """
         Downloads cutouts for all positions in the Hardcastle catalogue, or for a custom list of positions if provided.
@@ -207,7 +228,8 @@ class CutoutDownloader:
         Parameters
         ----------
         directory_path : Path, optional
-            The path to the directory where the cutout files will be saved, by default paths.DATASET_PARENT/"dr2_cutouts_download"
+            The path to the directory where the cutout files will be saved, by default
+            pths.DATASET_PARENT/"dr2_cutouts_download"
         custom_positions : list[tuple[float, float]] | None, optional
             A list of RA and DEC positions to use instead of loading from the Hardcastle catalogue. This is useful for
             testing or if you want to download a specific subset of cutouts, by default None
@@ -225,7 +247,7 @@ class CutoutDownloader:
             os.makedirs(target_directory)
 
         # Clean the error log file for this run
-        error_log_path = paths.INITIAL_DATASET / "download_errors.log"
+        error_log_path = pths.INITIAL_DATASET / "download_errors.log"
         if os.path.exists(error_log_path):
             self.logger.info(f'Cleaning existing error log file {error_log_path}...')
             os.remove(error_log_path)
@@ -244,7 +266,7 @@ class CutoutDownloader:
         for i in tqdm(image_nums, desc="Building task list..."):
             ra, dec = hdc_positions[i]
             new_index = i // self.folder_size
-            
+
             # if we've crossed a folder boundary, check the new folder exists and update the current folder index
             if new_index != folder_index:
                 folder_index = new_index
@@ -262,7 +284,7 @@ class CutoutDownloader:
                 i, err = f.result()
 
                 if err and err != "exists":
-                    with open(paths.INITIAL_DATASET / "download_errors.log", "a") as log:
+                    with open(pths.INITIAL_DATASET / "download_errors.log", "a", encoding="utf-8") as log:
                         log.write(f"{i}: {err}\n")
 
 

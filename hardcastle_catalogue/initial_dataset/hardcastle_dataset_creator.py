@@ -1,13 +1,14 @@
-from pathlib import Path
 import logging
+from pathlib import Path
+
+import h5py
 import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
-import h5py
 
-from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 import utils.logging
 import utils.paths as pths
+from utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 class HardcastleDatasetCreator:
@@ -15,13 +16,12 @@ class HardcastleDatasetCreator:
     A class to create the full initial Hardcastle dataset by combining information from the Hardcastle catalogue with
     pixel values from downloaded cutout files.
     """
-
     def __init__(self):
         self.logger = utils.logging.get_logger("hardcastle dataset creator", logging.DEBUG)
 
         # Initialise class attributes
         self.save_hdf5 = True  # Whether to save the dataset in HDF5 format or FITS format
-        self.num_counts = 0  # Total number of resolved items in the Hardcastle catalogue, to be set when loading the catalogue
+        self.num_counts = 0  # Total number of resolved items in the Hardcastle catalogue, set later
 
 
     # ---------- FILE INPUT ----------
@@ -49,7 +49,7 @@ class HardcastleDatasetCreator:
         with fits.open(file_path) as hdul:
             # Get information for resolved items
             cat_data = hdul[1].data
-            resolved_items = cat_data[cat_data['Resolved'] == True]
+            resolved_items = cat_data[cat_data['Resolved']]
 
             # Set the number of resolved items for later use
             self.num_counts = len(resolved_items)
@@ -58,7 +58,7 @@ class HardcastleDatasetCreator:
             if self.save_hdf5:
                 columns = hdul[1].columns
                 return resolved_items, columns
-            
+
             header = hdul[1].header
             return resolved_items, header
 
@@ -82,7 +82,8 @@ class HardcastleDatasetCreator:
                 data = hdul[0].data
 
                 if data.shape != (80, 80):
-                    self.logger.warning(f"Cutout image {file} has shape {data.shape}, expected (80, 80). Padding with NaNs.")
+                    self.logger.warning(f"Cutout image {file} has shape {data.shape}, "
+                                        "expected (80, 80). Padding with NaNs.")
                     return self.pad_to_80x80(data)
 
                 return np.array(data, dtype=np.float32)
@@ -93,14 +94,16 @@ class HardcastleDatasetCreator:
 
 
     def load_cutout_images(self,
-                           folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/')-> tuple[np.ndarray, np.ndarray]:
+                           folder_path : Path = pths.DATASET_PARENT/'dr2_cutouts_download/'
+                           )-> tuple[np.ndarray, np.ndarray]:
         """
         Loads all cutout images from a specified folder, returning the pixel values and their corresponding indices.
 
         Parameters
         ----------
         folder_path : Path, optional
-            The path to the folder containing the cutout FITS files, by default pths.DATASET_PARENT/'dr2_cutouts_download/'
+            The path to the folder containing the cutout FITS files, by default
+            pths.DATASET_PARENT/'dr2_cutouts_download/'
 
         Returns
         -------
@@ -160,6 +163,7 @@ class HardcastleDatasetCreator:
         padded[:h, :w] = arr
 
         return padded
+
 
     # NOTE - NOT RECOMMENDED. Saving FITS files with many HDUs is very slow, the .h5 method is recommended
     def save_to_fits(self,
@@ -227,6 +231,7 @@ class HardcastleDatasetCreator:
         hdul.writeto(save_path, overwrite=True)
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
 
+
     def save_to_h5(self,
                    hardcastle_header : list[tuple],
                    columns : fits.column.ColDefs,
@@ -264,6 +269,7 @@ class HardcastleDatasetCreator:
             f.create_dataset( 'cat_info', data=struct_arr, compression='gzip', chunks=True )
             f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
+
 
     def build_custom_dtype(self, columns : fits.column.ColDefs) -> np.dtype:
         """
@@ -341,15 +347,20 @@ class HardcastleDatasetCreator:
         # Load the Hardcastle catalogue headers
         hardcastle_release = self.load_hardcastle_header(file_path)
         if self.save_hdf5:
-            catalogue_info, columns = hardcastle_release  # Unpack the tuple if we are saving to HDF5, as we need the column names for that
+             # Unpack the tuple if we are saving to HDF5, as we need the column names for that
+            catalogue_info, columns = hardcastle_release
         else:
-            catalogue_info, hardcastle_header = hardcastle_release  # Unpack the tuple if we are saving to FITS, we need header info
+            # Unpack the tuple if we are saving to FITS, we need header info
+            catalogue_info, hardcastle_header = hardcastle_release
         # Get the pixel values from the cutout images
         hardcastle_catalogue, indices = self.load_cutout_images(folder_path)
 
         # Save file
         if save_path is None:
-            save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5' if save_hdf5 else pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
+            if self.save_hdf5:
+                save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+            else:
+                save_path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
 
         if self.save_hdf5:
             self.save_to_h5(catalogue_info, columns, hardcastle_catalogue, indices, save_path)

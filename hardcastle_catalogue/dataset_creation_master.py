@@ -1,10 +1,11 @@
-import hardcastle_catalogue_downloader
+import logging
+
 import cutout_downloader
 import download_verification
+import hardcastle_catalogue_downloader
 import hardcastle_dataset_creator
-import logging
-import utils.logging
 
+import utils.logging
 
 if __name__ == "__main__":
     # Start logging
@@ -29,4 +30,3 @@ if __name__ == "__main__":
     logger.info("Starting creation of dataset from downloaded cutouts.")
     hardcastle_dataset_creator.HardcastleDatasetCreator().create_hardcastle_dataset()
     logger.info("Finished creation of dataset.")
-

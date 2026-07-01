@@ -1,26 +1,31 @@
-import os
-import logging
-from pathlib import Path
-from astropy.io import fits
-import numpy as np
 import configparser
+import logging
+import os
+from pathlib import Path
+
+import numpy as np
+from astropy.io import fits
+from cutout_downloader import CutoutDownloader
 
 import utils.logging
 import utils.paths as pths
 from utils.recursive_file_analyzer import RecursiveFileAnalyzer
-from cutout_downloader import CutoutDownloader
+
 
 class CutoutDownloadVerifier:
     """
-    A class to verify the completeness of downloaded cutout files from the Hardcastle catalogue. This is done separately to
-    the downloader script to avoid the issue of nodes attempting to verify and re-download all images before every image
-    has properly been downloaded.
+    A class to verify the completeness of downloaded cutout files from the Hardcastle catalogue. This is done separately
+    to the downloader script to avoid the issue of nodes attempting to verify and re-download all images before every
+    image has properly been downloaded.
     
     Missing files seems to always be an issue on a first-run of the downloader script, both on the cluster and on a
     local machine. This class checks for missing or corrupted files and re-downloads them if necessary.
     """
-
     def __init__(self):
+        """
+        Initialises the CutoutDownloadVerifier by setting up logging and reading configuration parameters from the
+        config.ini file.
+        """
         self.logger = utils.logging.get_logger("CutoutDownloadVerifier", logging.DEBUG)
 
         # Read parameters from the config.ini file
@@ -55,6 +60,7 @@ class CutoutDownloadVerifier:
             self.logger.info(f'Deleted corrupted cutout file: {cutout_path.name}')
             return False
 
+
     def verify_downloads(self,
                          download_path : Path = pths.DATASET_PARENT/"dr2_cutouts_download"):
         """
@@ -64,7 +70,8 @@ class CutoutDownloadVerifier:
         Parameters
         ----------
         download_path : Path, optional
-            The path to the directory containing the downloaded cutout files, by default pths.DATASET_PARENT/"dr2_cutouts_download"
+            The path to the directory containing the downloaded cutout files, by default
+            pths.DATASET_PARENT/"dr2_cutouts_download"
         """
         self.logger.info('Starting verification of downloaded cutouts...')
         downloader = CutoutDownloader()
@@ -89,7 +96,8 @@ class CutoutDownloadVerifier:
         values = np.array(values, dtype=np.bool_)
         num_corrupted = np.sum(values == False)
         if num_corrupted > 0:
-            self.logger.warning(f"Found {num_corrupted} corrupted cutout files. They have been deleted and will be re-downloaded.")
+            self.logger.warning(f"Found {num_corrupted} corrupted cutout files. "
+                                "They have been deleted and will be re-downloaded.")
             corrupted_indices = [idx for idx, val in zip(indices, values) if val is False]
             files_to_redownload.extend(corrupted_indices)
 
@@ -104,8 +112,9 @@ class CutoutDownloadVerifier:
             downloader.download_all_cutouts(custom_positions=requested_positions)
             self.logger.info("Finished re-downloading. Note that some files from the LOFAR API will always be missing.")
             # Count the number of files present in dr2_cutouts directly
-            cpt = sum([len(files) for r, d, files in os.walk(download_path)])
-            self.logger.info(f"Number of files downloaded: {pos_count - len(files_to_redownload) - cpt}. Final count of cutout files is {cpt}.")
+            cpt = sum(len(files) for r, d, files in os.walk(download_path))
+            self.logger.info(f"Number of files downloaded: {pos_count - len(files_to_redownload) - cpt}. "
+                             f"Final count of cutout files is {cpt}.")
         else:
             self.logger.info('All cutout files are present.')
 
