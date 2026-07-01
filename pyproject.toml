@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffracc"
+version = "1.0.0"
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "scipy",
+    "astropy",
+    "bdsf",
+    "pandas",
+    "tqdm",
+    "shapely",
+    "h5py",
+    "wget",
+    "torch",
+    "torchvision",
+    "scikit-learn",
+    "einops",
+    "inputimeout",
+    "wandb",
+    "nvidia_smi",
+    "indexed",
+    "tenacity"
+]
+authors = [
+  {name = "Ashley Parr", email = "amparr83@gmail.com"},
+  {name = "Luna Greenburg", email = "luna.alice.greenburg@gmail.com"}
+]
+description = "Diffusion for Radio-loud AGN Completeness Corrections"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICEN[CS]E.*"]
+
+[project.urls]
+Repository = "https://github.com/solalunara/MPhys-RLF"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["diffracc*"]
+exclude = ["docs*", "tests*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+diffracc = ["*.toml", "*.dat"]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
