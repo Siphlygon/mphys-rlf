@@ -1,10 +1,14 @@
+"""
+A script to run a hyperparameter sweep using Weights & Biases (wandb) and torchrun for distributed training. The script
+reads the sweep parameters from a JSON file, constructs the sweep configuration, and launches the training script for
+each set of hyperparameters. The script also handles the initialization of the model name to avoid file existence errors
+during the sweep.
+"""
 import json
+import os
+import subprocess
 
 import wandb
-import subprocess
-import os
-import string
-import secrets
 
 
 def launch():
@@ -14,7 +18,7 @@ def launch():
     host_ip = os.environ.get("HOST_IP", "localhost")
     master_port = os.environ.get("MASTER_PORT", "12365")
     env = os.environ.copy()
-    
+
     # Set the model name for this run to avoid FileExistsError in sweeps.py
     model_name = env["MODEL_NAME"]
     suffix = int(model_name.split("_")[-1])  # Get the current suffix number
@@ -25,7 +29,7 @@ def launch():
         new_model_name = f"{base_name}_{suffix}"
     env["MODEL_NAME"] = new_model_name
     print(f"Set MODEL_NAME to {new_model_name} for this run.")
-    
+
     # Launch the training script using torchrun for DDP
     subprocess.run([
         "torchrun",
@@ -36,25 +40,26 @@ def launch():
         "src/training/sweeps.py"
     ], check=True, env=env)
 
+
 if __name__ == "__main__":
     # Initialise wandb logging
     wandb.login(key=os.environ.get("WANDB_KEY"))
-    project = "diffusion-radio-galaxies-sweeps"
+    PROJECT = "diffusion-radio-galaxies-sweeps"
 
     # Define the sweep configuration
-    parameters_path = "src/training/sweep_params.json"
-    if os.path.exists(parameters_path):
+    PARAMETERS_PATH = "src/training/sweep_params.json"
+    if os.path.exists(PARAMETERS_PATH):
         try:
-            with open(parameters_path, 'r') as f:
+            with open(PARAMETERS_PATH, 'r', encoding='utf-8') as f:
                 parameters = json.load(f)
-        except json.JSONDecodeError:
-            raise ValueError(f"Invalid JSON in {parameters_path}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in {PARAMETERS_PATH}") from exc
     else:
-        raise FileNotFoundError(f"Sweep parameters file not found at {parameters_path}")
-    
+        raise FileNotFoundError(f"Sweep parameters file not found at {PARAMETERS_PATH}")
+
     parameters = parameters.get("parameters")
     print("Loaded sweep parameters:", parameters)
-    
+
     sweep_config = {
                 'name': 'hyperparameter_sweep',
                 'method': 'bayes',
@@ -74,10 +79,10 @@ if __name__ == "__main__":
     if "WANDB_SWEEP_ID" in os.environ:
         sweep_id = os.environ["WANDB_SWEEP_ID"]
     else:
-        sweep_id = wandb.sweep(sweep_config, project=project)
+        sweep_id = wandb.sweep(sweep_config, project=PROJECT)
         print("Created sweep:", sweep_id)
-    
+
     # Initialise model name to avoid FileExistsError in sweeps.py
-    os.environ["MODEL_NAME"] = f"sweep_{sweep_id}_0"    
+    os.environ["MODEL_NAME"] = f"sweep_{sweep_id}_0"
 
     wandb.agent(sweep_id, function=launch)

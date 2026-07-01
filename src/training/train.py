@@ -1,13 +1,18 @@
+"""
+A script to train a diffusion model for generating radio galaxy images. The script sets up the training environment,
+loads the model configuration and dataset, initializes wandb logging, and launches the training loop. It also handles
+distributed training using PyTorch's Distributed Data Parallel (DDP) framework.
+"""
+import os
+
 import h5py
-import utils.paths as paths
+import torch
+import torch.distributed as dist
+
 import data.datasets as datasets
-import utils.device_utils as device_utils
 from model.config import ModelConfig
 from training.trainer import DiffusionTrainer
-import torch.distributed as dist
-import torch.multiprocessing as mp
-import os
-import torch
+
 
 def ddp_setup():
     """
@@ -40,28 +45,28 @@ if __name__ == "__main__":
 
     # Set model preset:
     # (i.e. name of the json file in the model_configs directory)
-    model_preset = "LOFAR_retrained"
+    MODEL_PRESET = "LOFAR_retrained"
 
     # Hyperparameters
-    conf = ModelConfig.from_preset(model_preset)
+    conf = ModelConfig.from_preset(MODEL_PRESET)
 
     # Change the name if you want:
     # (otherwise default name is used)
     if "MODEL_NAME" in os.environ:
         conf.__setattr__("model_name", os.environ["MODEL_NAME"])
     # conf.model_name = "Alternative_Name"
-    
+
     # Load dataset:
     if "DATASET_PATH" in os.environ:
         dataset_path = os.environ["DATASET_PATH"]
     else:
         dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
-    
+
     if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
         dataset = datasets.TrainDatasetNoScale(dataset_path)
     else:
         dataset = datasets.ImagePathDataset(dataset_path)
-    
+
     # Get LAS values for the dataset context
     if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
         with h5py.File(dataset_path, "r") as f:
@@ -76,4 +81,3 @@ if __name__ == "__main__":
 
     # Clean up DDP
     ddp_cleanup()
-

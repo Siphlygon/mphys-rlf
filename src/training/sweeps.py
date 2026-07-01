@@ -1,29 +1,30 @@
 import os
-
-import torch.distributed as dist
-import torch
-
-from training.trainer import DiffusionTrainer
-from model.config import ModelConfig
-import data.datasets as datasets
-from torch.cuda.amp import GradScaler
 from datetime import datetime
 
-import wandb
 import h5py
+import torch
+import torch.distributed as dist
+from torch.cuda.amp import GradScaler
+
+import data.datasets as datasets
+import wandb
+from model.config import ModelConfig
+from training.trainer import DiffusionTrainer
+
 
 class HyperparameterSweep(DiffusionTrainer):
     """
-    A class to perform hyperparameter sweeps using Weights & Biases (wandb). This class inherits from DiffusionTrainer and overrides the training loop to allow for logging of hyperparameters and metrics to wandb during the sweep.
+    A class to perform hyperparameter sweeps using Weights & Biases (wandb). This class inherits from DiffusionTrainer
+    and overrides the training loop to allow for logging of hyperparameters and metrics to wandb during the sweep.
     """
-    
+
     def __init__(self, config, dataset, run):      
         # Initialize the DiffusionTrainer with the provided config and dataset
         super().__init__(config=config, dataset=dataset)
-        
+
         # Store the wandb run object for logging during the sweep
         self.run = run
-    
+
     def training_loop(
         self,
         iterations=None,
@@ -118,7 +119,7 @@ class HyperparameterSweep(DiffusionTrainer):
                 # Write output
                 if write_output:
                     OM.write_val_losses([[i + 1, *val_loss]])
-                
+
                 # Log to wandb if primary process
                 if self.is_primary():
                     self.run.log(
@@ -128,7 +129,7 @@ class HyperparameterSweep(DiffusionTrainer):
                         },
                         step=i + 1,
                     )
-            
+
             # Save snapshot at snapshot interval if desired
             if (
                 self.config.snapshot_interval
@@ -148,7 +149,23 @@ class HyperparameterSweep(DiffusionTrainer):
 
         self.logger.info(f"Training time {dt()} - Done!")
 
-def setup_ddp():
+
+def setup_ddp() -> tuple[int, int, bool]:
+    """
+    Set up Distributed Data Parallel (DDP) training environment.
+    
+    This function initialises the DDP environment by setting the appropriate CUDA device and initializing the process
+    group. It returns the rank, local rank, and a boolean indicating whether DDP is being used.
+
+    Returns
+    -------
+    rank : int
+        The rank of the current process.
+    local_rank : int
+        The local rank of the current process.
+    is_ddp : bool
+        A boolean indicating whether DDP is being used.
+    """
     try:
         local_rank = int(os.environ["LOCAL_RANK"])
         rank = int(os.environ["RANK"])
@@ -163,8 +180,13 @@ def setup_ddp():
         print("Using single GPU mode instead.")
         return 0, 0, False
 
-    
+
 def main():
+    """
+    Main function to run the hyperparameter sweep. This function sets up the DDP environment, loads the model
+    configuration and dataset, initializes wandb logging, and launches the training loop for the hyperparameter sweep.
+    It also handles the creation of unique model names to avoid file existence errors during the sweep.
+    """
     rank, local_rank, is_ddp = setup_ddp()
     primary = (rank == 0)
 
@@ -177,12 +199,12 @@ def main():
         dataset_path = os.environ["DATASET_PATH"]
     else:
         dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
-    
+
     if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
         dataset = datasets.TrainDatasetNoScale(dataset_path)
     else:
         dataset = datasets.ImagePathDataset(dataset_path)
-    
+
     # Get LAS values for the dataset context
     if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
         with h5py.File(dataset_path, "r") as f:
