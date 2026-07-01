@@ -1,26 +1,27 @@
-from astropy.io import fits
-from tqdm import tqdm
-import numpy as np
-from pathlib import Path
-import pandas as pd
+import argparse
+import configparser
 import logging
 import time
-import h5py
+from pathlib import Path
+
 import astropy.cosmology
 import astropy.units as u
-import configparser
-import argparse
+import h5py
+import numpy as np
+import pandas as pd
+from astropy.io import fits
+from tqdm import tqdm
 
 import utils.logging
 import utils.paths as pths
-from utils.functions import mag_to_flux_w2, mag_to_flux_w3, k_corr_factor
+from utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
+
 
 class CutoutPreprocessor:
     """
     A class that takes cutouts of resolved sources from the Hardcastle 2023 dataset and applies pre-processing steps to
     select images suitable for training the diffusion model on based on a range of criteria.
     """
-
     def __init__(self,
                  snr_threshold: float = 15,
                  edge_max_threshold: float = 0.8,
@@ -52,7 +53,8 @@ class CutoutPreprocessor:
         self.h = float(config['h']) # hubble constant = h * 100 km/s/Mpc
         self.Tcmb0 = float(config['Tcmb0']) # temp of the CMB at z=0 in K
         self.Om0 = float(config['Om0']) # matter density parameter at z=0
-        self.cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
+        self.cosmo = astropy.cosmology.FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc,
+                                                     Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
 
 
     def load_catalogue_data_from_fits(self,
@@ -92,6 +94,7 @@ class CutoutPreprocessor:
                     images.append(np.full((80, 80), np.nan))
         return cat_info, images
 
+
     def load_initial_dataset(self,
                              dataset_file_path : Path = pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
                             -> tuple[pd.DataFrame, np.ndarray] | tuple[pd.DataFrame, list[tuple]]:
@@ -121,8 +124,8 @@ class CutoutPreprocessor:
                 cat_info = h5file['cat_info'][:]
 
         elif dataset_file_path.suffix == '.fits':
-            # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and so
-            # we can disable memmap
+            # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and
+            # so we can disable memmap
             try:
                 cat_info, images = self.load_catalogue_data_from_fits(memmap=True, dataset_file_path=dataset_file_path)
             except Exception as e:
@@ -130,7 +133,8 @@ class CutoutPreprocessor:
                 cat_info, images = self.load_catalogue_data_from_fits(memmap=False, dataset_file_path=dataset_file_path)
 
         else:
-            raise ValueError(f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
+            raise ValueError(
+                f"Unsupported file format for dataset: {dataset_file_path.suffix}. Please provide a .h5 or .fits file.")
 
         # Extract the pixel values from images and put into dataframe
         catalogue_data = []
@@ -162,10 +166,24 @@ class CutoutPreprocessor:
                                        'has_image': False})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'incomplete':False, 'broken':False, 'size':0, 'S/N':0, 'edge_max':0, 'rlagn':True} for item in catalogue_data]
+        catalogue_data = [{**item,
+                           'incomplete': False,
+                           'broken': False,
+                           'size': 0,
+                           'S/N': 0,
+                           'edge_max': 0,
+                           'rlagn': True} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'has_image', 'incomplete', 'broken', 'size', 'S/N', 'edge_max', 'rlagn']
+        columns = ['index',
+                   'pixel_values',
+                   'has_image',
+                   'incomplete',
+                   'broken',
+                   'size',
+                   'S/N',
+                   'edge_max',
+                   'rlagn']
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset, cat_info  # type: ignore
@@ -190,6 +208,7 @@ class CutoutPreprocessor:
             The S/N ratios for the images, or -1 where the noise level is zero.
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
+
 
     def select_rlagn(self,
                      wise_2_mag: np.ndarray,
@@ -223,29 +242,34 @@ class CutoutPreprocessor:
             A boolean mask indicating which sources are RLAGN.
         """
         # Extract the WISE magnitudes and frequencies
-        wise_3_flux = mag_to_flux_w3( wise_3_mag )
-        wise_2_flux = mag_to_flux_w2( wise_2_mag )
+        wise_3_flux = mag_to_flux_w3(wise_3_mag)
+        wise_2_flux = mag_to_flux_w2(wise_2_mag)
         wise_3_freq = 3e8 / 12e-6
         wise_2_freq = 3e8 / 4.6e-6
 
         # Calculate the spectral indices for the sources for a k-correction
-        spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
+        spectral_inds = -np.log(wise_3_flux / wise_2_flux) / np.log(wise_3_freq / wise_2_freq)
 
         # Calculate the SFG exclusion mask based on Hardcastle et al. 2025
-        wise_3_absmag = wise_3_mag-5 * (np.log10(self.cosmo.luminosity_distance(redshifts).to(u.parsec).value)-1) + k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
-        sfg_mask = ( luminosities < 10**( 14 - wise_3_absmag / 2.5 ) ) & ( luminosities < 10**(24.8) ) & ~np.isnan( wise_3_magerr )
+        wise_3_absmag = wise_3_mag-5 * (
+            np.log10(self.cosmo.luminosity_distance(redshifts).to(u.parsec).value) - 1) \
+                + k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
+        sfg_mask = (luminosities < 10**(14 - wise_3_absmag / 2.5)) \
+            & (luminosities < 10**(24.8)) & ~np.isnan(wise_3_magerr)
 
         # Calculate the RQQ exclusion criteria based on Hardcastle et al. 2025
         rqq_xpt = -27.923076923076923 #mag
         rqq_ypt = 25.563106796116504 #log10( lum )
 
-        rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 ) & ~np.isnan( wise_3_magerr )
+        rqq_mask = (luminosities < 10**(- (wise_3_absmag - rqq_xpt) / 3.4844629455909923 + rqq_ypt)) \
+            & (wise_3_absmag < -27) & ~np.isnan(wise_3_magerr)
         rlagn_mask = ~sfg_mask & ~rqq_mask
 
         # They also cut out peak fluxes below 1.1mjy, and also redshifts lower than 0.01
         rlagn_mask = rlagn_mask | (peak_flux < 1.1) | (redshifts <= 0.01)
 
         return rlagn_mask
+
 
     def calculate_snr_single(self,
                              noise_level: float,
@@ -271,6 +295,7 @@ class CutoutPreprocessor:
 
         return peak_flux / noise_level
 
+
     def identify_incomplete_image_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether an image is "incomplete" (not 80x80) based on the presence of NaN values added at earlier
@@ -288,6 +313,7 @@ class CutoutPreprocessor:
         """
         return np.isnan(image).any() and not np.isnan(image).all()
 
+
     def identify_broken_source_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether an image is a "broken source" based on the presence of blank values or -99 values.
@@ -298,6 +324,7 @@ class CutoutPreprocessor:
         # NaN check is not needed as it's done prior to other checks; we instead check for -99, code for missing images
 
         return np.isnan(image).all()
+
 
     """
     Code below modified from the original LOFAR-diffusion repository, found here:
@@ -362,7 +389,7 @@ class CutoutPreprocessor:
 
         # Vectorised broken checks
         # Checks for the image having any NAN pixels, any -99 (code for missing), or is all 0s
-        self.logger.info(f"Creating vectorised flags for broken images...")
+        self.logger.info("Creating vectorised flags for broken images...")
         start_time = time.time()
         has_nan = np.isnan(images).any(axis=(1, 2))  # shape (N,)
         has_minus99 = (images == -99).any(axis=(1, 2))
@@ -372,7 +399,7 @@ class CutoutPreprocessor:
 
         # Vectorised edge max
         # Computes the ratio of the maximum border pixel to the image max; too high implies source cutoff by the cutout
-        self.logger.info(f"Creating vectorised flags for edge max...")
+        self.logger.info("Creating vectorised flags for edge max...")
         start_time = time.time()
         top = images[:, 0, :].max(axis=1)
         bottom = images[:, -1, :].max(axis=1)
@@ -386,13 +413,13 @@ class CutoutPreprocessor:
         self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
 
         # Vectorised size flags
-        self.logger.info(f"Creating vectorised flags for source size...")
+        self.logger.info("Creating vectorised flags for source size...")
         start_time = time.time()
         sizes = np.array([info['LAS'] for info in cat_info])[valid_mask]
         self.logger.info(f"Size flags created in {time.time() - start_time} seconds")
 
         # Vectorised SNR calculation using catalogue information
-        self.logger.info(f"Creating vectorised flags for S/N ratio...")
+        self.logger.info("Creating vectorised flags for S/N ratio...")
         start_time = time.time()
         noise_levels = np.array([info['Isl_rms'] for info in cat_info])[valid_mask]
         # peak_fluxes = np.array([info['Peak_flux'] for info in cat_info])[valid_mask]
@@ -400,7 +427,7 @@ class CutoutPreprocessor:
         snr_list = np.where(~broken, self.calculate_snr_vectorised(noise_levels, peak_fluxes), -99)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
-        self.logger.info(f"Creating vectorised flags for RLAGN selection...")
+        self.logger.info("Creating vectorised flags for RLAGN selection...")
         start_time = time.time()
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
@@ -416,13 +443,14 @@ class CutoutPreprocessor:
         dataset.loc[valid_mask, 'size'] = sizes
         dataset.loc[valid_mask, 'S/N'] = snr_list
         dataset.loc[valid_mask, 'rlagn'] = rlagn_mask
-        
+
+
     def compute_iterative_flags(self,
                                 dataset: pd.DataFrame,
                                 cat_info: list):
         """
-        Computes the flags for each image in the dataset and overwrites the dataset with the new flags. This will be used
-        to filter the dataset in the next step.
+        Computes the flags for each image in the dataset and overwrites the dataset with the new flags. This will be
+        used to filter the dataset in the next step.
         
         This is similar processing to compute_vectorised_flags, but is expected to be faster on low-memory nodes.
 
@@ -472,10 +500,19 @@ class CutoutPreprocessor:
             snr.append(self.calculate_snr_single(noise, peak_flux))
             
             edge_max.append(self.calculate_edge_max_single(img))
-            if np.isnan([cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best']]).any():
+            if np.isnan([cat_info[idx]['mag_w2'],
+                         cat_info[idx]['mag_w3'],
+                         cat_info[idx]['magerr_w3'],
+                         cat_info[idx]['L_144'],
+                         cat_info[idx]['z_best']]).any():
                 rlagn.append(True) # if we don't have the info to determine if it's an RLAGN, we will assume it is
             else:
-                rlagn.append(self.select_rlagn(cat_info[idx]['mag_w2'], cat_info[idx]['mag_w3'], cat_info[idx]['magerr_w3'], cat_info[idx]['L_144'], cat_info[idx]['z_best'], peak_flux))
+                rlagn.append(self.select_rlagn(cat_info[idx]['mag_w2'],
+                                               cat_info[idx]['mag_w3'],
+                                               cat_info[idx]['magerr_w3'],
+                                               cat_info[idx]['L_144'],
+                                               cat_info[idx]['z_best'],
+                                               peak_flux))
 
         # Apply flags to the dataset
         dataset["incomplete"] = incomplete
@@ -542,6 +579,7 @@ class CutoutPreprocessor:
         hdul.writeto(output_file_path, overwrite=True)
         self.logger.info(f'Final dataset saved to {output_file_path}.')
 
+
     def save_clean_dataset_to_hdf5(self,
                                   clean_dataset: pd.DataFrame,
                                   clean_cat_info: list,
@@ -562,7 +600,7 @@ class CutoutPreprocessor:
             The path to save the cleaned dataset HDF5 file, by default pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
         """
         images = np.stack(clean_dataset['pixel_values'].values, axis=0)
-        
+
         self.logger.info(f"Saving cleaned dataset to {output_file_path}.")
         self.logger.info("This will take a long time due to the size of the dataset and the use of compression")
         with h5py.File(output_file_path, 'w') as f:
@@ -570,7 +608,7 @@ class CutoutPreprocessor:
             f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
             f.create_dataset( 'cat_info', data=clean_cat_info, compression='gzip', chunks=True )
 
-    
+
     # ---------- MAIN FUNCTION ----------
     def apply_preprocessing(self,
                             vectorised: bool = False,
@@ -593,14 +631,22 @@ class CutoutPreprocessor:
             The path to save the cleaned dataset file, by default None
         """
         if output_file_path is None:
-            output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5' if save_hdf5 else pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
-        
+            if save_hdf5:
+                output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
+            else:
+                output_file_path = pths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+
         # Load the initial dataset with pixel values
         dataset, cat_info = self.load_initial_dataset(dataset_file_path)
-                
+
         # Compute the flags for each image in the dataset
-        self.compute_vectorised_flags(dataset, cat_info) if vectorised else self.compute_iterative_flags(dataset, cat_info)
-        
+        if vectorised:
+            self.logger.info("Using vectorised flag computation...")
+            self.compute_vectorised_flags(dataset, cat_info)
+        else:
+            self.logger.info("Using iterative flag computation...")
+            self.compute_iterative_flags(dataset, cat_info)
+
         conditions = [
             dataset["has_image"],
             ~dataset["incomplete"],
@@ -615,7 +661,7 @@ class CutoutPreprocessor:
         for condition in conditions:
             clean_dataset = clean_dataset[condition]
             lengths.append(len(clean_dataset))
-        
+
         # Log the number of sources removed at each step
         num_no_image = lengths[0] - lengths[1]
         num_incomplete = lengths[1] - lengths[2]
@@ -624,6 +670,7 @@ class CutoutPreprocessor:
         num_low_snr = lengths[4] - lengths[5]
         num_edge_max = lengths[5] - lengths[6]
         num_rqqsfg = lengths[6] - lengths[7]
+        total = num_no_image + num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg
 
         self.logger.info(f"Found {num_no_image} missing images.")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
@@ -632,7 +679,7 @@ class CutoutPreprocessor:
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
-        self.logger.info(f"Total number of sources removed: {num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg}")
+        self.logger.info(f"Total number of sources removed: {total}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
 
         # Filter the catalogue information to only include the sources in the clean dataset
@@ -648,13 +695,37 @@ class CutoutPreprocessor:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--vectorised", help="Whether to use the vectorised version of flag computation, which is faster but more memory intensive. Default False.", action='store_true')
-    parser.add_argument("--save_fits", help="Whether to save the cleaned dataset as a FITS file, instead of the standard HDF5 format. Default False.", action='store_true')
-    parser.add_argument("--dataset_file_path", help=f"The path to the initial dataset file with pixel values, as a .h5 or .fits file. Default {pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'}", type=Path, default=pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5')
-    parser.add_argument("--output_file_path", help=f"The path to save the cleaned dataset file, as a .h5 or .fits file. Default {pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'}", type=Path, default=pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5')
-    parser.add_argument("--snr_threshold", help="The S/N threshold to apply when filtering the dataset. Default 15.", type=float, default=15)
-    parser.add_argument("--edge_max_threshold", help="The edge max threshold to apply when filtering the dataset. Default 0.8.", type=float, default=0.8)
-    parser.add_argument("--exclusive", help="Whether to apply the RLAGN selection exclusively (i.e., only sources which are likely RLAGNs are included) or inclusively (i.e., only sources with data showing they are likely not RLAGNs are excluded). Default False (inclusive).", action='store_true')
+    parser.add_argument("--vectorised",
+                        help="Whether to use the vectorised version of flag computation, which is faster but more " 
+                        " memory intensive. Default False.",
+                        action='store_true')
+    parser.add_argument("--save_fits",
+                        help="Whether to save the cleaned dataset as a FITS file, instead of the standard HDF5 format. "
+                        "Default False.",
+                        action='store_true')
+    parser.add_argument("--dataset_file_path",
+                        help="The path to the initial dataset file with pixel values, as a .h5 or .fits file. Default "
+                        f"{pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'}",
+                        type=Path,
+                        default=pths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5')
+    parser.add_argument("--output_file_path",
+                        help="The path to save the cleaned dataset file, as a .h5 or .fits file. Default "
+                        f"{pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'}",
+                        type=Path,
+                        default=pths.DATASET_PARENT/'clean_hardcastle_catalogue.h5')
+    parser.add_argument("--snr_threshold",
+                        help="The S/N threshold to apply when filtering the dataset. Default 15.",
+                        type=float,
+                        default=15)
+    parser.add_argument("--edge_max_threshold",
+                        help="The edge max threshold to apply when filtering the dataset. Default 0.8.",
+                        type=float,
+                        default=0.8)
+    parser.add_argument("--exclusive",
+                        help="Whether to apply the RLAGN selection exclusively (i.e., only sources which are likely "
+                        "RLAGNs are included) or inclusively (i.e., only sources with data showing they are likely not "
+                        "RLAGNs are excluded). Default False (inclusive).",
+                        action='store_true')
 
     args = parser.parse_args()
 
