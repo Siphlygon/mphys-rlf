@@ -70,9 +70,10 @@ class HardcastleCatalogue:
                 raise NotImplementedError("Invalid catalogue")
 
 
-    def download_hardcastle_catalogue(self,
-                                      cat : str = "hardcastle2023",
-                                      save_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"):
+    def download_hardcastle_catalogue(
+        self,
+cat : str = "hardcastle2023",
+        save_path : Path = paths.CATALOGUE_PATH):
         """
         Downloads a Hardcastle catalogue FITS file from the LOFAR website if it does not already exist.
 
@@ -81,8 +82,7 @@ class HardcastleCatalogue:
         cat : str, optional
             The catalogue to use, by default "hardcastle2023"
         save_path : Path, optional
-            The path to save the downloaded FITS file, by default
-            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            The path to save the downloaded FITS file, by default paths.CATALOGUE_PATH
 
         Raises
         ------
@@ -114,10 +114,11 @@ class HardcastleCatalogue:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
 
-    def load_hardcastle_catalogue(self,
-                                  cat : str = "hardcastle2023",
-                                  file_path : Path = paths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
-                                  ) -> list[tuple]:
+    def load_hardcastle_catalogue(
+        self,
+        cat : str = "hardcastle2023",
+        file_path : Path = paths.PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
+        ) -> list[tuple]:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
         from the LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the
@@ -129,7 +130,7 @@ class HardcastleCatalogue:
             The catalogue to use, by default "hardcastle2023"
         file_path : Path, optional
             The path to the FITS file containing the Hardcastle catalogue, by default
-            paths.INITIAL_DATASET / "combined-release-v1.2-LM_opt_mass.fits"
+            paths.PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
             
         Returns
         -------

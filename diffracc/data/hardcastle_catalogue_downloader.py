@@ -19,10 +19,8 @@ class HardcastleCatalogueDownloader:
         self.logger = get_logger("hardcastle catalogue downloader", LoggingLevels.DEBUG.value)
 
 
-    def download_hardcastle_catalogue(
-        self,
-        catalogue_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
-        ):
+    def download_hardcastle_catalogue(self,
+                                      catalogue_path : Path = paths.CATALOGUE_PATH):
         """
         Downloads the Hardcastle catalogue FITS file from the specified URL and saves it to the given path. If the file
         already exists, it skips the download.
@@ -30,8 +28,7 @@ class HardcastleCatalogueDownloader:
         Parameters
         ----------
         catalogue_path : Path, optional
-            The path to save the downloaded Hardcastle Catalogue FITS file, by default
-            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            The path to save the downloaded Hardcastle Catalogue FITS file, by default paths.CATALOGUE_PATH.
         """
         if os.path.exists(catalogue_path):
             self.logger.info(f'Hardcastle catalogue already exists at {catalogue_path}. Skipping download.')
@@ -50,18 +47,14 @@ class HardcastleCatalogueDownloader:
             self.logger.error(f'Failed to download Hardcastle catalogue. Status code: {response.status_code}')
 
 
-    def get_positions_from_hardcastle(
-        self,
-        catalogue_path : Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
-        ) -> list[tuple[float, float]]:
+    def get_positions_from_hardcastle(self, catalogue_path : Path = paths.CATALOGUE_PATH) -> list[tuple[float, float]]:
         """
         Extracts the RA and DEC positions of resolved sources from the Hardcastle catalogue FITS file.
         
         Parameters
         ----------
         catalogue_path : Path, optional
-            The path to the Hardcastle catalogue FITS file, by default
-            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            The path to the Hardcastle catalogue FITS file, by default paths.CATALOGUE_PATH
         
         Returns
         -------
@@ -87,7 +80,7 @@ class HardcastleCatalogueDownloader:
 
     def write_positions_to_file(self,
                                 positions : list[tuple[float, float]],
-                                positions_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
+                                positions_path : Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt"):
         """
         Writes the RA and DEC positions to a text file, with each line containing a pair of RA and DEC values.
 
@@ -96,7 +89,7 @@ class HardcastleCatalogueDownloader:
         positions : list[tuple[float, float]]
             A list of tuples containing the RA and DEC positions.
         positions_path : Path, optional
-            The path to save the positions text file, by default paths.INITIAL_DATASET/"resolved_positions.txt"
+            The path to save the positions text file, by default paths.PREPROCESSING_PARENT / "resolved_positions.txt"
         """
         try:
             with open(positions_path, 'w', encoding='utf-8') as f:
@@ -108,8 +101,8 @@ class HardcastleCatalogueDownloader:
 
 
     def main(self,
-             catalogue_path: Path = paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits",
-             positions_path: Path = paths.INITIAL_DATASET/"resolved_positions.txt"):
+             catalogue_path: Path = paths.CATALOGUE_PATH,
+             positions_path: Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt"):
         """
         Downloads the Hardcastle catalogue, extracts the RA and DEC positions of resolved sources, and writes those
         positions to a text file. This method orchestrates the entire process and logs the progress.
@@ -117,10 +110,9 @@ class HardcastleCatalogueDownloader:
         Parameters
         ----------
         catalogue_path : Path, optional
-            The path to save the downloaded Hardcastle Catalogue FITS file, by default
-            paths.INITIAL_DATASET/"combined-release-v1.2-LM_opt_mass.fits"
+            The path to save the downloaded Hardcastle Catalogue FITS file, by default paths.CATALOGUE_PATH
         positions_path : Path, optional
-            The path to save the positions text file, by default paths.INITIAL_DATASET/"resolved_positions.txt"
+            The path to save the positions text file, by default paths.PREPROCESSING_PARENT / "resolved_positions.txt"
         """
         # Download the Hardcastle catalogue if it doesn't exist, and load it
         self.logger.info('Downloading Hardcastle catalogue...')

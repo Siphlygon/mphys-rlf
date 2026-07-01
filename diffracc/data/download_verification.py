@@ -61,7 +61,7 @@ class CutoutDownloadVerifier:
 
 
     def verify_downloads(self,
-                         download_path : Path = paths.DATASET_PARENT/"dr2_cutouts_download"):
+                         download_path : Path = paths.CUTOUTS_PATH):
         """
         Verifies the completeness of downloaded cutout files in the specified download path. It checks for missing or
         corrupted files and re-downloads them if necessary.
@@ -69,8 +69,7 @@ class CutoutDownloadVerifier:
         Parameters
         ----------
         download_path : Path, optional
-            The path to the directory containing the downloaded cutout files, by default
-            paths.DATASET_PARENT/"dr2_cutouts_download"
+            The path to the directory containing the downloaded cutout files, by default paths.CUTOUTS_PATH
         """
         self.logger.info('Starting verification of downloaded cutouts...')
         downloader = CutoutDownloader()

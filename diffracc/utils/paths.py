@@ -16,19 +16,16 @@ IMG_DATA_PARENT = STORAGE_PARENT / "image_data"
 FITS_PARENT = STORAGE_PARENT / "fits_images"
 PYBDSF_PARENT = STORAGE_PARENT / "pybdsf"
 NP_ARRAY_PARENT = STORAGE_PARENT / "nparrays"
-DATASET_PARENT = STORAGE_PARENT / "hardcastle_catalogue"
+DATASET_PARENT = STORAGE_PARENT / "datasets"
 
 MAXVALS = "maxvals.npy"
 
-# Folders for creating the training dataset
-INITIAL_DATASET = DATASET_PARENT / "initial_dataset"
-
 # Model configuration presets
-CONFIG_PARENT = BASE_PARENT / "src/model/configs"
+CONFIG_PARENT = BASE_PARENT / "diffracc/model/configs"
 MODEL_CONFIGS = IndexedOrderedDict({f.stem: f for f in CONFIG_PARENT.glob("*.json")})
 
 # Config file
-PROGRAM_CONFIG = BASE_PARENT / "src/config.ini"
+PROGRAM_CONFIG = BASE_PARENT / "diffracc/config.ini"
 config = configparser.ConfigParser()
 config.read( PROGRAM_CONFIG )
 
@@ -61,11 +58,20 @@ LOFAR_SUBSETS = IndexedOrderedDict(
     }
 )
 
+# Paths for the training datasets/processing
+CUTOUTS_PATH = FITS_PARENT / "dr2_cutouts_download"
+CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
+PREPROCESSING_PARENT = DATASET_PARENT / "preprocessing"
+COMBINED_CUTOUTS_PATH_H5 = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.h5"
+COMBINED_CUTOUTS_PATH_FITS = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.fits"
+
+DATASET_PATH_H5 = DATASET_PARENT / "clean_hardcastle_catalogue.h5"
+DATASET_PATH_FITS = DATASET_PARENT / "clean_hardcastle_catalogue.fits"
 # Paths for training data processing
-LOFAR_DATA_PATH = IMG_DATA_PARENT / "LOFAR" / "LOFAR_Dataset.h5"
-MOSAIC_DIR = IMG_DATA_PARENT / "LOFAR" / "mosaics"
-CUTOUTS_DIR = IMG_DATA_PARENT / "LOFAR" / "cutouts"
-LOFAR_RES_CAT = IMG_DATA_PARENT / "LOFAR" / "6-LoTSS_DR2-public-resolved_sources.csv"
+# LOFAR_DATA_PATH = IMG_DATA_PARENT / "LOFAR" / "LOFAR_Dataset.h5"
+# MOSAIC_DIR = IMG_DATA_PARENT / "LOFAR" / "mosaics"
+# CUTOUTS_DIR = IMG_DATA_PARENT / "LOFAR" / "cutouts"
+# LOFAR_RES_CAT = IMG_DATA_PARENT / "LOFAR" / "6-LoTSS_DR2-public-resolved_sources.csv"
 
 
 def cast_to_Path(path):

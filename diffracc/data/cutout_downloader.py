@@ -50,7 +50,7 @@ class CutoutDownloader:
 
     # ---------- SET UP ----------
     def read_positions(self,
-                       file_path : Path = paths.INITIAL_DATASET/"resolved_positions.txt")\
+                       file_path : Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt")\
             -> list[tuple[float, float]]:
         """
         Reads the RA and DEC positions of resolved sources from a text file and returns them as a list of tuples.
@@ -59,7 +59,7 @@ class CutoutDownloader:
         ----------
         file_path : Path, optional
             The path to the text file containing the RA and DEC positions, by default
-            paths.INITIAL_DATASET/"resolved_positions.txt"
+            paths.PREPROCESSING_PARENT / "resolved_positions.txt"
 
         Returns
         -------
@@ -82,8 +82,7 @@ class CutoutDownloader:
 
     def make_folder(self,
                     folder_num : int,
-                    directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download")\
-            -> Path:
+                    directory_path : Path = paths.CUTOUTS_PATH)-> Path:
         """
         Creates a folder for storing cutout files. The folder will be named in the format "start_index-end_index", where
         start_index and end_index are calculated based on the folder number and the configured folder size.
@@ -93,7 +92,7 @@ class CutoutDownloader:
         folder_num : int
             The folder number, which determines the range of cutout files that will be stored in this folder.
         directory_path : Path
-            The path to the directory where the folder will be created.
+            The path to the directory where the folder will be created. By default, this is set to paths.CUTOUTS_PATH.
 
         Returns
         -------
@@ -219,7 +218,7 @@ class CutoutDownloader:
 
 
     def download_all_cutouts(self,
-                             directory_path : Path = paths.DATASET_PARENT / "dr2_cutouts_download",
+                             directory_path : Path = paths.CUTOUTS_PATH,
                              custom_positions : list[tuple[float, float]] | None = None):
         """
         Downloads cutouts for all positions in the Hardcastle catalogue, or for a custom list of positions if provided.
@@ -227,8 +226,7 @@ class CutoutDownloader:
         Parameters
         ----------
         directory_path : Path, optional
-            The path to the directory where the cutout files will be saved, by default
-            paths.DATASET_PARENT/"dr2_cutouts_download"
+            The path to the directory where the cutout files will be saved, by default paths.CUTOUTS_PATH.
         custom_positions : list[tuple[float, float]] | None, optional
             A list of RA and DEC positions to use instead of loading from the Hardcastle catalogue. This is useful for
             testing or if you want to download a specific subset of cutouts, by default None
@@ -246,7 +244,7 @@ class CutoutDownloader:
             os.makedirs(target_directory)
 
         # Clean the error log file for this run
-        error_log_path = paths.INITIAL_DATASET / "download_errors.log"
+        error_log_path = paths.PREPROCESSING_PARENT / "download_errors.log"
         if os.path.exists(error_log_path):
             self.logger.info(f'Cleaning existing error log file {error_log_path}...')
             os.remove(error_log_path)
@@ -283,7 +281,7 @@ class CutoutDownloader:
                 i, err = f.result()
 
                 if err and err != "exists":
-                    with open(paths.INITIAL_DATASET / "download_errors.log", "a", encoding="utf-8") as log:
+                    with open(paths.PREPROCESSING_PARENT / "download_errors.log", "a", encoding="utf-8") as log:
                         log.write(f"{i}: {err}\n")
 
 

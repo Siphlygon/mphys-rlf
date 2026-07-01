@@ -58,7 +58,7 @@ class CutoutPreprocessor:
 
     def load_catalogue_data_from_fits(self,
                             memmap=True,
-                            dataset_file_path: Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits') \
+                            dataset_file_path: Path = paths.COMBINED_CUTOUTS_PATH_FITS) \
                                 -> tuple[np.ndarray, list[np.ndarray]]:
         """
         Loads the Hardcastle dataset from a FITS file, extracting the catalogue information and pixel values of each
@@ -69,8 +69,7 @@ class CutoutPreprocessor:
         memmap : bool, optional
             Whether to use memory mapping when loading the FITS file, by default True
         dataset_file_path : Path, optional
-            The path to the FITS file containing the Hardcastle dataset, by
-            default paths.DATASET_PARENT/'hardcastle_catalogue_with_images.fits'
+            The path to the FITS file containing the Hardcastle dataset, by default paths.COMBINED_CUTOUTS_PATH_FITS
 
         Returns
         -------
@@ -95,7 +94,7 @@ class CutoutPreprocessor:
 
 
     def load_initial_dataset(self,
-                             dataset_file_path : Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5') \
+                             dataset_file_path : Path = paths.COMBINED_CUTOUTS_PATH_H5) \
                             -> tuple[pd.DataFrame, np.ndarray] | tuple[pd.DataFrame, list[tuple]]:
         """
         Loads the initial dataset with pixel values from a .h5 or .fits file.
@@ -103,8 +102,7 @@ class CutoutPreprocessor:
         Parameters
         ----------
         dataset_file_path : Path, optional
-            The path to the initial dataset file with pixel values, by default
-            paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+            The path to the initial dataset file with pixel values, by default paths.COMBINED_CUTOUTS_PATH_H5
 
         Returns
         -------
@@ -523,11 +521,11 @@ class CutoutPreprocessor:
 
 
     # ---------- FINAL PRODUCT ----------
-    # NOTE - NOT RECOMMENDED. Fits files with many HDUs are inefficient compared to HDF5 
+    # NOTE - NOT RECOMMENDED. Fits files with many HDUs are inefficient compared to HDF5
     def save_clean_dataset_to_fits(self,
                            clean_dataset: pd.DataFrame,
                            clean_cat_info: list,
-                           output_file_path: Path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'):
+                           output_file_path: Path = paths.DATASET_PATH_FITS):
         """
         Saves the cleaned dataset to a FITS file.
 
@@ -538,8 +536,7 @@ class CutoutPreprocessor:
         clean_cat_info : list
             The cleaned catalogue information to save.
         output_file_path : Path, optional
-            The path to save the cleaned dataset FITS file, by default
-            paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+            The path to save the cleaned dataset FITS file, by default paths.DATASET_PATH_FITS.
         """
         self.logger.info(f"Saving cleaned dataset to {output_file_path}...")
         hdu_list = []
@@ -584,7 +581,7 @@ class CutoutPreprocessor:
                                   clean_dataset: pd.DataFrame,
                                   clean_cat_info: list,
                                   indices: list,
-                                  output_file_path: Path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'):
+                                  output_file_path: Path = paths.DATASET_PATH_H5):
         """
         Saves the cleaned dataset to an HDF5 file.
 
@@ -597,8 +594,7 @@ class CutoutPreprocessor:
         indices : list
             The indices of the cleaned dataset.
         output_file_path : Path, optional
-            The path to save the cleaned dataset HDF5 file, by default
-            paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
+            The path to save the cleaned dataset HDF5 file, by default paths.DATASET_PATH_H5
         """
         images = np.stack(clean_dataset['pixel_values'].values, axis=0)
 
@@ -614,7 +610,7 @@ class CutoutPreprocessor:
     def apply_preprocessing(self,
                             vectorised: bool = False,
                             save_hdf5: bool = True,
-                            dataset_file_path: Path = paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5',
+                            combined_file_path: Path = paths.COMBINED_CUTOUTS_PATH_H5,
                             output_file_path: Path | None = None):
         """
         Applies the pre-processing steps to the Hardcastle dataset, filtering out images that do not meet the specified
@@ -626,19 +622,19 @@ class CutoutPreprocessor:
             Whether to use the vectorised approach for computing flags, by default False
         save_hdf5 : bool, optional
             Whether to save the cleaned dataset as an HDF5 file (True) or a FITS file (False), by default True
-        dataset_file_path : Path, optional
-            The path to the initial dataset file, by default paths.DATASET_PARENT/'hardcastle_catalogue_with_images.h5'
+        combined_file_path : Path, optional
+            The path to the catalogue and cutouts combined file, by default paths.COMBINED_CUTOUTS_PATH_H5
         output_file_path : Path | None, optional
             The path to save the cleaned dataset file, by default None
         """
         if output_file_path is None:
             if save_hdf5:
-                output_file_path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.h5'
+                output_file_path = paths.DATASET_PATH_H5
             else:
-                output_file_path = paths.DATASET_PARENT/'clean_hardcastle_catalogue.fits'
+                output_file_path = paths.DATASET_PATH_FITS
 
         # Load the initial dataset with pixel values
-        dataset, cat_info = self.load_initial_dataset(dataset_file_path)
+        dataset, cat_info = self.load_initial_dataset(combined_file_path)
 
         # Compute the flags for each image in the dataset
         if vectorised:
@@ -694,7 +690,15 @@ class CutoutPreprocessor:
             self.save_clean_dataset_to_fits(clean_dataset, clean_cat_info, output_file_path)
 
 
-if __name__ == "__main__":
+def _build_argument_parser():
+    """
+    Builds the argument parser for the command-line interface of the CutoutPreprocessor.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The argument parser with the defined command-line arguments and their descriptions.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--vectorised",
                         help="Whether to use the vectorised version of flag computation, which is faster but more " 
@@ -727,7 +731,11 @@ if __name__ == "__main__":
                         "RLAGNs are included) or inclusively (i.e., only sources with data showing they are likely not "
                         "RLAGNs are excluded). Default False (inclusive).",
                         action='store_true')
+    return parser
 
+
+if __name__ == "__main__":
+    parser = _build_argument_parser()
     args = parser.parse_args()
 
     preprocessor = CutoutPreprocessor(snr_threshold=args.snr_threshold,
@@ -735,6 +743,6 @@ if __name__ == "__main__":
                                       exclusive=args.exclusive)
     preprocessor.apply_preprocessing(vectorised=args.vectorised,
                                      save_hdf5=not args.save_fits,
-                                     dataset_file_path=args.dataset_file_path,
+                                     combined_file_path=args.dataset_file_path,
                                      output_file_path=args.output_file_path)
     preprocessor.logger.info( 'done' )
