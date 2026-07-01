@@ -1,6 +1,8 @@
 {
     "parameters": {
         "learning_rate": {"distribution": "uniform", "min": 1e-5, "max": 4e-5},
+        "context_dropout": {"distribution": "uniform", "min": 0.05, "max": 0.2},
+        "dropout": {"distribution": "uniform", "min": 0.05, "max": 0.2},
         "iterations": {"value": 10000},
         "ema_rate": {"values": [0.999, 0.9999, 0.99999]},
         "sigma_data": {"distribution": "uniform", "min": 0.5, "max": 2},
