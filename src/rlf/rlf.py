@@ -1,18 +1,21 @@
 import configparser
-import utils.paths as pth
-import numpy as np
-import astropy.cosmology
-import astropy.units as u
-import astropy.stats
-import matplotlib.pyplot as plt
-from hardcastle_catalogue import Source, HardcastleCatalogue
-from utils.logging import get_logger
 import logging
-from tqdm import tqdm
-from utils.functions import sigmoid, mag_to_flux_w2, mag_to_flux_w3, k_corr_factor
 from pathlib import Path
+
+import astropy.cosmology
+import astropy.stats
+import astropy.units as u
+import matplotlib.pyplot as plt
+import numpy as np
 from scipy.optimize import curve_fit
+from tqdm import tqdm
+
 import utils.functions as functions
+import utils.paths as pth
+from hardcastle_catalogue import HardcastleCatalogue, Source
+from utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3, sigmoid
+from utils.logging import get_logger
+
 
 # from Hardcastle et al. 2022, https://github.com/mhardcastle/agn-selection/blob/main/plots.py
 def ccol(i):
@@ -54,11 +57,55 @@ shimwell_data = np.array( [
 
 class RLF:
     """
-    A class to calculate the radio luminosity function (RLF) of a sample of AGN using the method of Page & Carrera
-    2000.
+    A class to calculate the radio luminosity function (RLF) of a sample of AGN using either the Page & Carrera 2000
+    method or the traditional 1/Vmax method. The RLF is calculated in bins of redshift and luminosity, and can be
+    corrected for completeness using a fitted sigmoid function or a step function.
     """
 
-    def __init__(self, fluxes, redshifts, luminosities, resolved, cosmo, bias: float = 0, flux_cut_jy: float = 1.1e-3, debug_flux_lum_relation: bool = False, vmax_method: bool = False, use_shimwell: bool = True, completeness_path: str = None, use_pde: bool = False):
+    def __init__(self,
+                 fluxes : np.ndarray,
+                 redshifts: np.ndarray,
+                 luminosities: np.ndarray,
+                 resolved: np.ndarray,
+                 cosmo : astropy.cosmology.Cosmology,
+                 bias: float = 0,
+                 flux_cut_jy: float = 1.1e-3,
+                 debug_flux_lum_relation: bool = False,
+                 vmax_method: bool = False,
+                 use_shimwell: bool = True,
+                 completeness_path: str | Path | None = None,
+                 use_pde: bool = False):
+        """
+        Initialise the RLF class with the necessary parameters for calculating the radio luminosity function (RLF) of a
+        sample of AGN.
+
+        Parameters
+        ----------
+        fluxes : np.ndarray
+            The array of integrated fluxes of the AGN in Jy
+        redshifts : np.ndarray
+            The array of redshifts of the AGN
+        luminosities : np.ndarray
+            The array of luminosities of the AGN
+        resolved : np.ndarray
+            The array indicating whether each AGN is resolved
+        cosmo : astropy.cosmology.Cosmology
+            The cosmology object for distance calculations
+        bias : float, optional
+            The bias factor for the RLF calculation, by default 0
+        flux_cut_jy : float, optional
+            The flux cut in Jy, by default 1.1e-3
+        debug_flux_lum_relation : bool, optional
+            Whether to debug the flux-luminosity relation, by default False
+        vmax_method : bool, optional
+            Whether to use the 1/Vmax method, by default False
+        use_shimwell : bool, optional
+            Whether to use the Shimwell et al. (2003) method, by default True
+        completeness_path : str | None, optional
+            The path to the completeness arguments file, by default None
+        use_pde : bool, optional
+            Whether to use the PDE method, by default False
+        """
         # Start logging
         self.logger = get_logger("RLF", logging.DEBUG)
 
@@ -76,11 +123,14 @@ class RLF:
 
         if completeness_path is None:
             completeness_path = pth.NP_ARRAY_PARENT / 'completeness_args_sigmoid.txt'
+        if isinstance( completeness_path, str ):
+            completeness_path = Path( completeness_path )
         if completeness_path.exists():
             self.completeness_args = np.loadtxt( completeness_path )
         else:
-            self.completeness_args = None
+            # it looks like completeness is actually necessary, so raise exception
             self.logger.error( f'Could not find completeness args at path {completeness_path}' )
+            raise FileNotFoundError( f'Could not find completeness args at path {completeness_path}' )
 
         # Read parameters from the config.ini file
         config = configparser.ConfigParser()
@@ -123,24 +173,31 @@ class RLF:
 
         # init rlf values as zero
         self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
-        self.phi_err = np.zeros( (self.n_z_bins, self.n_lum_bins) ) 
+        self.phi_err = np.zeros( (self.n_z_bins, self.n_lum_bins) )
         self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
-        self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) ) 
+        self.rlf_fit_params = np.zeros( (self.n_z_bins, 4, 2) )
+
 
     # ---------- COMPLETENESS ----------
-
     def get_completeness(self,
                          integ_fluxes : np.ndarray,
-                         resolved : np.ndarray):
+                         resolved : np.ndarray) -> np.ndarray:
         """
         Returns a value for the completeness correction for use in the RLF integral estimation. Can either return a
         fitted sigmoid completeness read from a file, or a step completeness function (i.e., 1 if above a threshold, 0
         otherwise)
 
-        :param integ_fluxes: The array of integrated fluxes to apply completeness corrections to.
-        :param completeness_path: The path to the completeness parameters file.
-        :param step_completeness: Whether or not to use a step completeness.
-        :return: Completeness corrections in the same shape as integ_fluxes
+        Parameters
+        ----------
+        integ_fluxes : np.ndarray
+            The integrated fluxes of the sources in Jy
+        resolved : np.ndarray
+            The array indicating whether each source is resolved
+
+        Returns
+        -------
+        np.ndarray
+            The completeness correction for each source
         """
         completeness_args = self.completeness_args
         #self.logger.debug( f'x0: {completeness_args[ 0 ]} - S0: {10**completeness_args[ 0 ]} - bias: {self.bias}' )
@@ -149,6 +206,9 @@ class RLF:
 
         sigmoid_completeness = sigmoid( np.log10( integ_fluxes * 1000 ), *completeness_args )
         resolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0 )
+        
+        # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
+        # function at the flux_cut_jy threshold.
         if self.use_shimwell:
             shimwell_completeness = np.interp( integ_fluxes, shimwell_data[ 0 ] / 1000, shimwell_data[ 1 ] )
             unresolved_completeness = np.where( integ_fluxes > self.flux_cut_jy, shimwell_completeness, 0 )
@@ -159,28 +219,53 @@ class RLF:
 
         return np.where( resolved, resolved_completeness, unresolved_completeness )
 
-    def get_completeness_from_coord( self, v: float | np.ndarray, l: float | np.ndarray, resolved : np.ndarray | bool ):
+
+    def get_completeness_from_coord( self,
+                                    v: float | np.ndarray,
+                                    l: float | np.ndarray,
+                                    resolved : np.ndarray | bool ) -> np.ndarray:
         """
         Functions as a proxy for the get_completeness functon, allowing it to be ran in volume-luminosity space without
         requiring at-use computation of the integrated flux.
 
-        :param v: The comoving volume at the coordinate in volume-luminosity space.
-        :param l: The luminosity at the coordinate in volume-luminosity space.
-        :return: Completeness corrections at the specific coordinate in volume-luminosity space.
+        Parameters
+        ----------
+        v : float | np.ndarray
+            The volume(s) to compute the completeness for
+        l : float | np.ndarray
+            The luminosity/luminosities to compute the completeness for
+        resolved : np.ndarray | bool
+            The array indicating whether each source is resolved, or a single boolean value for all sources
+            
+        Returns
+        -------
+        np.ndarray
+            The completeness correction for each source
         """
         #logger.debug( f'C[s(v,l)]: v={v.shape if isinstance( v, np.ndarray ) else v}, l={l.shape}, s={self.flux_from_coordinate( v, l, cosmo, zvparams )}')
         return self.get_completeness( self.flux_from_coordinate( v, l ), resolved=resolved )
-    
-    def flux_from_coordinate( self, v: float | np.ndarray, l: float | np.ndarray, z: float | np.ndarray | None = None ):
+
+
+    def flux_from_coordinate( self,
+                             v: float | np.ndarray,
+                             l: float | np.ndarray,
+                             z: float | np.ndarray | None = None ) -> np.ndarray:
         """
         Generate luminosities + redshifts -> fluxes. Flux values here are in Jy, luminosities in W/Hz
         
-        :param v: Volume(s)
-        :type v: float | np.ndarray
-        :param l: Luminosity/Luminosities
-        :type l: float | np.ndarray
-        :param z: Redshift override, v parameter ignored in this case
-        :type z: float | np.ndarray | None
+        Parameters
+        ----------
+        v : float | np.ndarray
+            The volume(s) to compute the flux for
+        l : float | np.ndarray
+            The luminosity/luminosities to compute the flux for
+        z : float | np.ndarray | None, optional
+            The redshift(s) to compute the flux for, by default None. If None, the redshift is computed from the volume
+            
+        Returns
+        -------
+        np.ndarray
+            The fluxes corresponding to the input volumes and luminosities
         """
         if z is None:
             z = z_from_v( v, *self.zvparams )
@@ -189,6 +274,7 @@ class RLF:
         d_l = self.cosmo.luminosity_distance(z).to(u.m).value
         s = 1e26 * l / (4 * np.pi * d_l**2) * k_corr_factor( z, spectral_index = self.spectral_index )
         return s
+
 
     # ---------- INTEGRALS ----------
 
@@ -237,24 +323,59 @@ class RLF:
     #    c = lambda v : self.completeness_simpson_lum_integral( v, l_mins, l_maxs )
     #    return self.one_dim_simpsons_rule( c, v_min, v_max, self.n_mc_pts )
 
-    def monte_carlo_integral( self, v_min: float, v_max: float, l_min: float | np.ndarray, l_max: float | np.ndarray, resolved: np.ndarray | bool, lum: np.ndarray | float | None = None, vmax_method: bool = False ):
-        """
-        Evaluate the Page & Carrera 2000 integral using monte-carlo methods for a given volume bin and set of luminosity bins
 
-        :param v_min: Bin volume minimum
-        :param v_max: Bin volume maximum
-        :param l_mins: Bin luminosity minimums, shape (1, n_lum_bins) or float. To use more than one lum bin requires lum = None
-        :param l_maxs: Bin luminosity maximums, shape (1, n_lum_bins) or float. To use more than one lum bin requires lum = None
-        :param lum: enforced luminosity to pass to completeness function, for use in the 1/Vmax method. Float for one integral of that luminosity, or array of shape (1, n_integrals) or (n_integrals), or none to use uniform logluminosities (Page & Carrera 2000 method).
+    def monte_carlo_integral( self,
+                             v_min: float,
+                             v_max: float,
+                             l_min: float | np.ndarray,
+                             l_max: float | np.ndarray,
+                             resolved: np.ndarray | bool,
+                             lum: np.ndarray | float | None = None,
+                             vmax_method: bool = False ) -> np.ndarray:
         """
+        Evaluate the integral of the completeness function over a volume-luminosity bin using a Monte Carlo method. This
+        method generates random points in volume-luminosity space and evaluates the completeness at each point to
+        determine the integral C[S[v,L]] dV dlog10L from v=(v_min, v_max) and l=(l_min, l_max).
+
+        Parameters
+        ----------
+        v_min : float
+            The minimum volume of the bin
+        v_max : float
+            The maximum volume of the bin
+        l_min : float | np.ndarray
+            The minimum luminosity of the bin, can be a single value or an array of values
+        l_max : float | np.ndarray
+            The maximum luminosity of the bin, can be a single value or an array of values
+        resolved : np.ndarray | bool
+            The array indicating whether each source is resolved, or a single boolean value for all sources
+        lum : np.ndarray | float | None, optional
+            The luminosity/luminosities to compute the completeness for, by default None. If None, random luminosities
+            within the bin(s) are generated
+        vmax_method : bool, optional
+            Whether to use the 1/Vmax method, by default False. If True, the number of Monte Carlo points is reduced by
+            a factor of 10 to speed up the calculation.
+            
+        Returns
+        -------
+        np.ndarray
+            The integral of the completeness function over the volume-luminosity bin, divided by the log
+            luminosity-volume bin area so the result is in units of / MPc^3 / log10(W/Hz)
+        """
+        # V_max has many more calculations so we can reduce the number of Monte Carlo points to speed up the function
         mc_pts = self.n_mc_pts // 10 if vmax_method else self.n_mc_pts
-        #mc_pts = self.n_mc_pts
+
+        # If lum is None, generate random luminosities within the bin(s).
         if lum is None:
             if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
-                lums = 10**np.random.uniform(np.log10(l_min[ 0, : ]), np.log10(l_max[ 0, : ]), size=(mc_pts, l_min.shape[ 1 ]))
+                lums = 10**np.random.uniform(np.log10(l_min[ 0, : ]), np.log10(l_max[ 0, : ]),
+                                             size=(mc_pts, l_min.shape[ 1 ]))
             else:
-                lums = 10**np.random.uniform(np.log10(l_min), np.log10(l_max), size=(mc_pts, l_min.shape[ 1 ]))
+                lums = 10**np.random.uniform(np.log10(l_min), np.log10(l_max),
+                                             size=(mc_pts, l_min.shape[ 1 ]))
 
+        # If lum is provided, ensure it is a 2D array with shape (n_mc_pts, n_integrals). If it is a 1D array, reshape
+        # it to (1, n_integrals).
         elif isinstance( lum, np.ndarray ):
             if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
                 raise AssertionError( 'Cannot have lum and l_min/max as nparrays' )
@@ -263,17 +384,19 @@ class RLF:
                 lums = lum[ np.newaxis, : ]
             elif lum.ndim == 2:
                 lums = lum
-            else: raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
-       
+            else:
+                raise RuntimeError( f'lum arg of ndims {lum.ndim} invalid, must be at most 2' )
+    
         # lums now definitely has shape (self.n_mc_pts, n_integrals)
 
         # -- MONTE CARLO METHOD ---
-        # Now generate random points in volume space and either use given luminosities or random luminosities within the bin(s)
-        # evaluate the completeness at each point to determine the integral C[S[v,L]] dV dlog10L from v=(v_min, v_max) and l=(l_min, l_max)
-        # random_volumes has shape (self.n_mc_pts, 1) while lums has shape (1, n_integrals)
+        # Now generate random points in volume space and either use given luminosities or random luminosities within the
+        # bin(s) evaluate the completeness at each point to determine the integral C[S[v,L]] dV dlog10L from
+        # v=(v_min, v_max) and l=(l_min, l_max) random_volumes has shape (self.n_mc_pts, 1) while lums has shape
+        # (1, n_integrals)
         # note: resolved has shape (n_integrals) or is a bool
         random_volumes = np.random.uniform(v_min, v_max, mc_pts)[ :, np.newaxis ]
-        bin_integrals = np.sum( self.get_completeness_from_coord( random_volumes, lums, resolved=resolved ), axis=0) / mc_pts
+        bin_integrals = np.sum(self.get_completeness_from_coord( random_volumes, lums, resolved=resolved ), axis=0) / mc_pts
 
         # divide by the log luminosity-volume bin area so the result is / MPc^3 / log10(W/Hz)
         if isinstance( l_min, np.ndarray ) and isinstance( l_max, np.ndarray ):
@@ -291,8 +414,8 @@ class RLF:
     # ---------- RADIO LUMINOSITY FUNCTION ----------
     def calculate_rlf( self, plot_rlf: bool = True):
         """
-        Calculate the Radio Luminosity Function, either using the Page & Carrera 2000 method or
-        the traditional 1/Vmax method
+        Calculate the Radio Luminosity Function, either using the Page & Carrera 2000 method or the traditional 1/Vmax
+        method
         """
         fluxes = self.fluxes
         luminosities = self.luminosities
@@ -315,13 +438,15 @@ class RLF:
         # use the redshift to calculate luminosity distance and luminosity
         # because of errors on the margin, disregard passed luminosity
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
+        luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
+            / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
 
         if self.debug_flux_lum_relation:
             #ensure luminosities and redshifts are consistent with total flux
             # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
             luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
+            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
+                / k_corr_factor( redshifts, spectral_index=self.spectral_index ) # W/Hz
             self.logger.info( 'saving scatterplot to compare luminosity from flux to luminosity from catalog...' )
             residuals = flux_luminosities / luminosities
             plt.scatter( flux_luminosities, residuals, s=0.001 )
@@ -362,10 +487,13 @@ class RLF:
                     if not luminosities_in_bin.size:
                         self.logger.debug( f'no sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
                         continue
-                    self.logger.debug( f'{luminosities_in_bin.shape[ 0 ]} sources in z: {z_min}-{z_max}, l={l_min}-{l_max}' )
+                    self.logger.debug( f'{luminosities_in_bin.shape[ 0 ]} sources in z:'
+                                      f' {z_min}-{z_max}, l={l_min}-{l_max}' )
 
-                    Vmaxs_resolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, True, luminosities_in_bin, vmax_method=True )
-                    Vmaxs_unresolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, False, luminosities_in_bin, vmax_method=True )
+                    Vmaxs_resolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, resolved=True,
+                                                               lum=luminosities_in_bin, vmax_method=True )
+                    Vmaxs_unresolved = self.monte_carlo_integral( v_min, v_max, l_min, l_max, resolved=False,
+                                                                 lum=luminosities_in_bin, vmax_method=True )
                     Vmaxs = np.where( resolved_in_bin, Vmaxs_resolved, Vmaxs_unresolved )
 
                     self.phi[ i_z, i_l ] = np.sum( 1.0 / Vmaxs ) #log bin size included in Vmaxs from monte_carlo_integral
@@ -483,7 +611,13 @@ class RLF:
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf( title, colors, output=output )
 
+
     def fit_rlf_individually( self ):
+        """
+        Fit a dual power law to the RLFs in each redshift bin individually, using the function rlf_power_law. The
+        parameters are fitted using scipy's curve_fit function, with initial guesses and bounds provided. The fitted
+        parameters and their errors are stored in self.rlf_fit_params, and the results are logged.
+        """
         self.logger.info( 'Fitting Parameters to RLFs' )
 
         # fit a dual power law to each redshift RLF
@@ -525,7 +659,13 @@ class RLF:
         self.chi_sqr_tot = np.sum( self.chi_sqr )
         self.logger.info( f'Reduced chi squared total: {self.chi_sqr_tot}' )
 
+
     def fit_rlf( self ):
+        """
+        Fit a dual power law to the RLFs across all redshift bins, using the function rlf_power_law_evolution. The
+        parameters are fitted using scipy's curve_fit function, with initial guesses and bounds provided. The fitted
+        parameters and their errors are stored in self.rlf_fit_params, and the results are logged.
+        """
         self.logger.info( 'Fitting Parameters to RLFs' )
 
         # fit a dual power law to each redshift RLF
@@ -642,7 +782,34 @@ class RLF:
             plt.savefig( output )
             self.logger.info( f"saved figure to {output}" )
 
-def get_catalog_info( cosmo, flux_cut_jy: float, plot_rlagn_selection_contour: bool = False ):
+
+def get_catalog_info( cosmo : astropy.cosmology.Cosmology,
+                     flux_cut_jy: float,
+                     plot_rlagn_selection_contour: bool = False ) \
+                         -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Get information about the catalog data.
+
+    Parameters
+    ----------
+    cosmo : astropy.cosmology.Cosmology
+        The cosmology to use for calculating luminosity distances and volumes
+    flux_cut_jy : float
+        The flux cut in Jy
+    plot_rlagn_selection_contour : bool, optional
+        Whether to plot the RLAGN selection contour, by default False
+
+    Returns
+    -------
+    redshifts : np.ndarray
+        The redshifts of the sources in the catalog
+    fluxes : np.ndarray
+        The fluxes of the sources in the catalog
+    luminosities : np.ndarray
+        The luminosities of the sources in the catalog
+    resolved : np.ndarray
+        The resolved status of the sources in the catalog
+    """
     logger = get_logger("RLF Catalog Info", logging.INFO)
 
     catalog = HardcastleCatalogue( resolved_only=False )
@@ -666,8 +833,16 @@ def get_catalog_info( cosmo, flux_cut_jy: float, plot_rlagn_selection_contour: b
     fluxes = fluxes[ mask ]
     resolved = resolved[ mask ]
 
-    logger.debug( f'wise_3_mag: mean={np.average( wise_3_mag )}, std={np.std( wise_3_mag )}, max={np.max( wise_3_mag )}, min={np.min( wise_3_mag ) }, count={wise_3_mag.shape[ 0 ]}' )
-    logger.debug( f'wise_2_mag: mean={np.average( wise_2_mag )}, std={np.std( wise_2_mag )}, max={np.max( wise_2_mag )}, min={np.min( wise_2_mag ) }, count={wise_2_mag.shape[ 0 ]}' )
+    logger.debug( f'wise_3_mag: mean={np.average( wise_3_mag )}, '
+                 f'std={np.std( wise_3_mag )}, '
+                 f'max={np.max( wise_3_mag )}, '
+                 f'min={np.min( wise_3_mag ) }, '
+                 f'count={wise_3_mag.shape[ 0 ]}' )
+    logger.debug( f'wise_2_mag: mean={np.average( wise_2_mag )}, '
+                 f'std={np.std( wise_2_mag )}, '
+                 f'max={np.max( wise_2_mag )}, '
+                 f'min={np.min( wise_2_mag ) }, '
+                 f'count={wise_2_mag.shape[ 0 ]}' )
 
     # use wise bands 2/3 to calculate spectral indices for the k-correction
     wise_3_flux = mag_to_flux_w3( wise_3_mag )
@@ -675,9 +850,14 @@ def get_catalog_info( cosmo, flux_cut_jy: float, plot_rlagn_selection_contour: b
     wise_3_freq = 3e8 / 12e-6
     wise_2_freq = 3e8 / 4.6e-6
     spectral_inds = -np.log( wise_3_flux / wise_2_flux ) / np.log( wise_3_freq / wise_2_freq )
-    logger.debug( f'spectral_inds: mean={np.average( spectral_inds )}, std={np.std( spectral_inds )}, max={np.max( spectral_inds )}, min={np.min( spectral_inds ) }, count={spectral_inds.shape[ 0 ]}' )
+    logger.debug( f'spectral_inds: mean={np.average( spectral_inds )}, '
+                 f'std={np.std( spectral_inds )}, '
+                 f'max={np.max( spectral_inds )}, '
+                 f'min={np.min( spectral_inds ) }, '
+                 f'count={spectral_inds.shape[ 0 ]}' )
 
-    wise_3_absmag = wise_3_mag - 5 * ( np.log10( cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) + k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
+    wise_3_absmag = wise_3_mag - 5 * ( np.log10( cosmo.luminosity_distance( redshifts ).to(u.parsec).value ) - 1 ) \
+        + k_corr_factor( redshifts, mag_space=True, spectral_index=spectral_inds )
 
     # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
     rqq_xpt = -27.923076923076923 #mag
@@ -688,7 +868,8 @@ def get_catalog_info( cosmo, flux_cut_jy: float, plot_rlagn_selection_contour: b
         sfg_lum_cutoff = 10**( 14 - wise_3_linspace_sfg / 2.5 )
         rqq_lum_cutoff = 10**( -( wise_3_linspace_rqq - rqq_xpt ) / 3.4844629455909923 + rqq_ypt )
         plt.figure( figsize=(8,8) )
-        hist2d, xedges, yedges = np.histogram2d( wise_3_absmag, np.log10( luminosities ), bins=50, range=[[-35, -17], [19+np.log10(4), 30]] )
+        hist2d, xedges, yedges = np.histogram2d( wise_3_absmag, np.log10( luminosities ), bins=50,
+                                                range=[[-35, -17], [19+np.log10(4), 30]] )
         xcenters = ( xedges[ 1: ] + xedges[ :-1 ] ) / 2
         ycenters = ( yedges[ 1: ] + yedges[ :-1 ] ) / 2
         plt.contourf( xcenters[ ::-1 ], 10**ycenters, np.sqrt( hist2d[ ::-1, : ].T ) )
@@ -710,7 +891,10 @@ def get_catalog_info( cosmo, flux_cut_jy: float, plot_rlagn_selection_contour: b
     rqq_mask = ( luminosities < 10**( -( wise_3_absmag - rqq_xpt ) / 3.4844629455909923 + rqq_ypt ) ) & ( wise_3_absmag < -27 ) & ~np.isnan( wise_3_magerr )
     agn_mask = ~sfg_mask & ~rqq_mask
 
-    logger.info( f'# agn: {redshifts[ agn_mask ].shape[ 0 ]} - # sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - # rqq: {redshifts[ rqq_mask ].shape[ 0 ]} - total: {redshifts.shape[ 0 ]}' )
+    logger.info( f'# agn: {redshifts[ agn_mask ].shape[ 0 ]} - ' 
+                f'# sfg: {redshifts[ sfg_mask ].shape[ 0 ]} - '
+                f' # rqq: {redshifts[ rqq_mask ].shape[ 0 ]} - '
+                f'total: {redshifts.shape[ 0 ]}' )
     logger.info( f'{np.isnan( wise_3_magerr ).sum()} wise 3 values are upper limits' )
 
     redshifts = redshifts[ agn_mask ]
@@ -755,20 +939,22 @@ if __name__ == "__main__":
 
     fig, axes = plt.subplots( ncols=2, figsize=(20, 10) )
 
-    logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, redsh: {np.min( redshifts )}-{np.max( redshifts )}, flux: {np.min( fluxes )}-{np.max( fluxes )}" )
+    logger.debug( f"lum: {np.min( luminosities )}-{np.max( luminosities )}, "
+                 f"redsh: {np.min( redshifts )}-{np.max( redshifts )}, "
+                 f"flux: {np.min( fluxes )}-{np.max( fluxes )}" )
 
-    rlf_titles = [ f'RLAGN RLF, Shimwell et al. 2022 After Flux Cut',#0
-                   f'RLAGN RLF Flux Cut Only',                       #1
-                   f'RLAGN RLF -1.0 mJy Resolved Completeness',      #2
-                   f'RLAGN RLF +1.0 mJy Resolved Completeness',      #3
-                   f'H25 RLAGN RLF using Page & Carrera 2000',       #4
-                   f'H25 RLAGN RLF using $1/V_a$',                   #5
-                   f'Composite RLAGN RLF, Flux Cut 0.5mJy',          #6
-                   f'Composite RLAGN RLF, Flux Cut 1.1mJy',          #7
-                   f'Composite RLAGN RLF with PDE Fit',              #8
-                   f'Composite RLAGN RLF with PLE Fit',              #9
-                   f'Composite RLAGN RLF',                           #10
-                   f'H25 RLAGN RLF' ]                                #11
+    rlf_titles = [ 'RLAGN RLF, Shimwell et al. 2022 After Flux Cut',#0
+                   'RLAGN RLF Flux Cut Only',                       #1
+                   'RLAGN RLF -1.0 mJy Resolved Completeness',      #2
+                   'RLAGN RLF +1.0 mJy Resolved Completeness',      #3
+                   'H25 RLAGN RLF using Page & Carrera 2000',       #4
+                   'H25 RLAGN RLF using $1/V_a$',                   #5
+                   'Composite RLAGN RLF, Flux Cut 0.5mJy',          #6
+                   'Composite RLAGN RLF, Flux Cut 1.1mJy',          #7
+                   'Composite RLAGN RLF with PDE Fit',              #8
+                   'Composite RLAGN RLF with PLE Fit',              #9
+                   'Composite RLAGN RLF',                           #10
+                   'H25 RLAGN RLF' ]                                #11
     rlf_titles = [ rlf_titles[ 4 ], rlf_titles[ 5 ] ]
     draw_ylabels = [ True, False ]
 
@@ -846,4 +1032,3 @@ if __name__ == "__main__":
 
 
     logger.info( 'done' )
-    
