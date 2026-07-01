@@ -1,19 +1,48 @@
-import matplotlib.pyplot as plt
-from utils.recursive_file_analyzer import HistogramErrorDrawer
 import argparse
-import utils.paths
 import logging
-import utils.logging
-from analysis.log_analyzer import LogAnalyzer
-import analysis.log_analyzer as la
-import utils.recursive_file_analyzer as rfa
-import numpy as np
+
 import h5py
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.axes import Axes
+import numpy as np
+
+import analysis.log_analyzer as la
+import utils.logging
+import utils.paths
+import utils.recursive_file_analyzer as rfa
+from analysis.log_analyzer import LogAnalyzer
+from utils.recursive_file_analyzer import HistogramErrorDrawer
 
 
 class HistogramPlotter:
+    """
+    A class to plot histograms of flux, mean, rms, and pixel values for the dataset and generated images.
+    """
 
-    def __init__(self, generated_subdir: str, dataset_subdir: str, config_name: str | None = None, train_data_path: str | None = None, bin_count=25):
+    def __init__(self,
+                 generated_subdir: str,
+                 dataset_subdir: str,
+                 config_name: str | None = None,
+                 train_data_path: str | None = None,
+                 bin_count : int = 25):
+        """
+        Initialises a HistogramPlotter object to plot histograms of flux, mean, rms, and pixel values for the dataset
+        and generated images.
+
+        Parameters
+        ----------
+        generated_subdir : str
+            The subdirectory of the generated images, e.g. 'loguniform' or 'generated'
+        dataset_subdir : str
+            The subdirectory of the dataset images
+        config_name : str | None, optional
+            The name of the configuration to use, by default None
+        train_data_path : str | None, optional
+            The path to the training data file, by default None
+        bin_count : int, optional
+            The number of bins to use for the histograms, by default 25
+        """
         self.bin_count = bin_count
         self.generated_subdir = generated_subdir
         self.dataset_subdir = dataset_subdir
@@ -21,10 +50,33 @@ class HistogramPlotter:
         self.config_name = config_name
         self.logger = utils.logging.get_logger(__name__, logging.DEBUG)
 
-        self.hist = HistogramErrorDrawer()
+        self.hist_err_drwer = HistogramErrorDrawer()
 
-    def set_up_figure(self, titles, ranges, xlabels, ylabels):
-        # Initialise figure
+
+    def set_up_figure(self,
+                      titles : list[str],
+                      ranges : list[tuple[float, float]],
+                      xlabels : list[str],
+                      ylabels : list[str]) -> tuple[Figure, list[Axes]]:
+        """
+        A method to set up a figure with 4 subplots for plotting histograms of flux, mean, rms, and pixel values.
+
+        Parameters
+        ----------
+        titles : list[str]
+            The titles for each subplot
+        ranges : list[tuple[float, float]]
+            The ranges for each subplot
+        xlabels : list[str]
+            The x-axis labels for each subplot
+        ylabels : list[str]
+            The y-axis labels for each subplot
+
+        Returns
+        -------
+        tuple[Figure, list[Axes]]
+            The figure and list of axes for the subplots
+        """
         fig = plt.figure(figsize=(10, 6))
         gs = fig.add_gridspec( 2, 2,
                                 left=0.11, right=0.99, bottom=0.05, top=0.95,
@@ -45,7 +97,11 @@ class HistogramPlotter:
 
         return fig, axes
 
+
     def plot_histograms(self):
+        """
+        Plots histograms of flux, mean, rms, and pixel values for the dataset and generated images.
+        """
         # Plotting flux, mean, rms, and pixel values
         titles = [ "Flux", "Mean", "RMS", "Pixel Values" ]
         xlabels = [ "Integrated Flux (Jy)", "Image Mean (Jy/beam)", "Image RMS (Jy/beam)", "Pixel Value (Jy/beam)" ]
@@ -62,7 +118,8 @@ class HistogramPlotter:
                 normalized_model_fluxes = np.load( fluxes_path )
             else:
                 log_analyzer = LogAnalyzer( subdir )
-                normalized_model_fluxes = log_analyzer.for_each( la.get_model_flux, progress_bar_desc=f'{subdir} fluxes...' )
+                normalized_model_fluxes = log_analyzer.for_each( la.get_model_flux,
+                                                                progress_bar_desc=f'{subdir} fluxes...' )
                 normalized_model_fluxes = np.array( normalized_model_fluxes )
                 np.save( fluxes_path, normalized_model_fluxes )
 
@@ -77,7 +134,9 @@ class HistogramPlotter:
                         #don't save to numpy, no need to duplicate
                 else:
                     rf = rfa.RecursiveFileAnalyzer( utils.paths.FITS_PARENT / subdir )
-                    data = np.array( rf.for_each( rfa.get_fits_primaryhdu_data, progress_bar_desc=f'{subdir} data...' ) )
+                    # todo: add progress_bar_desc to run_pipeline
+                    # progress_bar_desc=f'{subdir} data...' )
+                    data = np.array( rf.run_pipeline( function = rfa.get_fits_primaryhdu_data ))
                     np.save( data_path, data )
 
             means = np.mean( data, axis=(1,2) )
@@ -89,7 +148,7 @@ class HistogramPlotter:
                 ax_data_nonnan = ax_data[ ~np.isnan( ax_data ) ]
                 self.logger.info( f'ax_data length: {ax_data.shape[ 0 ]}' )
                 self.logger.info( f'ax_data_nonnan length: {ax_data_nonnan.shape[ 0 ]}' )
-                self.hist.draw( ax_data_nonnan,
+                self.hist_err_drwer.draw( ax_data_nonnan,
                            ax=ax,
                            bins=self.bin_count,
                            range=range,
@@ -104,13 +163,15 @@ class HistogramPlotter:
         if self.config_name is not None:
             plt.savefig( f"hist_{self.config_name}.png" )
         else:
-            plt.savefig( f"hist.png" )
+            plt.savefig( "hist.png" )
         plt.show()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "-v", "--verbose", help="Print a message to the console every time a file is read or a directory is entered", action='store_true' )
+    parser.add_argument( "-v", "--verbose",
+                        help="Print a message to the console every time a file is read or a directory is entered",
+                        action='store_true' )
     parser.add_argument( "--config", help="Config to use to get dataset/generated directories/paths", type=str )
     args = parser.parse_args()
     verbose = args.verbose

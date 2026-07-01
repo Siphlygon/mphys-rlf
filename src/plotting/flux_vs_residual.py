@@ -1,17 +1,30 @@
-import utils.paths
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import argparse
+
+import utils.paths as pth
+from utils.img_data_arrays import ImageDataArrays
 from utils.logging import get_logger
 from utils.power_transform import PeakFluxPowerTransformer
-from utils.img_data_arrays import ImageDataArrays
 
 logger = get_logger( __name__ )
 
 def plot_flux_vs_residuals( config_name: str ):
-    config = utils.paths.config[ config_name ]
+    """
+    A function to plot the transformed peak fluxes against the summed positive residuals for the dataset and generated
+    images, for comparison.
+
+    Parameters
+    ----------
+    config_name : str
+        The name of the config to use for the analysis, as defined in utils.paths.PROGRAM_CONFIG
+    """
+    config = pth.config[ config_name ]
     config_data_arrays = ImageDataArrays( config_name )
-    #for subdir, color in zip( utils.paths.SUBDIRS, utils.paths.COLOURS ):
-    for subdir, color, data_arrays in zip( [ config[ 'generated_subdir' ], config[ 'dataset_subdir' ] ], [ 'g', 'b' ], [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
+
+    for subdir, color, data_arrays in zip( [ config[ 'generated_subdir' ], config[ 'dataset_subdir' ] ],
+                                          [ 'g', 'b' ],
+                                          [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
         pt = PeakFluxPowerTransformer( subdir, maxvals=np.max( data_arrays.images, axis=(1,2) ) )
 
         #Select for peak flux >0.5 mJy
@@ -23,16 +36,15 @@ def plot_flux_vs_residuals( config_name: str ):
         transformed_peak_fluxes = pt.transform( data_arrays.peak_fluxes / 1000 )
 
         # Delta - summed clipped residuals, per image
-        resid_images = data_arrays.residual_images / data_arrays.image_scale_factors[ :, np.newaxis, np.newaxis ] #transform to 0-1 scale
+        #transform to 0-1 scale
+        resid_images = data_arrays.residual_images / data_arrays.image_scale_factors[ :, np.newaxis, np.newaxis ]
         rv_clipped = np.where( resid_images > 0, resid_images, 0 )
         delta = np.sum( rv_clipped, axis=tuple( [ i for i in range( 1, len( resid_images.shape ) ) ] ) )
 
-        # Scaled flux 
+        # Scaled flux
         scaled_flux = transformed_peak_fluxes
 
-        plt.scatter( scaled_flux, delta, label=subdir, 
-                    color=color,
-                    s=0.01 )
+        plt.scatter( scaled_flux, delta, label=subdir, color=color, s=0.01 )
 
     plt.xlabel( 'Transformed peak flux, arbitrary units' )
     plt.ylabel( 'Summed positive residuals mJy/image' )
@@ -46,5 +58,11 @@ def plot_flux_vs_residuals( config_name: str ):
 
 
 if __name__ == '__main__':
-    plot_flux_vs_residuals()
+    parser = argparse.ArgumentParser()
+    parser.add_argument( "--config",
+                        help=f"Which config to to use for Dataset/Generated subdirs, as defined in"
+                        f" {pth.PROGRAM_CONFIG.name}",
+                        type=str )
+    args = parser.parse_args()
 
+    plot_flux_vs_residuals(args.config)

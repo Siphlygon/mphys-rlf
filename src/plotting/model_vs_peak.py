@@ -1,16 +1,21 @@
-import utils.paths
-import numpy as np
-import matplotlib.pyplot as plt
-from utils.img_data_arrays import ImageDataArrays
-import argparse
-import utils.paths as pth
-
 """
 Quick and dirty script to plot unscaled peak fluxes vs pybdsf-measured model fluxes for data verification
 """
+import argparse
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+import utils.paths as pth
+from utils.img_data_arrays import ImageDataArrays
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--config", help=f"Which config to to use for Dataset/Generated subdirs, as defined in {pth.PROGRAM_CONFIG.name}", type=str )
+    parser.add_argument( "--config",
+                        help=f"Which config to to use for Dataset/Generated subdirs, as defined in " 
+                        f" {pth.PROGRAM_CONFIG.name}",
+                        type=str )
     args = parser.parse_args()
 
     config = pth.config[ args.config ]
@@ -21,7 +26,9 @@ if __name__ == "__main__":
     yticks = np.logspace( -5, 5, 11 )
     config_data_arrays = ImageDataArrays( args.config )
 
-    for subdir, c, data_arrays in zip( [ dataset_subdir, generated_subdir ], [ 'b', 'g' ], [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
+    for subdir, c, data_arrays in zip( [ dataset_subdir, generated_subdir ],
+                                      [ 'b', 'g' ],
+                                      [ config_data_arrays.generated_data, config_data_arrays.dataset_data ] ):
         plt.scatter( data_arrays.peak_fluxes, data_arrays.model_fluxes, label=subdir, c=c, s=0.01 )
 
     plt.plot( xticks, yticks, c='r' )
