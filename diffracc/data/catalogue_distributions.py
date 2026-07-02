@@ -258,7 +258,7 @@ class RMSDistribution(CatalogueDistribution):
         # Get all RMS values from the catalogue
         if self.use_catalogue:
             self.logger.info("Extracting RMS values from the Hardcastle catalogue...")
-            rms_values = self.catalogue.get_values(Source.RMS)
+            rms_values = self.catalogue.get_value_column(Source.RMS)
         else:
             self.logger.info("Extracting RMS values from the preprocessed data...")
             rms_values = self.catalogue["Isl_rms"]
@@ -339,7 +339,7 @@ class LASDistribution(CatalogueDistribution):
         # Get all LAS values from the catalogue
         if self.use_catalogue:
             self.logger.info("Extracting LAS values from the Hardcastle catalogue...")
-            las_values = self.catalogue.get_values(Source.AngSize)
+            las_values = self.catalogue.get_value_column(Source.AngSize)
         else:
             self.logger.info("Extracting LAS values from the preprocessed data...")
             las_values = self.catalogue["LAS"]  # Assuming the preprocessed data has an "LAS" field
@@ -419,7 +419,7 @@ class PeakFluxDistribution(CatalogueDistribution):
         # Get all peak flux values from the catalogue
         if self.use_catalogue:
             self.logger.info("Extracting peak flux values from the Hardcastle catalogue...")
-            peak_flux_values = self.catalogue.get_values(Source.PeakFlux)
+            peak_flux_values = self.catalogue.get_value_column(Source.PeakFlux)
         else:
             self.logger.info("Extracting peak flux values from the preprocessed data...")
             peak_flux_values = self.catalogue["Peak_flux"]  # Assuming the preprocessed data has a "Peak_flux" field
@@ -572,7 +572,7 @@ class RedshiftDistribution(CatalogueDistribution):
         # Get all redshift values from the catalogue
         if self.use_catalogue:
             self.logger.info("Extracting redshift values from the Hardcastle catalogue...")
-            redshift_values = self.catalogue.get_values(Source.Redshift)
+            redshift_values = self.catalogue.get_value_column(Source.Redshift)
         else:
             self.logger.info("Extracting redshift values from the preprocessed data...")
             redshift_values = self.catalogue["z_best"]

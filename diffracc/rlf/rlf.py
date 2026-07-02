@@ -813,13 +813,13 @@ def get_catalog_info( cosmo : astropy.cosmology.Cosmology,
     catalog = HardcastleCatalogue( resolved_only=False )
 
     logger.info( "getting catalog data" )
-    redshifts = catalog.get_values( Source.Redshift )
-    fluxes = catalog.get_values( Source.TotalFlux ) / 1000
-    luminosities = catalog.get_values( Source.Luminosity )
-    wise_3_mag = catalog.get_values( Source.WISE3Mag )
-    wise_3_magerr = catalog.get_values( Source.WISE3MagErr )
-    wise_2_mag = catalog.get_values( Source.WISE2Mag )
-    resolved = catalog.get_values( Source.Resolved )
+    redshifts = catalog.get_value_column( Source.Redshift )
+    fluxes = catalog.get_value_column( Source.TotalFlux ) / 1000
+    luminosities = catalog.get_value_column( Source.Luminosity )
+    wise_3_mag = catalog.get_value_column( Source.WISE3Mag )
+    wise_3_magerr = catalog.get_value_column( Source.WISE3MagErr )
+    wise_2_mag = catalog.get_value_column( Source.WISE2Mag )
+    resolved = catalog.get_value_column( Source.Resolved )
     logger.info( "done" )
 
     mask = ( fluxes > 0 ) & ( wise_3_mag > 0 ) & ( wise_2_mag > 0 ) & ~np.isnan( fluxes ) & ~np.isnan( wise_3_mag ) & ~np.isnan( wise_2_mag ) & ~np.isnan( redshifts ) & ~np.isnan( luminosities ) & ( redshifts > 0.01 ) & ( fluxes > flux_cut_jy ) 

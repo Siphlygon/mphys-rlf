@@ -1,11 +1,11 @@
 import os
-from enum import Enum, unique
 from pathlib import Path
 from types import MappingProxyType
 
 import requests
 from astropy.io import fits
 from tqdm import tqdm
+import h5py
 
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
@@ -25,6 +25,21 @@ CATALOGUES = MappingProxyType({
     }
 })
 
+DESIRED_COLUMNS = [
+    "RA",
+    "DEC",
+    "Total_flux",
+    "Peak_flux",
+    "DC_Maj",
+    "Resolved",
+    "Isl_rms",
+    "LAS",
+    "z_best",
+    "L_144",
+    "mag_w2",
+    "mag_w3",
+    "magerr_w3"
+]
 
 class CatalogueDownloader:
     """
@@ -34,6 +49,35 @@ class CatalogueDownloader:
     def __init__(self):
         # Set up logging
         self.logger = get_logger("CatalogueDownloader", LoggingLevels.DEBUG.value)
+
+
+    def _create_stripped_catalogue(self, file_path: Path = paths.CATALOGUE_PATH):
+        """
+        Loads the Hardcastle 2023 catalogue FITS file, extracts only the desired columns, and returns a new FITS record
+        with just those columns.
+
+        Parameters
+        ----------
+        file_path : Path, optional
+            The path to the Hardcastle catalogue FITS file, by default paths.CATALOGUE_PATH.
+        """
+        try:
+            self.logger.info(f'Loading catalogue from {file_path}.')
+            with fits.open(file_path) as hdul:
+                catalogue_data = hdul[1].data
+                stripped_data = catalogue_data[DESIRED_COLUMNS]
+                self.logger.info('Successfully loaded catalogue.')
+
+            # Save the stripped data to a new h5 file
+            stripped_file_path = file_path.with_suffix('.h5')
+            with h5py.File(stripped_file_path, 'w') as h5f:
+                for col in DESIRED_COLUMNS:
+                    h5f.create_dataset(col, data=stripped_data[col])
+
+        except Exception as e:
+            self.logger.error(f"Error loading Catalogue file: {e}.")
+            raise Exception(
+                f"Failed to load catalogue file at {file_path}. Please check the file and try again") from e
 
 
     def download_catalogue(self, cat: str, catalogue_path: Path = paths.CATALOGUE_PATH):

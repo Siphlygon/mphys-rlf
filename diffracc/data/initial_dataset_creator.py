@@ -8,24 +8,34 @@ from tqdm import tqdm
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from .catalogue_downloader import CatalogueDownloader
+from .cutout_downloader import CutoutDownloader
+from .download_verification import CutoutDownloadVerifier
 
 
-class HardcastleDatasetCreator:
+class InitialDatasetCreator:
     """
     A class to create the full initial Hardcastle dataset by combining information from the Hardcastle catalogue with
     pixel values from downloaded cutout files.
     """
-    def __init__(self):
-        self.logger = get_logger("hardcastle dataset creator", LoggingLevels.DEBUG.value)
+    def __init__(self, save_hdf5: bool = True):
+        """
+        Initialises the InitialDatasetCreator class.
+
+        Parameters
+        ----------
+        save_hdf5 : bool, optional
+            Whether to save the initial dataset in HDF5 format, by default True
+        """
+        self.logger = get_logger("InitialDatasetCreator", LoggingLevels.DEBUG.value)
 
         # Initialise class attributes
-        self.save_hdf5 = True  # Whether to save the dataset in HDF5 format or FITS format
+        self.save_hdf5 = save_hdf5  # Whether to save the dataset in HDF5 format or FITS format
         self.num_counts = 0  # Total number of resolved items in the Hardcastle catalogue, set later
 
 
     # ---------- FILE INPUT ----------
-    def load_hardcastle_header(self,
-                               file_path : Path = paths.CATALOGUE_PATH) \
+    def load_catalogue(self, file_path: Path = paths.CATALOGUE_PATH) \
             -> tuple[list[tuple], fits.Header] | tuple[list[tuple], fits.column.ColDefs]:
         """
         Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items,
@@ -61,8 +71,7 @@ class HardcastleDatasetCreator:
             return resolved_items, header
 
 
-    def load_single_cutout(self,
-                           file : Path) -> np.ndarray:
+    def load_single_cutout(self, file: Path) -> np.ndarray:
         """
         Loads a single cutout image from a FITS file and returns it as a numpy array. If the image is not of the
         expected shape (80, 80), it will be padded with NaNs to ensure consistent shape.
@@ -91,7 +100,7 @@ class HardcastleDatasetCreator:
             return np.full((80, 80), np.nan)
 
 
-    def load_cutout_images(self, folder_path : Path = paths.CUTOUTS_PATH)-> tuple[np.ndarray, np.ndarray]:
+    def load_cutout_images(self, folder_path: Path = paths.CUTOUTS_PATH)-> tuple[np.ndarray, np.ndarray]:
         """
         Loads all cutout images from a specified folder, returning the pixel values and their corresponding indices.
 
@@ -136,7 +145,7 @@ class HardcastleDatasetCreator:
 
 
     # ---------- SAVING ----------
-    def pad_to_80x80(self, arr : np.ndarray) -> np.ndarray:
+    def pad_to_80x80(self, arr: np.ndarray) -> np.ndarray:
         """
         Pads a given 2D numpy array to a shape of (80, 80) with NaN values if it is smaller than that.
 
@@ -162,11 +171,11 @@ class HardcastleDatasetCreator:
 
     # NOTE - NOT RECOMMENDED. Saving FITS files with many HDUs is very slow, the .h5 method is recommended
     def save_to_fits(self,
-                     cat_info : list[tuple],
-                     cat_header : fits.Header,
-                     pixel_values : np.ndarray,
-                     indices : list[int],
-                     save_path : Path = paths.COMBINED_CUTOUTS_PATH_FITS):
+                     cat_info: list[tuple],
+                     cat_header: fits.Header,
+                     pixel_values: np.ndarray,
+                     indices: list[int],
+                     save_path: Path = paths.COMBINED_CUTOUTS_PATH_FITS):
         """
         Saves the full Hardcastle catalogue with pixel values to a FITS file.
 
@@ -228,11 +237,11 @@ class HardcastleDatasetCreator:
 
 
     def save_to_h5(self,
-                   hardcastle_header : list[tuple],
-                   columns : fits.column.ColDefs,
-                   pixel_values : np.ndarray,
-                   indices : list[int],
-                   save_path : Path = paths.COMBINED_CUTOUTS_PATH_H5):
+                   hardcastle_header: list[tuple],
+                   columns: fits.column.ColDefs,
+                   pixel_values: np.ndarray,
+                   indices: list[int],
+                   save_path: Path = paths.COMBINED_CUTOUTS_PATH_H5):
         """
         Saves the full Hardcastle catalogue with pixel values to an HDF5 file.
 
@@ -266,7 +275,7 @@ class HardcastleDatasetCreator:
         self.logger.info(f'Hardcastle catalogue with images saved to {save_path}.')
 
 
-    def build_custom_dtype(self, columns : fits.column.ColDefs) -> np.dtype:
+    def build_custom_dtype(self, columns: fits.column.ColDefs) -> np.dtype:
         """
         Builds a custom numpy dtype based on the FITS column definitions, mapping FITS formats to numpy dtypes.
 
@@ -315,31 +324,28 @@ class HardcastleDatasetCreator:
 
 
     # ---------- MAIN ----------
-    def create_hardcastle_dataset(self,
+    def create_initial_dataset(self,
                                   save_hdf5: bool = True,
                                   file_path : Path = paths.CATALOGUE_PATH,
                                   folder_path : Path = paths.CUTOUTS_PATH,
                                   save_path : Path | None = None):
         """
-        Creates the full Hardcastle dataset by combining catalogue information with pixel values from cutout images,
+        Creates the initial dataset by combining Hardcastle catalogue information with pixel values from cutout images,
         and saves it to either an HDF5 or FITS file.
 
         Parameters
         ----------
         save_hdf5 : bool, optional
-            Whether to save the dataset in HDF5 format, by default True
+            Whether to save the initial dataset in HDF5 format, by default True
         file_path : Path, optional
             The path to the FITS file containing the Hardcastle catalogue headers, by default paths.CATALOGUE_PATH
         folder_path : Path, optional
             The path to the folder containing the cutout images, by default paths.CUTOUTS_PATH
         save_path : Path | None, optional
-            The path where the dataset will be saved, by default None
+            The path where the initial dataset will be saved, by default None
         """
-        # To avoid a lot of arguments, setting some values as class attributes
-        self.save_hdf5 = save_hdf5
-
         # Load the Hardcastle catalogue headers
-        hardcastle_release = self.load_hardcastle_header(file_path)
+        hardcastle_release = self.load_catalogue(file_path)
         if self.save_hdf5:
              # Unpack the tuple if we are saving to HDF5, as we need the column names for that
             catalogue_info, columns = hardcastle_release
@@ -363,11 +369,25 @@ class HardcastleDatasetCreator:
 
 
 if __name__ == "__main__":
-    hcdc = HardcastleDatasetCreator()
-    hcdc.create_hardcastle_dataset()
+    idc = InitialDatasetCreator()
+    idc.logger.info("Starting creation of the initial Hardcastle dataset...")
 
-    # # Test loading the created catalogue
-    # with fits.open('hardcastle_catalogue/hardcastle_catalogue_with_images.fits') as hdul:
-    #     print(hdul.info())
-    #     print(hdul[1].data[:5])  # Print first 5 entries of the catalogue
-    #     print(hdul[2].data)      # Print pixel values of the first image
+    # Step 1: Download the Hardcastle catalogue
+    idc.logger.info("Starting download of Hardcastle catalogue.")
+    CatalogueDownloader().main()
+    idc.logger.info("Finished download of Hardcastle catalogue.")
+
+    # Step 2: Download the cutouts based on the catalogue positions
+    idc.logger.info("Starting download of cutouts based on catalogue positions.")
+    CutoutDownloader().download_all_cutouts()
+    idc.logger.info("Finished download of cutouts.")
+
+    # Step 3: Run verification once on downloaded cutouts
+    idc.logger.info("Starting download verification of cutouts.")
+    CutoutDownloadVerifier().verify_downloads()
+    idc.logger.info("Finished download verification of cutouts.")
+
+    # Step 4: Create the dataset from the downloaded cutouts
+    idc.logger.info("Starting creation of dataset from downloaded cutouts.")
+    idc.create_initial_dataset()
+    idc.logger.info("Finished creation of dataset.")
