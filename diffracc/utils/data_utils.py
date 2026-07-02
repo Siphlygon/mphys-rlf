@@ -84,7 +84,7 @@ def _build_custom_dtype(columns: fits.column.ColDefs) -> np.dtype:
 
 
 # ---------- LOADING DATA ----------
-def load_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
+def load_fits_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
             -> tuple[fits.FITS_rec, fits.Header, fits.column.ColDefs]:
     """
     Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items,
@@ -110,6 +110,26 @@ def load_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
         columns = hdul[1].columns
 
     return cat_data, header, columns
+
+
+def load_stripped_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) -> np.ndarray:
+    """
+    Loads the stripped Hardcastle catalogue information from a stripped HDF5 file and filters for resolved items.
+
+    Parameters
+    ----------
+    file_path : Path, optional
+        The path to the stripped Hardcastle catalogue HDF5 file, by default paths.STRIPPED_CATALOGUE_PATH
+
+    Returns
+    -------
+    np.ndarray
+        The data of the stripped Hardcastle catalogue as a numpy array.
+    """
+    with h5py.File(file_path, 'r') as f:
+        cat_data = f['cat_info'][:]
+
+    return cat_data
 
 
 def load_single_cutout(file: Path, logger: Logger) -> np.ndarray:

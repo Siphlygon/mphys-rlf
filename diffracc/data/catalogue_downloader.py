@@ -2,14 +2,11 @@ import os
 from pathlib import Path
 from types import MappingProxyType
 
-import h5py
-import numpy as np
 import requests
 from astropy.io import fits
 from tqdm import tqdm
 
 from ..utils import paths
-from ..utils.data_utils import _build_custom_dtype
 from ..utils.logger import get_logger
 
 CATALOGUES = MappingProxyType({
@@ -57,8 +54,8 @@ class CatalogueDownloader:
                                    file_path: Path = paths.STRIPPED_CATALOGUE_PATH,
                                    catalogue_path: Path = paths.RAW_CATALOGUE_PATH):
         """
-        Loads the Hardcastle 2023 catalogue FITS file, extracts only the desired columns, and returns a new FITS record
-        with just those columns.
+        Loads the Hardcastle 2023 catalogue FITS file, extracts only the desired columns, and saves the stripped data to
+        a new FITS file. If the stripped catalogue already exists, it skips the creation.
 
         Parameters
         ----------
@@ -78,25 +75,29 @@ class CatalogueDownloader:
                 catalogue_data = hdul[1].data
                 columns = hdul[1].columns
 
-                # Filter the fits columns objects 
-                stripped_columns = [col for col in columns if col.name in DESIRED_COLUMNS]
-                target_dtype = _build_custom_dtype(stripped_columns)
+                # Build new Column objects, preserving original format/unit/etc but with data restricted to
+                # whatever columns are specified in DESIRED_COLUMNS
+                stripped_columns = [
+                    fits.Column(
+                        name=col.name,
+                        format=col.format,
+                        unit=col.unit,
+                        disp=col.disp,
+                        array=catalogue_data[col.name],   # reads + copies while file is open
+                    )
+                    for col in columns if col.name in DESIRED_COLUMNS
+                ]
 
-                    # Extract only the desired columns
-                self.logger.info("Creating structured array for Hardcastle header information with new dtype")
-                struct_arr = np.empty(catalogue_data.shape, dtype=target_dtype)
-                for col in DESIRED_COLUMNS:
-                    struct_arr[col] = catalogue_data[col]
-
-                self.logger.debug(f"Extracted columns: {struct_arr.dtype.names}")
-                self.logger.debug(f"Number of entries in stripped data: {len(struct_arr)}")
-                self.logger.debug(f"First entry in stripped data: {struct_arr[0]}")
+                self.logger.debug(f"Extracted columns: {[c.name for c in stripped_columns]}")
+                self.logger.debug(f"Number of entries: {len(catalogue_data)}")
                 self.logger.info('Successfully loaded catalogue.')
 
-            # Save the stripped data to a new h5 file
+            # Build the new BinTableHDU from the stripped columns
+            new_hdu = fits.BinTableHDU.from_columns(stripped_columns)
+
+            # Save to a new FITS file
             self.logger.info(f'Saving stripped catalogue to {file_path}.')
-            with h5py.File(file_path, 'w') as h5f:
-                h5f.create_dataset('cat_info', data=struct_arr, compression='gzip', chunks=True)
+            new_hdu.writeto(file_path, overwrite=True)
 
         except Exception as e:
             self.logger.error(f"Error loading Catalogue file: {e}.")
@@ -167,10 +168,8 @@ class CatalogueDownloader:
         """
         try:
             self.logger.info(f'Loading catalogue from {catalogue_path}.')
-            # with fits.open(catalogue_path) as hdul:
-            #     catalogue_data = hdul[1].data
-            with h5py.File(catalogue_path, 'r') as h5f:
-                catalogue_data = h5f['cat_info'][:]
+            with fits.open(catalogue_path) as hdul:
+                catalogue_data = hdul[1].data
         except Exception as e:
             self.logger.error(f"Error loading Catalogue file: {e}.")
             raise Exception(
