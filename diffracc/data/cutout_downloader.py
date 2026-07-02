@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import requests
 from astropy.io import fits
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from ..utils import paths
@@ -23,7 +23,7 @@ class CutoutDownloader:
     storing them in appropriately binned folders.
     """
     # Requests params - note, do not overload the server - please be polite to LOFAR!
-    MAX_WORKERS = 64
+    MAX_WORKERS = 80
     RATE_DELAY = 0.03
     RETRIES = 6
 
@@ -128,9 +128,15 @@ class CutoutDownloader:
 
 
     # ---------- DOWNLOADING CUTOUTS ----------
+    class NoCoverageError(Exception):
+        """Custom exception to indicate that there is no coverage for the requested cutout."""
+        pass
+
     # This method comes from the LOFAR API, with changes made to optimise it for large-batch requests.
     # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
-    @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(RETRIES))
+    @retry(wait=wait_exponential(multiplier=1, min=1, max=20),
+           stop=stop_after_attempt(RETRIES),
+           retry=retry_if_not_exception_type(NoCoverageError))
     def _get_cutout(self,
                    outfile : Path | str,
                    pos : str,
@@ -172,8 +178,7 @@ class CutoutDownloader:
             url + page,
             params={'pos': pos, 'size': size},
             auth=auth,
-            stream=True,
-            timeout=60
+            timeout=(5, 15)
         )
 
         if r.status_code != 200:
@@ -279,7 +284,7 @@ class CutoutDownloader:
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as ex:
             futures = {ex.submit(self._download_one, t): t[0] for t in tasks}
 
-            for f in tqdm(as_completed(futures), total=len(futures)):
+            for f in tqdm(as_completed(futures), total=len(futures), mininterval=2):
                 i, err = f.result()
 
                 if err and err != "exists":
@@ -346,7 +351,7 @@ class CutoutDownloader:
         self.logger.info(f"Testing loadability of {len(cutout_paths)} cutout files...")
         values = rfa.run_pipeline(function=self._test_load_single_cutout, file_paths_override=cutout_paths)
         values = np.array(values, dtype=np.bool_)
-        num_corrupted = np.sum(not values)
+        num_corrupted = np.sum(~values)
         if num_corrupted > 0:
             self.logger.warning(f"Found {num_corrupted} corrupted cutout files. "
                                 "They have been deleted and will be re-downloaded.")
