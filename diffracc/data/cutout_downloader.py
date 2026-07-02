@@ -53,7 +53,7 @@ class CutoutDownloader:
 
 
     # ---------- SET UP ----------
-    def read_positions(self,
+    def _read_positions(self,
                        file_path : Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt")\
             -> list[tuple[float, float]]:
         """
@@ -84,7 +84,7 @@ class CutoutDownloader:
                             f"Please check the file and try again") from e
 
 
-    def make_folder(self,
+    def _make_folder(self,
                     folder_num : int,
                     directory_path : Path = paths.CUTOUTS_PATH)-> Path:
         """
@@ -131,7 +131,7 @@ class CutoutDownloader:
     # This method comes from the LOFAR API, with changes made to optimise it for large-batch requests.
     # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
     @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(RETRIES))
-    def get_cutout(self,
+    def _get_cutout(self,
                    outfile : Path | str,
                    pos : str,
                    size : int = 2,
@@ -211,7 +211,7 @@ class CutoutDownloader:
             return i, "exists"
 
         try:
-            self.get_cutout(path, f"{ra} {dec}")
+            self._get_cutout(path, f"{ra} {dec}")
             self.recent_errors = max(0, self.recent_errors - 1)
             return i, None
         except Exception as e:
@@ -237,7 +237,7 @@ class CutoutDownloader:
             self.logger.info('Using custom positions provided as argument for downloading cutouts...')
             hdc_positions = custom_positions
         else:
-            hdc_positions = self.read_positions()
+            hdc_positions = self._read_positions()
 
         # Check if target directory exists, create if not
         target_directory = directory_path
@@ -257,7 +257,7 @@ class CutoutDownloader:
 
         # Cutout images will be stored in folders of configurable size, by image index
         folder_index = image_nums[0] // self.folder_size
-        target_directory = target_directory / self.make_folder(folder_index)
+        target_directory = target_directory / self._make_folder(folder_index)
 
         # Build a list of tasks for downloading cutouts, each task is a tuple of (index, RA, DEC, path)
         self.logger.info('Building task list for downloading... ')
@@ -269,7 +269,7 @@ class CutoutDownloader:
             # if we've crossed a folder boundary, check the new folder exists and update the current folder index
             if new_index != folder_index:
                 folder_index = new_index
-                target_directory = self.make_folder(folder_index)
+                target_directory = self._make_folder(folder_index)
             cutout_path = target_directory / f"cutout{i}.fits"
 
             tasks.append((i, ra, dec, cutout_path))
@@ -327,7 +327,7 @@ class CutoutDownloader:
         """
         self.logger.info('Starting verification of downloaded cutouts...')
         downloader = CutoutDownloader()
-        hdc_positions = downloader.read_positions()
+        hdc_positions = downloader._read_positions()
         pos_count = len(hdc_positions)
         files_to_redownload = []
 

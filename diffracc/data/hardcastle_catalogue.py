@@ -1,11 +1,8 @@
-import os
 from enum import Enum
 from pathlib import Path
 
 import numpy as np
-import requests
 from astropy.io import fits
-from tqdm import tqdm
 
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
@@ -64,12 +61,12 @@ class HardcastleCatalogue:
             raise NotImplementedError(
                 f"Catalogue {cat} is not supported. Supported catalogues: {list(CATALOGUES.keys())}")
 
-        self.catalogue_data = self._load_hardcastle_catalogue(cat=cat, file_path=paths.CATALOGUE_PATH)
+        self.catalogue_data = self._load_hardcastle_catalogue(cat=cat, file_path=paths.RAW_CATALOGUE_PATH)
 
 
     def _load_hardcastle_catalogue(self,
                                   cat : str = "hardcastle2023",
-                                  file_path : Path = paths.CATALOGUE_PATH) -> fits.FITS_rec:
+                                  file_path : Path = paths.RAW_CATALOGUE_PATH) -> fits.FITS_rec:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
         from the LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the
@@ -80,7 +77,7 @@ class HardcastleCatalogue:
         cat : str, optional
             The catalogue to use, by default "hardcastle2023"
         file_path : Path, optional
-            The path to the FITS file containing the Hardcastle catalogue, by default paths.CATALOGUE_PATH.
+            The path to the FITS file containing the Hardcastle catalogue, by default paths.RAW_CATALOGUE_PATH.
             
         Returns
         -------
@@ -88,7 +85,7 @@ class HardcastleCatalogue:
             A FITS_rec array containing the data for each resolved item in the Hardcastle catalogue.
         """
         # Download the catalogue if it doesn't exist
-        CatalogueDownloader().download_catalogue(cat, catalogue_path=file_path)
+        CatalogueDownloader().download_catalogue(cat, raw_catalogue_path=file_path)
 
         self.logger.info(f"Loading Hardcastle catalogue from {file_path}")
         try:
