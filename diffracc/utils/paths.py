@@ -59,10 +59,13 @@ LOFAR_SUBSETS = IndexedOrderedDict(
 )
 
 # Paths for the training datasets/processing
-CUTOUTS_PATH = FITS_PARENT / "dr2_cutouts_download"
 PREPROCESSING_PARENT = DATASET_PARENT / "preprocessing"
-CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
 
+# Paths for the different catalogue files 
+STRIPPED_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass_stripped.h5"
+RAW_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
+
+CUTOUTS_PATH = FITS_PARENT / "dr2_cutouts_download"
 COMBINED_CUTOUTS_PATH_H5 = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.h5"
 COMBINED_CUTOUTS_PATH_FITS = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.fits"
 

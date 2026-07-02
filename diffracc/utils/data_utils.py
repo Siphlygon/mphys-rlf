@@ -84,7 +84,7 @@ def _build_custom_dtype(columns: fits.column.ColDefs) -> np.dtype:
 
 
 # ---------- LOADING DATA ----------
-def load_catalogue(file_path: Path = paths.CATALOGUE_PATH) \
+def load_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
             -> tuple[fits.FITS_rec, fits.Header, fits.column.ColDefs]:
     """
     Loads the Hardcastle catalogue information from a downloaded FITS file and filters for resolved items,
@@ -93,7 +93,7 @@ def load_catalogue(file_path: Path = paths.CATALOGUE_PATH) \
     Parameters
     ----------
     file_path : Path, optional
-        The path to the Hardcastle catalogue FITS file, by default paths.CATALOGUE_PATH
+        The path to the Hardcastle catalogue FITS file, by default paths.STRIPPED_CATALOGUE_PATH
 
     Returns
     -------
