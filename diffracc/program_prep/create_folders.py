@@ -15,7 +15,8 @@ def make_folders():
               paths.IMG_DATA_PARENT,
               paths.FITS_PARENT,
               paths.PYBDSF_PARENT,
-              paths.NP_ARRAY_PARENT]:
+              paths.NP_ARRAY_PARENT,
+              paths.DATASET_PARENT,]:
         # Make folder if it doesn't exist
         if not p.exists():
             p.mkdir()
@@ -42,9 +43,7 @@ def make_folders():
                 (f/f"{name}_model").mkdir()
 
     # create the folders for the pretrained models and the mosaic/cutouts folders
-    for f in [paths.PRETRAINED_PARENT,
-              paths.MOSAIC_DIR,
-              paths.CUTOUTS_DIR]:
+    for f in [paths.PRETRAINED_PARENT]:
         if not f.exists():
             f.mkdir()
 
@@ -59,6 +58,11 @@ def make_folders():
         for g in paths.SUBDIRS:
             if not (f/g).exists():
                 (f/g).mkdir()
+
+    # create the subfolders for the dataset preparation
+    for f in [paths.CUTOUTS_PATH, paths.PREPROCESSING_PARENT]:
+        if not f.exists():
+            f.mkdir()
 
 
 if __name__ == '__main__':
