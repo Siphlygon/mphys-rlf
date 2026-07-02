@@ -186,8 +186,8 @@ class CutoutDownloader:
             o.write(r.content)
 
         r.close()
-    
-    
+
+
     def _download_one(self, args : tuple[int, float, float, Path]) -> tuple[int, str | None]:
         """
         Downloads a single cutout based on the provided RA and DEC positions, and saves it to the specified path. If the
