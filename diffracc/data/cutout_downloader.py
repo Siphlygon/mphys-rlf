@@ -1,16 +1,20 @@
+import argparse
 import configparser
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import numpy as np
 import requests
+from astropy.io import fits
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
 from ..utils import paths
 from ..utils.distributed import distribute
 from ..utils.logger import LoggingLevels, get_logger
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
 class CutoutDownloader:
@@ -123,7 +127,8 @@ class CutoutDownloader:
             time.sleep(0.15)
 
 
-    # This method was comes from the LOFAR API, with changes made to optimise it for large-batch requests.
+    # ---------- DOWNLOADING CUTOUTS ----------
+    # This method comes from the LOFAR API, with changes made to optimise it for large-batch requests.
     # For more information, see: https://github.com/mhardcastle/lotss-cutout-api/blob/main/cutout.py
     @retry(wait=wait_exponential(multiplier=1, min=1, max=20), stop=stop_after_attempt(RETRIES))
     def get_cutout(self,
@@ -181,12 +186,9 @@ class CutoutDownloader:
             o.write(r.content)
 
         r.close()
-
-
-    # ---------- PARALLEL ORCHESTRATION ----------
-    def _download_one(self,
-                      args : tuple[int, float, float, Path])\
-            -> tuple[int, str | None]:
+    
+    
+    def _download_one(self, args : tuple[int, float, float, Path]) -> tuple[int, str | None]:
         """
         Downloads a single cutout based on the provided RA and DEC positions, and saves it to the specified path. If the
         cutout file already exists, it skips the download. If the download fails, it returns an error message.
@@ -285,6 +287,121 @@ class CutoutDownloader:
                         log.write(f"{i}: {err}\n")
 
 
+    # ---------- DOWNLOAD VERIFICATION ----------
+    def _test_load_single_cutout(self, cutout_path: Path) -> bool:
+        """
+        Tests loading a single cutout FITS file to check if it is corrupted or not. If the file is corrupted, it will be
+        deleted.
+
+        Parameters
+        ----------
+        cutout_path : Path
+            The path to the cutout FITS file to be tested.
+
+        Returns
+        -------
+        bool
+            True if the file is loaded successfully, and False if it was corrupted and deleted.
+        """
+        try:
+            with fits.open(cutout_path) as hdul:
+                _ = hdul[0].data
+            return True
+        except Exception as e:
+            self.logger.error(f'Failed to load cutout file {cutout_path.name}: {e}')
+            os.remove(cutout_path)
+            self.logger.info(f'Deleted corrupted cutout file: {cutout_path.name}')
+            return False
+
+
+    def verify_downloads(self,
+                         download_path : Path = paths.CUTOUTS_PATH):
+        """
+        Verifies the completeness of downloaded cutout files in the specified download path. It checks for missing or
+        corrupted files and re-downloads them if necessary.
+
+        Parameters
+        ----------
+        download_path : Path, optional
+            The path to the directory containing the downloaded cutout files, by default paths.CUTOUTS_PATH
+        """
+        self.logger.info('Starting verification of downloaded cutouts...')
+        downloader = CutoutDownloader()
+        hdc_positions = downloader.read_positions()
+        pos_count = len(hdc_positions)
+        files_to_redownload = []
+
+        self.logger.info(f"Finding all present cutout files in {download_path}...")
+        rfa = RecursiveFileAnalyzer(download_path)
+        cutout_paths, indices = rfa.get_unwrapped_list(pattern=r'.*?cutout(\d+)\.fits$', return_nums=True)
+
+        # Check indices to see any missing cutout images. These can be added to redownload and avoids some iteration
+        missing_cutouts = set(range(pos_count)) - set(indices)
+        if missing_cutouts:
+            self.logger.warning(f"Total cutouts expected: {pos_count}, found: {len(indices)}")
+            self.logger.warning(f"Missing cutout images: {sorted(missing_cutouts)}")
+            files_to_redownload.extend(missing_cutouts)
+
+        # Now test if they can be loaded
+        self.logger.info(f"Testing loadability of {len(cutout_paths)} cutout files...")
+        values = rfa.run_pipeline(function=self._test_load_single_cutout, file_paths_override=cutout_paths)
+        values = np.array(values, dtype=np.bool_)
+        num_corrupted = np.sum(not values)
+        if num_corrupted > 0:
+            self.logger.warning(f"Found {num_corrupted} corrupted cutout files. "
+                                "They have been deleted and will be re-downloaded.")
+            corrupted_indices = [idx for idx, val in zip(indices, values) if val is False]
+            files_to_redownload.extend(corrupted_indices)
+
+        # Redownload any files if necessary
+        if files_to_redownload:
+            self.logger.info(f'Total cutout files to re-download: {len(files_to_redownload)}. Finding positions...')
+            requested_positions = []
+            for pos_num in files_to_redownload:
+                ra, dec = hdc_positions[pos_num]
+                requested_positions.append([ra, dec])
+            self.logger.info('Re-downloading missing cutout files...')
+            downloader.download_all_cutouts(custom_positions=requested_positions)
+            self.logger.info("Finished re-downloading. Note that some files from the LOFAR API will always be missing.")
+            # Count the number of files present in dr2_cutouts directly
+            cpt = sum(len(files) for r, d, files in os.walk(download_path))
+            self.logger.info(f"Number of files downloaded: {pos_count - len(files_to_redownload) - cpt}. "
+                             f"Final count of cutout files is {cpt}.")
+        else:
+            self.logger.info('All cutout files are present.')
+
+
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """
+    Builds the argument parser for the cutout downloader script. This parser allows users to specify whether they want
+    to download cutouts, verify existing downloads, or both.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The argument parser
+    """
+    parser = argparse.ArgumentParser(
+        description="Download cutouts from the LOFAR cutout server based on the Hardcastle catalogue.")
+    parser.add_argument(
+        '--download_cutouts',
+        action='store_true',
+        help='Download cutouts from the LOFAR cutout server.'
+    )
+    parser.add_argument(
+        '--verify',
+        action='store_true',
+        help='Verify the completeness of downloaded cutout files and re-download missing or corrupted files.'
+    )
+    return parser
+
+
 if __name__ == "__main__":
+    parser = _build_argument_parser()
+    args = parser.parse_args()
+
     downloader = CutoutDownloader()
-    downloader.download_all_cutouts()
+    if args.download_cutouts:
+        downloader.download_all_cutouts()
+    if args.verify:
+        downloader.verify_downloads()
