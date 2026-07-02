@@ -134,7 +134,7 @@ class RecursiveFileAnalyzer:
                     path: Path | str | None = None,
                     pattern: str | None = None,
                     numeric_range: tuple[int,int] | None = None,
-                    return_nums: bool = False) -> Generator[Path] | Generator[tuple[Path, int]]:
+                    return_nums: bool = False) -> Generator[Path, None, None] | Generator[tuple[Path, int], None, None]:
         """
         A method to recursively scan a directory and yield file paths, with optional regex pattern matching and numeric
         range filtering on the pattern capture group.
