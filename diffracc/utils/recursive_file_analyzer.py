@@ -12,19 +12,16 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from itertools import repeat
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Generator, Iterator
 
-import astropy.stats
-import numpy as np
 from astropy.io import fits
-from matplotlib.axes import Axes
 from tqdm import tqdm
 
 from .logger import LoggingLevels, get_logger
 
 
 # Utility functions for for_each
-def get_fits_primaryhdu_data( path: Path ) -> np.ndarray:
+def get_fits_primaryhdu_data( path: Path ) -> fits.FITS_rec:
     """
     A function to get the primary HDU data from a FITS file.
 
@@ -35,7 +32,7 @@ def get_fits_primaryhdu_data( path: Path ) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray
+    fits.FITS_rec
         The primary HDU data from the FITS file
     """
     with fits.open( str( path ), memmap=False ) as hdul:
@@ -91,10 +88,10 @@ class RecursiveFileAnalyzer:
             operations to provide feedback on progress. Default LoggingLevels.INFO.value
         """
         if path is not Path:
-            path = Path( path )
+            path = Path(path)
         self.path = path
-        self.logger = get_logger( self.__class__.__name__ )
-        self.logger.setLevel( log_level )
+        self.logger = get_logger("RecursiveFileAnalyzer", LoggingLevels.DEBUG.value)
+        self.logger.setLevel(log_level)
 
 
     def get_unwrapped_list(self,
@@ -137,7 +134,7 @@ class RecursiveFileAnalyzer:
                     path: Path | str | None = None,
                     pattern: str | None = None,
                     numeric_range: tuple[int,int] | None = None,
-                    return_nums: bool = False) -> Iterator[Path | tuple[Path, int]]:
+                    return_nums: bool = False) -> Generator[Path] | Generator[tuple[Path, int]]:
         """
         A method to recursively scan a directory and yield file paths, with optional regex pattern matching and numeric
         range filtering on the pattern capture group.
@@ -158,8 +155,8 @@ class RecursiveFileAnalyzer:
 
         Yields
         ------
-        Iterator[Path | tuple[Path, int]]
-            An iterator of file paths, and optionally a tuple of (file_path, file_number) if return_nums is True
+        Generator[Path] | Generator[tuple[Path, int]]
+            A generator of file paths, and optionally a tuple of (file_path, file_number) if return_nums is True
 
         Raises
         ------
@@ -660,67 +657,3 @@ class RecursiveFileAnalyzer:
                     )
 
         return rows_sorted, best_row
-
-
-class HistogramErrorDrawer:
-    """
-    Purely utility class to draw histograms with error bars
-    """
-    def __init__( self ):
-        pass
-
-    def draw( self,
-             data: np.ndarray,
-             ax: Axes,
-             bins: int,
-             range: tuple[ float, float ],
-             label: str,
-             color: str,
-             density: bool,
-             relative: bool ):
-        """
-        Utility function to draw a histogram with error bars according to astropy.stats.poisson_conf_interval with 
-        sigma=1.0
-
-        Parameters
-        ----------
-        data: np.ndarray
-            The data to plot
-        ax: Axes
-            The axes to plot the histogram and error bars on
-        bins: int
-            Number of bins to sort the data into
-        range: tuple[ float, float ]
-            Range to plot the histogram on (neccesary parameter to compare histograms of slightly different data)
-        label: str
-            How to label the data
-        color: str
-            How to color the data
-        density: bool
-            Whether or not to make the histogram (and associated error bars) a density plot
-        relative: bool
-            Whether or not to draw a relative frequency histogram. Mutually exclusive with density.
-        """
-        if density and relative:
-            raise RuntimeError( "Cannot have a histogram be both density and relative frequency" )
-
-        hist, _ = np.histogram( data, bins=bins, range=range )
-        conf_interval = astropy.stats.poisson_conf_interval( hist, sigma=1.0, interval='frequentist-confidence' )
-
-
-        drawn_histogram, bin_edges = np.histogram( data, bins=bins, range=range, density=density )
-        if relative:
-            drawn_histogram = drawn_histogram / data.shape[ 0 ]
-        bin_centres = ( bin_edges[ :-1 ] + bin_edges[ 1: ] )/2.0
-        ax.step( bin_edges, np.append( drawn_histogram, np.zeros( 1 ) ), label=label, color=color, where='post' )
-
-        yerr = conf_interval[ 1 ] - conf_interval[ 0 ]
-
-        #poisson_conf_interval needs the raw data to be accurate, so we do it on the unweighted histogram and weight it
-        # afterward here
-        if density:
-            yerr = yerr / np.sum( data )
-        elif relative:
-            yerr = yerr / data.shape[ 0 ]
-
-        ax.errorbar( bin_centres, drawn_histogram, yerr, fmt='.', color=color )

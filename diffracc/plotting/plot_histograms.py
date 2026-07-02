@@ -10,7 +10,71 @@ from matplotlib.figure import Figure
 from ..analysis.log_analyzer import LogAnalyzer
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
-from ..utils.recursive_file_analyzer import HistogramErrorDrawer, RecursiveFileAnalyzer, get_fits_primaryhdu_data
+from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_data
+
+
+class HistogramErrorDrawer:
+    """
+    Purely utility class to draw histograms with error bars
+    """
+    def __init__( self ):
+        pass
+
+    def draw( self,
+             data: np.ndarray,
+             ax: Axes,
+             bins: int,
+             range: tuple[ float, float ],
+             label: str,
+             color: str,
+             density: bool,
+             relative: bool ):
+        """
+        Utility function to draw a histogram with error bars according to astropy.stats.poisson_conf_interval with 
+        sigma=1.0
+
+        Parameters
+        ----------
+        data: np.ndarray
+            The data to plot
+        ax: Axes
+            The axes to plot the histogram and error bars on
+        bins: int
+            Number of bins to sort the data into
+        range: tuple[ float, float ]
+            Range to plot the histogram on (neccesary parameter to compare histograms of slightly different data)
+        label: str
+            How to label the data
+        color: str
+            How to color the data
+        density: bool
+            Whether or not to make the histogram (and associated error bars) a density plot
+        relative: bool
+            Whether or not to draw a relative frequency histogram. Mutually exclusive with density.
+        """
+        if density and relative:
+            raise RuntimeError( "Cannot have a histogram be both density and relative frequency" )
+
+        hist, _ = np.histogram( data, bins=bins, range=range )
+        conf_interval = astropy.stats.poisson_conf_interval( hist, sigma=1.0, interval='frequentist-confidence' )
+
+
+        drawn_histogram, bin_edges = np.histogram( data, bins=bins, range=range, density=density )
+        if relative:
+            drawn_histogram = drawn_histogram / data.shape[ 0 ]
+        bin_centres = ( bin_edges[ :-1 ] + bin_edges[ 1: ] )/2.0
+        ax.step( bin_edges, np.append( drawn_histogram, np.zeros( 1 ) ), label=label, color=color, where='post' )
+
+        yerr = conf_interval[ 1 ] - conf_interval[ 0 ]
+
+        #poisson_conf_interval needs the raw data to be accurate, so we do it on the unweighted histogram and weight it
+        # afterward here
+        if density:
+            yerr = yerr / np.sum( data )
+        elif relative:
+            yerr = yerr / data.shape[ 0 ]
+
+        ax.errorbar( bin_centres, drawn_histogram, yerr, fmt='.', color=color )
 
 
 class HistogramPlotter:
