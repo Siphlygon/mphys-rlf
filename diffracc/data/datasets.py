@@ -1,113 +1,130 @@
-import copy
 import random
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
-import pandas as pd
 import torch
-from PIL import Image
 from sklearn.preprocessing import PowerTransformer
-from tqdm import tqdm
 
 from ..plotting.image_plots import plot_image_grid
-from ..utils import paths
 from ..utils.logger import get_logger
-from .transforms import EvalTransform, ToTensor, TrainTransform, TrainTransformNoScale
+from .transforms import TrainTransformNoScale
+
+if TYPE_CHECKING:
+    import torchvision.transforms as T
 
 # Assuming this is in datasets.datasets or a similar module
 logger = get_logger(__name__)
 
 
 class ImagePathDataset(torch.utils.data.Dataset):
+    """
+    A PyTorch Dataset class that loads images from a specified path, which can be a directory containing PNG images,
+    an HDF5 file, or a .pt file. The dataset can also handle additional context attributes and allows for
+    transformations to be applied to the images.
+    """
     def __init__(
         self,
-        dset,
-        transforms=ToTensor(),
-        n_subset=None,
-        labels=None,
-        key="images",
-        catalog_keys=[],
-        sorted=False,
+        dset: Path | str,
+        transforms: T.Compose = TrainTransformNoScale(),
+        n_subset: int | None = None,
+        key: str = "images",
+        # catalog_keys: list = [],
     ):
+        """
+        Initialises the ImagePathDataset class.
+
+        Parameters
+        ----------
+        dset : Path | str
+            The path to the dataset, which can be a directory containing PNG images, an HDF5 file, or a .pt file.
+        transforms : T.Compose
+            The transformations to apply to the images. This should be a torchvision.transforms.Compose object, by
+            default TrainTransformNoScale().
+        n_subset : int | None, optional
+            The number of samples to include in the subset, by default None
+        key : str, optional
+            The key for the images in the dataset, by default "images"
+
+        Raises
+        ------
+        FileNotFoundError
+            If the specified dataset path does not exist.
+        ValueError
+            If the specified dataset path is not a supported file type.
+        """
         # Set the path for the dataset
-        match dset:
-            case Path():
-                # Path object passed:
-                self.path = dset
+        self.path = Path(dset)
+        assert self.path.exists(), f"Dataset path {self.path} does not exist."
 
-            case str():
-                # Name of subset:
-                if dset in paths.LOFAR_SUBSETS:
-                    self.path = paths.LOFAR_SUBSETS[dset]
+        if self.path.suffix not in [".hdf5", ".h5"]:
+            raise ValueError(f"Unknown file type: {self.path.suffix}")
 
-                # Directory passed as string:
-                elif Path(dset).exists():
-                    self.path = Path(dset)
-
-                # Anything else should raise an error
-                else:
-                    raise FileNotFoundError(f"File {dset} not found.")
-
+        # Set up attributes
         self.transforms = transforms
         self._context = []
 
-        # Load images
-        # If the path is a directory, load all png images in the directory
-        if self.path.is_dir():
-            self.load_images_png(n_subset)
+        # Documenting future attributes for type checking and clarity
+        self.data : torch.Tensor
+        self.max_values : torch.Tensor
+        self.max_values_tr : torch.Tensor
+        self.box_cox_lambda : np.ndarray
+        self.las_values : torch.Tensor
 
-        # If the path is a hdf5 file, load the images from the file
-        elif self.path.suffix in [".hdf5", ".h5"]:
-            self.load_images_h5py(
-                n_subset, key=key, labels=labels, catalog_keys=catalog_keys
-            )
-
-        # If the path is a .pt file, load the images from the file
-        elif self.path.suffix == ".pt":
-            self.load_images_pt(n_subset)
-
-        # Anything else is not supported.
-        else:
-            raise ValueError(f"Unknown file type: {self.path.suffix}")
+        self._load_images_h5py(n_subset,
+                               key=key,
+                            #    catalog_keys=catalog_keys
+                               )
 
         # Set max values
         if not hasattr(self, "max_values"):
             self.set_max_values()
 
-        # Sort data set by names
-        if sorted:
-            logger.info("Sorting data set by names...")
-            self.sort_by_names()
-
         logger.info("Data set initialized.")
 
-    def __len__(self):
+
+    def __len__(self) -> int:
         return len(self.data)
 
-    def __getitem__(self, i):
+
+    def __getitem__(self, i) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
+        # Handle slicing and indexing
         if isinstance(i, slice):
             return [self[j] for j in range(*i.indices(len(self)))]
 
-        if isinstance(i, str):
-            i = np.where(self.names == i)[0][0]
+        # # Handle string indexing by name
+        # if isinstance(i, str):
+        #     i = np.where(self.names == i)[0][0]
 
         img = self.data[i]
+
+        # Handle 2D images by adding a channel dimension
         if img.ndim == 2:
-            img = torch.unsqueeze( img, 0 )
+            img = torch.unsqueeze(img, 0)
+
+        # Apply transformations if specified
         if self.transforms is not None:
             img = self.transforms(img)
+
         context = [getattr(self, attr)[i] for attr in self._context]
 
         if len(context):
             return img, torch.tensor(context)
+        return img
 
-        else:
-            return img
 
-    def index_slice(self, idx):
-        # Slice all attributes that have the same shape as self.data
+    def index_slice(self, idx: int | slice | list | np.ndarray):
+        """
+        Indexes the dataset and all its context attributes with the provided index or slice, allowing for easy
+        subsetting of the dataset while maintaining the integrity of the context attributes.
+
+        Parameters
+        ----------
+        idx : int | slice | list | np.ndarray
+            The index or slice to use for subsetting the dataset and its context attributes.
+        """
         for attr in self.__dict__.keys():
             if (
                 hasattr(self, attr)
@@ -119,14 +136,13 @@ class ImagePathDataset(torch.utils.data.Dataset):
 
         self.data = self.data[idx]
 
-    def index_sliced(self, idx):
-        return copy.deepcopy(self).index_slice(idx)
-
-    def sort_by_names(self):
-        idxs = np.argsort(self.names)
-        self.index_slice(idxs)
 
     def set_context(self, *args):
+        """
+        Sets the context attributes for the dataset, which are additional attributes that can be returned alongside
+        the images when indexing the dataset. This method checks that the specified context attributes exist and
+        have the same length as the dataset.
+        """
         assert all(hasattr(self, attr) for attr in args), (
             "Context attributes not found in dataset: "
             f"{[attr for attr in args if not hasattr(self, attr)]}"
@@ -137,37 +153,24 @@ class ImagePathDataset(torch.utils.data.Dataset):
         )
         self._context = args
 
-    def load_images_png(self, n_subset=None):
-        # Load file names
-        files = sorted(self.path.glob("*.png"))
 
-        # Select random subset if desired
-        if n_subset is not None:
-            logger.info(
-                f"Selecting {n_subset} random images" f" from {len(files)} files."
-            )
-            self.files = random.sample(files, k=n_subset)
+    def _load_images_h5py(self,
+                         n_subset: int | None = None,
+                         key: str = "images",
+                        #  catalog_keys: list = []
+                         ):
+        """
+        Loads images from an HDF5 file, optionally selecting a random subset of images and filtering by labels.
 
-        logger.info("Loading images...")
-
-        def load(f):
-            return ToTensor()(Image.open(f).convert("RGB"))
-
-        self.data = list(map(load, tqdm(files, ncols=80)))
-        self.names = [f.stem for f in files]
-
-    def load_images_h5py(
-        self, n_subset=None, key="images", labels=None, catalog_keys=[]
-    ):
-
+        Parameters
+        ----------
+        n_subset : int | None, optional
+            The number of images to select, by default None
+        key : str, optional
+            The key for the images dataset, by default "images"
+        """
         with h5py.File(self.path, "r") as f:
             images = f[key]
-
-            # Select images with labels if labels are passed
-            if labels is not None:
-                logger.info(f"Selecting images with label(s) {labels}")
-                idxs = np.isin(f[f"{key}_labels"], labels)
-                images = images[idxs]
 
             # Select random subset if n_subset is passed
             n_tot = len(images)
@@ -175,69 +178,40 @@ class ImagePathDataset(torch.utils.data.Dataset):
                 assert (
                     n_subset <= n_tot
                 ), "Requested subset size is larger than total number of images."
-                logger.info(
-                    f"Selecting {n_subset} random images"
-                    f" from {n_tot} images in hdf5 file."
-                )
+                logger.info(f"Selecting {n_subset} random images from {n_tot} images in hdf5 file.")
                 idxs = sorted(random.sample(range(n_tot), k=n_subset))
             else:
                 idxs = slice(None)
             logger.info("Loading images...")
             self.data = torch.tensor(images[idxs], dtype=torch.float32)
 
-            # See if names are available
-            if "names" in f:
-                self.names = np.array(f["names"].asstr()[idxs])
-
             # Add variable attributes depending on keys in file
-            for key in f.keys():
-                if key not in ["images", "names", "catalog", "cat_info"]:
-                    setattr(self, key, torch.tensor(f[key][idxs], dtype=torch.float32))
+            # not used in our program
+            # for key in f.keys():
+            #     if key not in ["images", "names", "catalog", "cat_info"]:
+            #         setattr(self, key, torch.tensor(f[key][idxs], dtype=torch.float32))
 
             # Load selected attributes if catalog is available
-            if "catalog" in f.keys():
-                catalog = pd.read_hdf(self.path, key="catalog")
-                self.names = catalog["Source_Name"].values[idxs]
-                for key in catalog_keys:
-                    setattr(
-                        self,
-                        key,
-                        torch.tensor(catalog[key].values[idxs], dtype=torch.float32),
-                    )
+            # if "catalog" in f.keys():
+            #     catalog = pd.read_hdf(self.path, key="catalog")
+            #     for key in catalog_keys:
+            #         setattr(self, key, torch.tensor(catalog[key].values[idxs], dtype=torch.float32))
 
-            if not hasattr(self, "names"):
-                logger.info("No names loaded from hdf5 file.")
-                self.names = np.arange(n_tot)[idxs]
 
-    def load_images_pt(self, n_subset=None):
-        batch_st = torch.load(self.path, map_location="cpu")
-        match batch_st.dim():
-            # Sampling steps contained:
-            case 5:
-                samples_itr = torch.clamp(batch_st[:, -1, :, :, :], 0, 1)
+    def plot_image_grid(self, n_imgs: int = 64, **kwargs):
+        """
+        Plots a grid of images from the dataset, randomly selecting a specified number of images.
 
-            # No sampling steps:
-            case 4:
-                samples_itr = torch.clamp(batch_st, 0, 1)
+        Parameters
+        ----------
+        n_imgs : int, optional
+            The number of images to plot, by default 64
 
-            case _:
-                raise NotImplementedError(
-                    f"Sample batch of unknown shape {batch_st.shape} with {batch_st.dim()} dimensions."
-                )
-        n_tot = len(samples_itr)
-
-        if n_subset is not None:
-            logger.info(
-                f"Selecting {n_subset} random images" f" from {len(samples_itr)} files."
-            )
-            idxs = sorted(random.sample(range(n_tot), k=n_subset))
-        else:
-            idxs = slice(None)
-
-        self.data = samples_itr[idxs]
-        self.names = np.arange(n_tot)[idxs]
-
-    def plot_image_grid(self, n_imgs=64, **kwargs):
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The figure object containing the plotted image grid.s
+        """
         # pick n_imgs random images
         idxs = np.random.choice(len(self), n_imgs, replace=False)
 
@@ -248,10 +222,23 @@ class ImagePathDataset(torch.utils.data.Dataset):
             **kwargs,
         )
 
+
     def set_max_values(self):
+        """
+        Sets the maximum pixel values for each image in the dataset, which can be used for normalisation or as context
+        for the model during training.
+        """
         self.max_values = torch.stack([torch.max(img) for img in self.data])
 
+
     def transform_max_vals(self):
+        """
+        Applies a Box-Cox transformation to the maximum pixel values of the images in the dataset, which is passed to
+        the model as an additional context attribute.
+        
+        This transformation is useful for stabilising variance and making the data more normally distributed, which can
+        improve the performance of machine learning models.
+        """
         if not hasattr(self, "max_values"):
             self.set_max_values()
 
@@ -263,20 +250,32 @@ class ImagePathDataset(torch.utils.data.Dataset):
         self.box_cox_lambda = pt.lambdas_
         print(f"Max values transformed with Box-Cox transformation ({pt.lambdas_}).")
 
+
     def set_las_values(self, las_values):
+        """
+        Sets the LAS (Largest Angular Size) values for the images in the dataset, which can be used as an additional
+        context attribute for the model during training.
+
+        Parameters
+        ----------
+        las_values : array-like
+            An array-like object containing the LAS values for each image in the dataset.
+        """
         self.las_values = torch.tensor(las_values, dtype=torch.float32)
 
 
-class EvaluationDataset(ImagePathDataset):
-    def __init__(self, path, img_size=80, **kwargs):
-        super().__init__(path, transforms=EvalTransform(img_size), **kwargs)
-
-
-class TrainDataset(ImagePathDataset):
-    def __init__(self, path, img_size=80, **kwargs):
-        super().__init__(path, transforms=TrainTransform(img_size), **kwargs)
-
-
 class TrainDatasetNoScale(ImagePathDataset):
+    """
+    A subclass of ImagePathDataset that applies a specific set of transformations for training without scaling the
+    images.
+    
+    This is used for our program as we do not implement scaling to try and keep pixel values as close to the original as
+    possible, and to avoid losing information in the images.
+
+    Parameters
+    ----------
+    ImagePathDataset : _type_
+        _description_
+    """
     def __init__(self, path, img_size=80, **kwargs):
         super().__init__(path, transforms=TrainTransformNoScale(img_size), **kwargs)
