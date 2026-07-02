@@ -28,7 +28,7 @@ dependencies = [
 ]
 authors = [
   {name = "Ashley Parr", email = "amparr83@gmail.com"},
-  {name = "Luna Greenburg", email = "luna.alice.greenburg@gmail.com"}
+  {name = "Luna Greenberg", email = "luna.alice.greenberg@gmail.com"}
 ]
 description = "Diffusion for Radio-loud AGN Completeness Corrections"
 readme = "README.md"
