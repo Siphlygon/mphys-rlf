@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import rv_histogram
 
-from ..data.hardcastle_catalogue import HardcastleCatalogue, Source
-from . import paths
-from .logger import LoggingLevels, get_logger
+from .hardcastle_catalogue import HardcastleCatalogue, Source
+from ..utils import paths
+from ..utils.logger import LoggingLevels, get_logger
 
 
 class CatalogueDistribution:
