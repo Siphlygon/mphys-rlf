@@ -112,26 +112,6 @@ def load_fits_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
     return cat_data, header, columns
 
 
-def load_stripped_catalogue(file_path: Path = paths.STRIPPED_CATALOGUE_PATH) -> np.ndarray:
-    """
-    Loads the stripped Hardcastle catalogue information from a stripped HDF5 file and filters for resolved items.
-
-    Parameters
-    ----------
-    file_path : Path, optional
-        The path to the stripped Hardcastle catalogue HDF5 file, by default paths.STRIPPED_CATALOGUE_PATH
-
-    Returns
-    -------
-    np.ndarray
-        The data of the stripped Hardcastle catalogue as a numpy array.
-    """
-    with h5py.File(file_path, 'r') as f:
-        cat_data = f['cat_info'][:]
-
-    return cat_data
-
-
 def load_single_cutout(file: Path, logger: Logger) -> np.ndarray:
     """
     Loads a single cutout image from a FITS file and returns it as a numpy array. If the image is not of the
@@ -166,7 +146,6 @@ def load_single_cutout(file: Path, logger: Logger) -> np.ndarray:
 
 # ---------- SAVING DATA ----------
 def save_to_fits(cat_info: fits.FITS_rec,
-                 cat_header: fits.Header,
                  pixel_values: np.ndarray,
                  indices: np.ndarray,
                  logger: Logger,
@@ -178,8 +157,6 @@ def save_to_fits(cat_info: fits.FITS_rec,
     ----------
     cat_info : fits.FITS_rec
         The catalogue information.
-    cat_header : fits.Header
-        The header information for the catalogue.
     pixel_values : np.ndarray
         The list of pixel value arrays for each image.
     indices : np.ndarray
@@ -197,7 +174,7 @@ def save_to_fits(cat_info: fits.FITS_rec,
 
     # Create BinTableHDU with the catalogue information from the Hardcastle release
     logger.info("Creating BinTableHDU from Hardcastle catalogue...")
-    hdu_list.append(fits.BinTableHDU(data=cat_info, header=cat_header, name="HARDCASTLE_HEADERS"))
+    hdu_list.append(fits.BinTableHDU(data=cat_info, name="CATALOGUE_INFO"))
 
     # Create BinTableHDU with the indices linking the pixel values to the original catalogue information, to ensure
     # we can link back to the catalogue information for each image
