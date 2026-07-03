@@ -149,7 +149,7 @@ def save_to_fits(cat_info: fits.FITS_rec,
                  pixel_values: np.ndarray,
                  indices: np.ndarray,
                  logger: Logger,
-                 save_path: Path = paths.COMBINED_CUTOUTS_PATH_FITS):
+                 save_path: Path = paths.DATASET_PATH_FITS):
     """
     Saves a full dataset, combining catalogue information with pixel values, to a FITS file.
 
@@ -162,7 +162,7 @@ def save_to_fits(cat_info: fits.FITS_rec,
     indices : np.ndarray
         The list of indices corresponding to the pixel values, to link back to the original catalogue information.
     save_path : Path, optional
-        The path to save the FITS file, by default paths.COMBINED_CUTOUTS_PATH_FITS
+        The path to save the FITS file, by default paths.DATASET_PATH_FITS
     """
     logger.info(f"Saving Hardcastle catalogue to {save_path}")
     hdu_list = []
@@ -213,7 +213,7 @@ def save_to_hdf5(cat_info: fits.FITS_rec,
                  indices: np.ndarray,
                  logger: Logger,
                  cat_columns: fits.column.ColDefs | None = None,
-                 save_path: Path = paths.COMBINED_CUTOUTS_PATH_H5):
+                 save_path: Path = paths.DATASET_PATH_H5):
     """
     Saves a full dataset, combining catalogue information with pixel values, to a HDF5 file.
 
@@ -231,7 +231,7 @@ def save_to_hdf5(cat_info: fits.FITS_rec,
         The column definitions for the Hardcastle catalogue, by default None, which means no custom dtype will be built
         for the catalogue information.
     save_path : Path, optional
-        The path to save the HDF5 file, by default paths.COMBINED_CUTOUTS_PATH_H5
+        The path to save the HDF5 file, by default paths.DATASET_PATH_H5
     """
     if cat_columns is not None:
         logger.info("Creating custom dtype for Hardcastle header to save to HDF5...")
@@ -242,13 +242,14 @@ def save_to_hdf5(cat_info: fits.FITS_rec,
         struct_arr = np.empty(cat_info.shape, dtype=target_dtype)
         for name in cat_info.dtype.names:
             struct_arr[name] = cat_info[name]
+            logger.debug(f"Dtype for column {name}: {cat_info[name].dtype} -> {struct_arr[name].dtype}")
 
     logger.info(f"Saving Hardcastle catalogue to {save_path} in HDF5 format...")
     with h5py.File(save_path, 'w') as f:
-        f.create_dataset( 'images', data=pixel_values, compression='gzip', chunks=True )
+        f.create_dataset('images', data=pixel_values, compression='gzip', chunks=True)
         if cat_columns is not None:
-            f.create_dataset( 'cat_info', data=struct_arr, compression='gzip', chunks=True )
+            f.create_dataset('cat_info', data=struct_arr, compression='gzip', chunks=True)
         else:
-            f.create_dataset( 'cat_info', data=cat_info, compression='gzip', chunks=True )
-        f.create_dataset( 'indices', data=indices, compression='gzip', chunks=True )
+            f.create_dataset('cat_info', data=cat_info, compression='gzip', chunks=True)
+        f.create_dataset('indices', data=indices, compression='gzip', chunks=True)
     logger.info(f'Hardcastle catalogue with images saved to {save_path}.')

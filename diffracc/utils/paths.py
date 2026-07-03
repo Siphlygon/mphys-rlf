@@ -66,8 +66,8 @@ STRIPPED_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_m
 RAW_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
 
 CUTOUTS_PATH = FITS_PARENT / "dr2_cutouts_download"
-COMBINED_CUTOUTS_PATH_H5 = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.h5"
-COMBINED_CUTOUTS_PATH_FITS = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.fits"
+# COMBINED_CUTOUTS_PATH_H5 = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.h5"
+# COMBINED_CUTOUTS_PATH_FITS = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.fits"
 
 DATASET_PATH_H5 = DATASET_PARENT / "clean_hardcastle_catalogue.h5"
 DATASET_PATH_FITS = DATASET_PARENT / "clean_hardcastle_catalogue.fits"
