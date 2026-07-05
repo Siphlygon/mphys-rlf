@@ -29,6 +29,9 @@ PROGRAM_CONFIG = BASE_PARENT / "diffracc/config.ini"
 config = configparser.ConfigParser()
 config.read( PROGRAM_CONFIG )
 
+# PYBDSF config
+PYBDSF_CONFIG = BASE_PARENT / "diffracc/analysis/pybdsf_config.toml"
+
 # Model Names of models to download and copy
 MODEL_NAMES = [ "LOFAR_model", "FIRST_model" ]
 
@@ -78,7 +81,7 @@ DATASET_PATH_FITS = DATASET_PARENT / "clean_hardcastle_catalogue.fits"
 # LOFAR_RES_CAT = IMG_DATA_PARENT / "LOFAR" / "6-LoTSS_DR2-public-resolved_sources.csv"
 
 
-def cast_to_Path(path):
+def cast_to_path(path):
     """
     Cast a string object to a Path object. If the input is already a Path object,
     return it as is. If not Path or str, raise a TypeError.
