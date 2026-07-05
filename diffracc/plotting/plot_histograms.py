@@ -181,7 +181,7 @@ class HistogramPlotter:
             else:
                 log_analyzer = LogAnalyzer( subdir )
                 normalized_model_fluxes = log_analyzer.for_each( la.get_model_flux,
-                                                                progress_bar_desc=f'{subdir} fluxes...' )
+                                                                progress_bar_desc=f'{subdir} fluxes...' ).results
                 normalized_model_fluxes = np.array( normalized_model_fluxes )
                 np.save( fluxes_path, normalized_model_fluxes )
 
@@ -198,7 +198,7 @@ class HistogramPlotter:
                     rf = RecursiveFileAnalyzer( paths.FITS_PARENT / subdir )
                     # todo: add progress_bar_desc to run_pipeline
                     # progress_bar_desc=f'{subdir} data...' )
-                    data = np.array( rf.run_pipeline( function = get_fits_primaryhdu_data ))
+                    data = np.array( rf.run_pipeline( function = get_fits_primaryhdu_data ).results )
                     np.save( data_path, data )
 
             means = np.mean( data, axis=(1,2) )

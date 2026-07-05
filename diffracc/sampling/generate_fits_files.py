@@ -81,7 +81,7 @@ def sample( args : argparse.Namespace ):
     generated_images_dir = paths.FITS_PARENT / args.generated_subdir
     if generated_images_dir.exists():
         analyzer = RecursiveFileAnalyzer( generated_images_dir )
-        initial_count = len( analyzer.get_unwrapped_list( None, r'.*?image(\d+)\.fits$', (bin_start, bin_end) ) )
+        initial_count = len( analyzer.get_unwrapped_list( None, r'.*?image(\d+)\.fits$', (bin_start, bin_end) ).paths )
     n_samples_in_bin = bin_end - bin_start
     logger.debug( 'Got initial count %i, requested samples in this bin %i', initial_count, n_samples_in_bin )
 

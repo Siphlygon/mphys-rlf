@@ -193,7 +193,7 @@ class CutoutDownloader:
         r.close()
 
 
-    def _download_one(self, args : tuple[int, float, float, Path]) -> tuple[int, str | None]:
+    def _download_one(self, args: tuple[int, float, float, Path]) -> tuple[int, str | None]:
         """
         Downloads a single cutout based on the provided RA and DEC positions, and saves it to the specified path. If the
         cutout file already exists, it skips the download. If the download fails, it returns an error message.
@@ -225,8 +225,8 @@ class CutoutDownloader:
 
 
     def download_all_cutouts(self,
-                             directory_path : Path = paths.CUTOUTS_PATH,
-                             custom_positions : list[tuple[float, float]] | None = None):
+                             directory_path: Path = paths.CUTOUTS_PATH,
+                             custom_positions: list[tuple[float, float]] | None = None):
         """
         Downloads cutouts for all positions in the Hardcastle catalogue, or for a custom list of positions if provided.
 
@@ -320,7 +320,7 @@ class CutoutDownloader:
 
 
     def verify_downloads(self,
-                         download_path : Path = paths.CUTOUTS_PATH):
+                         download_path: Path = paths.CUTOUTS_PATH):
         """
         Verifies the completeness of downloaded cutout files in the specified download path. It checks for missing or
         corrupted files and re-downloads them if necessary.
@@ -331,8 +331,7 @@ class CutoutDownloader:
             The path to the directory containing the downloaded cutout files, by default paths.CUTOUTS_PATH
         """
         self.logger.info('Starting verification of downloaded cutouts...')
-        downloader = CutoutDownloader()
-        hdc_positions = downloader._read_positions()
+        hdc_positions = self._read_positions()
         pos_count = len(hdc_positions)
         files_to_redownload = []
 
@@ -349,7 +348,7 @@ class CutoutDownloader:
 
         # Now test if they can be loaded
         self.logger.info(f"Testing loadability of {len(cutout_paths)} cutout files...")
-        values = rfa.run_pipeline(function=self._test_load_single_cutout, file_paths_override=cutout_paths)
+        values = rfa.run_pipeline(function=self._test_load_single_cutout, file_paths_override=cutout_paths).results
         values = np.array(values, dtype=np.bool_)
         num_corrupted = np.sum(~values)
         if num_corrupted > 0:
@@ -366,7 +365,7 @@ class CutoutDownloader:
                 ra, dec = hdc_positions[pos_num]
                 requested_positions.append([ra, dec])
             self.logger.info('Re-downloading missing cutout files...')
-            downloader.download_all_cutouts(custom_positions=requested_positions)
+            self.download_all_cutouts(custom_positions=requested_positions)
             self.logger.info("Finished re-downloading. Note that some files from the LOFAR API will always be missing.")
             # Count the number of files present in dr2_cutouts directly
             cpt = sum(len(files) for r, d, files in os.walk(download_path))

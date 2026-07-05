@@ -411,18 +411,18 @@ class AngularSizeFinder:
                 ang_sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
             except Exception as e:
                 raise Exception(f"Failed to read {output_file}. Please check the file and try again: {e}") from e
-            _, fits_indices = self.rfa.get_unwrapped_list(path=fits_dir, pattern=pattern, return_nums=True)
+            fits_indices = self.rfa.get_unwrapped_list(path=fits_dir,
+                                                       pattern=pattern,
+                                                       return_nums=True).numbers
 
             return np.array(fits_indices), ang_sizes
 
         # Run the pipeline to extract component data from each FITS file,
-        if fits_dir:
-            components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
-                                                                  root_dir=fits_dir,
-                                                                  pattern=pattern, return_nums=True, mode="file")
-        else:
-            components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
-                                                                  pattern=pattern, return_nums=True, mode="file")
+        components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
+                                                              root_dir=fits_dir if fits_dir else self.root_dir,
+                                                              pattern=pattern,
+                                                              return_nums=True,
+                                                              mode="file")
 
         # Estimate the angular size of each image based on the component data
         ang_sizes = []

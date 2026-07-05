@@ -340,9 +340,9 @@ class ImageDataArrays:
         log_analyzer = la.LogAnalyzer( subdir )
         normalized_model_fluxes, log_analyzer_inds = log_analyzer.for_each( la.get_model_flux, return_nums=True )
         normalized_model_fluxes = np.array( normalized_model_fluxes )
-        sigma_clipped_means = np.array( log_analyzer.for_each( la.get_sigma_clipped_mean ) ) / 1000 #normalized Jy units
-        sigma_clipped_rmsds = np.array( log_analyzer.for_each( la.get_sigma_clipped_rms ) ) / 1000 #normalized Jy units
-        unclipped_rmsds = np.array( log_analyzer.for_each( la.get_rms ) )
+        sigma_clipped_means = np.array( log_analyzer.for_each( la.get_sigma_clipped_mean ).results ) / 1000 #normalized Jy units
+        sigma_clipped_rmsds = np.array( log_analyzer.for_each( la.get_sigma_clipped_rms ).results ) / 1000 #normalized Jy units
+        unclipped_rmsds = np.array( log_analyzer.for_each( la.get_rms ).results )
         log_analyzer_values = [ normalized_model_fluxes, sigma_clipped_means, sigma_clipped_rmsds, unclipped_rmsds ]
 
         return log_analyzer_values, np.array( log_analyzer_inds )
@@ -450,7 +450,7 @@ class ImageDataArrays:
 
         peak_fluxes_transformed = np.array( data_files.run_pipeline( function=self.get_fits_primaryhdu_header,
                                                                     pattern=r'.*?\D+(\d+)\.fits$',
-                                                                    key='FXSCLD') )
+                                                                    key='FXSCLD').results )
 
         data_values = [ images, peak_fluxes_transformed ]
 

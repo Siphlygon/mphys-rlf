@@ -132,18 +132,21 @@ def plot_completeness(config_str: str,
             #                 paths.PYBDSF_EXPORT_IMAGE_PARENT / folder_name / "gaus_model",
             #                 paths.PYBDSF_LOG_PARENT / folder_name]
 
-            # Get model images 
+            # Get model images
             def read_model_images(path: Path):
                 return fits.getdata(path, 0)
 
             rfa = RecursiveFileAnalyzer(paths_to_use[0])
 
-            image_files, mi_indices = rfa.get_unwrapped_list(paths_to_use[1],
-                                                             pattern=r'.*?\D+(\d+)\.fits$', return_nums=True)
-            fits_files, fi_indices = rfa.get_unwrapped_list(paths_to_use[0],
-                                                            pattern=r'.*?\D+(\d+)\.fits$', return_nums=True)
-            log_files, mf_indices = rfa.get_unwrapped_list(paths_to_use[2],
-                                                           pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$', return_nums=True)
+            image_files, mi_indices = rfa.get_unwrapped_list(path=paths_to_use[1],
+                                                             pattern=r'.*?\D+(\d+)\.fits$',
+                                                             return_nums=True)
+            fits_files, fi_indices = rfa.get_unwrapped_list(path=paths_to_use[0],
+                                                            pattern=r'.*?\D+(\d+)\.fits$',
+                                                            return_nums=True)
+            log_files, mf_indices = rfa.get_unwrapped_list(path=paths_to_use[2],
+                                                           pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
+                                                           return_nums=True)
 
             image_files_pt1 = image_files[:len(image_files) // 2]
             image_files_pt2 = image_files[len(image_files) // 2:]
@@ -158,26 +161,26 @@ def plot_completeness(config_str: str,
                 return get_fits_primaryhdu_header( path, 'FXSCLD' )
 
             peak_fluxes_tr_pt1 = rfa.run_pipeline( function=get_fxscld,
-                                            mode="file",
-                                            file_paths_override=fits_files_pt1,
-                                            show_progress=True)
+                                                  mode="file",
+                                                  file_paths_override=fits_files_pt1,
+                                                  show_progress=True).results
 
             print( peak_fluxes_tr_pt1 )
             peak_fluxes_tr_pt2 = rfa.run_pipeline( function=get_fxscld,
-                                            mode="file",
-                                            file_paths_override=fits_files_pt2,
-                                            show_progress=True)
+                                                  mode="file",
+                                                  file_paths_override=fits_files_pt2,
+                                                  show_progress=True).results
             print( peak_fluxes_tr_pt2 )
 
             print("Getting model images...")
             model_images_pt1 = rfa.run_pipeline(function=read_model_images,
-                                            mode="file",
-                                            file_paths_override=image_files_pt1,
-                                            show_progress=True)
+                                                mode="file",
+                                                file_paths_override=image_files_pt1,
+                                                show_progress=True).results
             model_images_pt2 = rfa.run_pipeline(function=read_model_images,
-                                            mode="file",
-                                            file_paths_override=image_files_pt2,
-                                            show_progress=True)
+                                                mode="file",
+                                                file_paths_override=image_files_pt2,
+                                                show_progress=True).results
 
             pt = PeakFluxPowerTransformer( 'nobody_cares', maxvals=maxvals )
             peak_fluxes_pt1 = pt.inverse_transform( np.array( peak_fluxes_tr_pt1 ) )
@@ -199,13 +202,13 @@ def plot_completeness(config_str: str,
             # Get model fluxes
             print("Getting model fluxes...")
             model_fluxes_pt1 = rfa.run_pipeline(function=get_model_flux,
-                                            mode="file",
-                                            file_paths_override=log_files_pt1,
-                                            show_progress=True)
+                                                mode="file",
+                                                file_paths_override=log_files_pt1,
+                                                show_progress=True).results
             model_fluxes_pt2 = rfa.run_pipeline(function=get_model_flux,
-                                            mode="file",
-                                            file_paths_override=log_files_pt2,
-                                            show_progress=True)
+                                                mode="file",
+                                                file_paths_override=log_files_pt2,
+                                                show_progress=True).results
             model_fluxes = np.concatenate([model_fluxes_pt1, model_fluxes_pt2])
             model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
 
