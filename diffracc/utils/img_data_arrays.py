@@ -2,12 +2,10 @@ import argparse
 import logging
 from dataclasses import dataclass
 from functools import reduce
-from pathlib import Path
 from typing import Literal
 
 import h5py
 import numpy as np
-from astropy.io import fits
 from tqdm import tqdm
 
 from ..analysis.log_analyzer import get_model_flux, get_rms, get_sigma_clipped_mean, get_sigma_clipped_rms
@@ -16,7 +14,7 @@ from ..utils import paths
 from .distributed import DistributedUtils
 from .logger import get_logger
 from .power_transform import PeakFluxPowerTransformer
-from .recursive_file_analyzer import RecursiveFileAnalyzer
+from .recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_data, get_fits_primaryhdu_header
 
 
 @dataclass
@@ -234,53 +232,6 @@ class ImageDataArrays:
             self.logger.debug( 'Done! All image data arrays loaded from cache; not re-saving.' )
 
 
-    # ---------- UTILITY METHODS ----------
-    def get_fits_primaryhdu_data(self, path: Path ) -> np.ndarray:
-        """
-        Get the data from the primary HDU of a FITS file.
-
-        Parameters
-        ----------
-        path : Path
-            The path to the FITS file.
-
-        Returns
-        -------
-        np.ndarray
-            The data from the primary HDU of the FITS file.
-        """
-        with fits.open( str( path ), memmap=False ) as hdul:
-            data = hdul[ 0 ].data  # type: ignore
-        # Get rid of leading 1s in shape, e.g. (1,1,n,n) -> (n,n), but preserve 2 dimensions for single pixel images
-        while ( len( data.shape ) > 2 ) and ( data.shape[ 0 ] == 1 ):
-            data = data[ 0 ]
-        return data
-
-
-    def get_fits_primaryhdu_header(self, path: Path, key: str | None = None ) -> np.ndarray | fits.Header:
-        """
-        Get the header from the primary HDU of a FITS file.
-
-        Parameters
-        ----------
-        path : Path
-            The path to the FITS file.
-        key : str | None, optional
-            The key for the header value to retrieve, by default None
-
-        Returns
-        -------
-        np.ndarray | fits.Header
-            The header from the primary HDU of the FITS file.
-        """
-        with fits.open( str( path ), memmap=False ) as hdul:
-            if key is not None:
-                header = hdul[ 0 ].header[ key ]  # type: ignore
-            else:
-                header = hdul[ 0 ].header  # type: ignore
-        return header
-
-
     # ---------- DATA EXTRACTION ----------
     def load_from_cache(self,
                         subdir: str,
@@ -373,7 +324,7 @@ class ImageDataArrays:
             A tuple containing the residual arrays and their corresponding indexes.
         """
         residual_files = RecursiveFileAnalyzer( paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
-        residual_images, residual_indexes = residual_files.run_pipeline( function=self.get_fits_primaryhdu_data,
+        residual_images, residual_indexes = residual_files.run_pipeline( function=get_fits_primaryhdu_data,
                                                                          pattern=r'.*?\D+(\d+)\.fits$',
                                                                          return_nums=True )
         residual_values = [ residual_images ]
@@ -398,7 +349,7 @@ class ImageDataArrays:
             A tuple containing the model arrays and their corresponding indexes.
         """
         model_files = RecursiveFileAnalyzer( paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model' )
-        model_images, model_indexes = model_files.run_pipeline( function=self.get_fits_primaryhdu_data,
+        model_images, model_indexes = model_files.run_pipeline( function=get_fits_primaryhdu_data,
                                                                 pattern=r'.*?\D+(\d+)\.fits$',
                                                                 return_nums=True )
         model_values = [ model_images ]
@@ -452,11 +403,11 @@ class ImageDataArrays:
         """
         self.logger.debug( f'Not using dataset h5 for {subdir}' )
         data_files = RecursiveFileAnalyzer( paths.FITS_PARENT / subdir )
-        images, data_inds = data_files.run_pipeline( function=self.get_fits_primaryhdu_data,
+        images, data_inds = data_files.run_pipeline( function=get_fits_primaryhdu_data,
                                                      pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
         images = np.asarray( images )
 
-        peak_fluxes_transformed = np.array( data_files.run_pipeline( function=self.get_fits_primaryhdu_header,
+        peak_fluxes_transformed = np.array( data_files.run_pipeline( function=get_fits_primaryhdu_header,
                                                                      pattern=r'.*?\D+(\d+)\.fits$',
                                                                      key='FXSCLD').results )
 
