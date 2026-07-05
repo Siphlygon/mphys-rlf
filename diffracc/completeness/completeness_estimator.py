@@ -12,8 +12,8 @@ import scipy.signal
 from scipy.optimize import curve_fit
 from tqdm import tqdm
 
+from ..data.catalogue_distributions import RMSDistribution
 from ..utils import paths
-from ..utils.catalogue_dist import RMSDistribution
 from ..utils.functions import sigmoid
 from ..utils.img_data_arrays import ImageDataArrays, SubdirData
 from ..utils.logger import LoggingLevels, get_logger
@@ -25,9 +25,9 @@ class CompletenessEstimator:
     detectable based on a peak-flux limit.
     """
     def __init__(self,
-                 config_str : str,
-                 which_dataset : str | None = "GENERATED_SUBDIR",
-                 override_data : bool = False):
+                 config_str: str,
+                 which_dataset: str | None = "GENERATED_SUBDIR",
+                 override_data: bool = False):
         """
         A class to estimate the completeness of the dataset by creating mock images with noise and checking if they are
         detectable based on a peak-flux limit. 
@@ -43,7 +43,7 @@ class CompletenessEstimator:
         """
         self.logger = get_logger("CompletenessEstimator", LoggingLevels.DEBUG.value)
 
-        assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"],(
+        assert which_dataset in ["GENERATED_SUBDIR", "DATASET_SUBDIR"], (
             "which_dataset must be either 'GENERATED_SUBDIR' or 'DATASET_SUBDIR'")
         self.which_dataset = which_dataset.split("_")[0].lower()  # "generated" or "dataset"
 
@@ -71,13 +71,13 @@ class CompletenessEstimator:
 
     # ---------- FITTING FUNCTION ----------
     def _fit_function(self,
-                     bin_centers : np.ndarray,
-                     completeness : np.ndarray,
-                     yerr : np.ndarray,
+                     bin_centers: np.ndarray,
+                     completeness: np.ndarray,
+                     yerr: np.ndarray,
                      function: Callable = sigmoid,
-                     initial_guess : list[float] | np.ndarray | None = None,
-                     output_file : str | Path | None = None,
-                     show_progress : bool = True,
+                     initial_guess: list[float] | np.ndarray | None = None,
+                     output_file: str | Path | None = None,
+                     show_progress: bool = True,
                      **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """
         Fit a function to a completeness curve and return the fitted parameters and covariance matrix.
@@ -209,10 +209,10 @@ class CompletenessEstimator:
     def plot_completeness(self,
                           bin_centers: np.ndarray,
                           completeness: np.ndarray,
-                          yerr : np.ndarray,
+                          yerr: np.ndarray,
                           function: Callable = sigmoid,
-                          popt : list[float] | np.ndarray | None = None,
-                          save_name : str | None = None):
+                          popt: list[float] | np.ndarray | None = None,
+                          save_name: str | None = None):
         """
         Plot the completeness data points and the fitted function.
 
@@ -258,10 +258,9 @@ class CompletenessEstimator:
 
     # ---------- COMPLETENESS CALCULATION ----------
     def _create_beam_corr_noise(self,
-                               filter_kernel: np.ndarray,
-                               rms : float | np.ndarray = 95e-3,
-                               shape: tuple[int, int, int] = (5, 80, 80),
-                               ) -> np.ndarray:
+                                filter_kernel: np.ndarray,
+                                rms: float | np.ndarray = 95e-3,
+                                shape: tuple[int, int, int] = (5, 80, 80)) -> np.ndarray:
         """
         Create a 2D patch of Gaussian noise with given RMS.
 
@@ -372,8 +371,8 @@ class CompletenessEstimator:
 
 
     def _compute_completeness_per_bin(self,
-                             int_flux_bins : np.ndarray,
-                             mock_sources : pd.DataFrame,
+                             int_flux_bins: np.ndarray,
+                             mock_sources: pd.DataFrame,
                              show_progress: bool = True) -> tuple[np.ndarray, np.ndarray]:
         """
         Computes the completeness by calculating the fraction of detectable sources in every integrated flux bin. Also
@@ -439,12 +438,12 @@ class CompletenessEstimator:
 
     def estimate_completeness(self,
                               function: Callable = sigmoid,
-                              initial_guess : list[float] | np.ndarray | None = None,
-                              comp_output_file : str | Path | None = None,
-                              func_output_file : str | Path | None = None,
-                              plot_completeness : bool = True,
-                              figure_save_name : str | None = None,
-                              show_progress : bool = True
+                              initial_guess: list[float] | np.ndarray | None = None,
+                              comp_output_file: str | Path | None = None,
+                              func_output_file: str | Path | None = None,
+                              plot_completeness: bool = True,
+                              figure_save_name: str | None = None,
+                              show_progress: bool = True
                               ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Estimate a completeness curve for a specified dataset.

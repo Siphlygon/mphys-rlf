@@ -21,11 +21,11 @@ class SizeBinnedCompleteness(CompletenessEstimator):
     source size.
     """
     def __init__(self,
-                 config_str : str,
-                 which_dataset : str = "GENERATED_SUBDIR",
-                 override_data : bool = False,
-                 paths_to_use : list[Path] | None = None,
-                 output_file : str | Path | None = None):
+                 config_str: str,
+                 which_dataset: str = "GENERATED_SUBDIR",
+                 override_data: bool = False,
+                 paths_to_use: list[Path] | None = None,
+                 output_file: str | Path | None = None):
         """
         A class to generate completeness curves binned by angular size, to investigate how completeness varies with
         source size.
@@ -125,8 +125,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
         self.max_bins = len(self.size_bins_edges) - 1
 
 
-    def estimate_size_binned_completeness(self,
-                                          show_progress: bool = True) \
+    def estimate_size_binned_completeness(self, show_progress: bool = True) \
                                             -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """
         Estimate completeness curves binned by angular size.

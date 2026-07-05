@@ -48,7 +48,7 @@ class MakeShape():
 
         # Create an ellipse for each component in the list, and take the union of these ellipses to form a shape
         # representing the source
-        ellist = self.create_ellipse_list(clist)
+        ellist = self._create_ellipse_list(clist)
         self.combined_polygon = unary_union(ellist)
 
         # Calculate the convex hull of the combined shape, and find the maximum distance between any two points on the
@@ -56,17 +56,17 @@ class MakeShape():
         self.hull = self.combined_polygon.convex_hull
         hull_points = np.asarray(self.hull.exterior.coords)  # type: ignore
 
-        self.best_coords, self.mdist2 = self.find_furthest_points(hull_points)
+        self.best_coords, self.mdist2 = self._find_furthest_points(hull_points)
         self.hull_points = hull_points
 
 
-    def ellipse(self,
-                x0 : float,
-                y0 : float,
-                a : float,
-                b : float,
-                pa : float,
-                n : int = 200) -> Polygon:
+    def _ellipse(self,
+                 x0: float,
+                 y0: float,
+                 a: float,
+                 b: float,
+                 pa: float,
+                 n: int = 200) -> Polygon:
         """
         A function to create an ellipse given its center (x0, y0), semi-major axis a, semi-minor axis b, and position
         angle pa. The function returns a Polygon object representing the ellipse.
@@ -109,7 +109,7 @@ class MakeShape():
         return Polygon(p)
 
 
-    def create_ellipse_list(self, clist : pd.DataFrame) -> list[Polygon]:
+    def _create_ellipse_list(self, clist: pd.DataFrame) -> list[Polygon]:
         """
         A function to create a list of Polygon objects representing the ellipses for each component in the component
         list.
@@ -143,13 +143,13 @@ class MakeShape():
 
             # Add a small buffer (0.1 arcseconds) to the major and minor axes to ensure that the ellipses overlap and
             # form a single connected shape, even if the components are very close together
-            new_polygon = self.ellipse(x, y, dc_maj_n + 0.1, dc_min_n + 0.1, component[1]['PA'])
+            new_polygon = self._ellipse(x, y, dc_maj_n + 0.1, dc_min_n + 0.1, component[1]['PA'])
             ellist.append(new_polygon)
 
         return ellist
 
 
-    def find_furthest_points(self, points: np.ndarray) -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
+    def _find_furthest_points(self, points: np.ndarray) -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
         """
         A function to find the pair of points in a given set of points that are furthest apart, and return these points
         as a tuple.
@@ -289,7 +289,7 @@ class AngularSizeFinder:
 
 
     # ---------- ASSEMBLING SIZE ESTIMATES ----------
-    def extract_component_data(self, file_path: Path) -> list[tuple]:
+    def _extract_component_data(self, file_path: Path) -> list[tuple]:
         """
         Process a single FITS file to extract the component data for estimating the angular size of the source.
         
@@ -310,10 +310,10 @@ class AngularSizeFinder:
             for row in data:
                 components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
 
-        return self.filter_components(components)
+        return self._filter_components(components)
 
 
-    def filter_components(self, components: list[tuple]) -> list[tuple]:
+    def _filter_components(self, components: list[tuple]) -> list[tuple]:
         """
         Filter the components based on their fractional total flux, keeping only those components that contribute to a
         specified fraction of the total flux of the source.
@@ -352,7 +352,7 @@ class AngularSizeFinder:
         return filtered_components
 
 
-    def fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
+    def _fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
         """
         Create a shape representing the source from the filtered components and estimate the angular size of the source
         based on this shape.
@@ -381,9 +381,9 @@ class AngularSizeFinder:
 
     # ---------- RUNNING THE PIPELINE ----------
     def estimate_angular_sizes(self,
-            fits_dir : str | Path | None = None,
-            pattern : str = r'.*?\D+(\d+)\.fits$',
-            output_file : str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
+                               fits_dir: str | Path | None = None,
+                               pattern: str = r'.*?\D+(\d+)\.fits$',
+                               output_file: str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
         A method to estimate the angular sizes of sources from the FITS files in the root directory, and optionally save
         the results to a CSV file.
@@ -417,11 +417,11 @@ class AngularSizeFinder:
 
         # Run the pipeline to extract component data from each FITS file,
         if fits_dir:
-            components_list, fits_indices = self.rfa.run_pipeline(function=self.extract_component_data,
+            components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
                                                                   root_dir=fits_dir,
                                                                   pattern=pattern, return_nums=True, mode="file")
         else:
-            components_list, fits_indices = self.rfa.run_pipeline(function=self.extract_component_data,
+            components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
                                                                   pattern=pattern, return_nums=True, mode="file")
 
         # Estimate the angular size of each image based on the component data
@@ -431,7 +431,7 @@ class AngularSizeFinder:
             if len(components) == 1:
                 ang_sizes.append(2 * components[0][3] * 3600)
             else:
-                angular_size = self.fit_shape_and_estimate_size(components)
+                angular_size = self._fit_shape_and_estimate_size(components)
                 ang_sizes.append(angular_size)
 
         # Save the estimated angular sizes to a CSV file if an output file name is provided
