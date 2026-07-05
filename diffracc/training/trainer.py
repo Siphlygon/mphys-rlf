@@ -157,7 +157,7 @@ class DiffusionTrainer:
             self.primary = self.global_rank == 0
             self.logger.info( "Distributed" )
         except KeyError as e:
-            self.logger.info(f"Falling back to single-node: {e}")  
+            self.logger.info(f"Falling back to single-node: {e}")
             device_ids_by_space = visible_gpus_by_space()
             self.device = device or torch.device("cuda", device_ids_by_space[0])
             self.distributed = False
@@ -186,14 +186,22 @@ class DiffusionTrainer:
 
         # Initialize parallel training
         if self.distributed:
-            self.logger.info(f"Parallel training on multiple GPUs - local rank {self.local_rank}, " 
+            self.logger.info(f"Parallel training on multiple GPUs - local rank {self.local_rank}, "
                              f"global rank {self.global_rank}")
             self.model.to(f"cuda: {self.local_rank}")  # Necessary for DataParallel
             self.model = DistributedDataParallel(self.model, device_ids=[self.local_rank])
             self.inner_model = self.model.module
 
-        # EMA Model is initialized after 500 iterations in the training loop
-        self.ema_model = None
+        # EMA Model is initialized after 500 iterations in the training loop, unless we are
+        # picking up an existing run, in which case it must exist now so `load_state` can
+        # restore its weights.
+        if pickup:
+            self.ema_model = torch.optim.swa_utils.AveragedModel(
+                self.inner_model,
+                avg_fn=get_ema_avg_fn(self.config.ema_rate),
+            )
+        else:
+            self.ema_model = None
 
         # Initialize power-ema models
         # see Karras+23, arXiv:2312.02696
@@ -324,7 +332,7 @@ class DiffusionTrainer:
             self.load_optimizer(self.config.optimizer_file)
 
 
-    def read_parameters(self, key: str) -> Any:
+    def read_parameters(self, key: str, path: str | Path | None = None) -> Any:
         """
         Read and return the parameters dict associated with the given key from the parameters file.
 
@@ -332,33 +340,48 @@ class DiffusionTrainer:
         ----------
         key : str
             The key to look up in the parameters file.
+        path : str or Path, optional
+            Path to the checkpoint file to read from. Defaults to the output directory's parameters
+            file (`self.OM.parameters_file`) if not specified.
 
         Returns
         -------
         Any
             The value associated with the given key in the parameters file.
         """
-        return torch.load(self.OM.parameters_file, map_location="cpu")[key]
+        path = path or self.OM.parameters_file
+        # weights_only=True avoids executing arbitrary pickled code embedded in the checkpoint.
+        return torch.load(path, map_location="cpu", weights_only=True)[key]
 
 
-    def load_optimizer(self):
+    def load_optimizer(self, path: str | Path | None = None):
         """
-        Load the optimizer state from the optimizer file specified in the configuration.
+        Load the optimizer state dict from the given checkpoint file.
+
+        Parameters
+        ----------
+        path : str or Path, optional
+            Path to the checkpoint file to load the optimizer state from. Defaults to the output
+            directory's parameters file if not specified (used when resuming a run via `load_state`).
         """
-        self.optimizer.load_state_dict(self.read_parameters("optimizer"))
+        self.optimizer.load_state_dict(self.read_parameters("optimizer", path=path))
 
 
     def load_state(self):
         """
         Load the model, EMA model, optimizer and PowerEMA models (if used) from the output directory.
         """
-        self.inner_model.load_state_dict(self.read_parameters("model"))
-        self.ema_model.load_state_dict(self.read_parameters("ema_model"))
-        self.load_optimizer()
+        # Read the checkpoint once and reuse it for every key, instead of re-deserializing the
+        # whole file from disk for each of model / ema_model / optimizer / power-EMA models.
+        checkpoint = torch.load(self.OM.parameters_file, map_location="cpu", weights_only=True)
+
+        self.inner_model.load_state_dict(checkpoint["model"])
+        self.ema_model.load_state_dict(checkpoint["ema_model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
 
         if self.power_ema:
             for gamma, model in zip(self.power_ema_gammas, self.power_ema_models):
-                model.load_state_dict(self.read_parameters(f"power_ema_{gamma}"))
+                model.load_state_dict(checkpoint[f"power_ema_{gamma}"])
 
 
     def is_primary(self) -> bool:
@@ -424,10 +447,15 @@ class DiffusionTrainer:
 
         # Initialise wandb logging
         if self.is_primary():
-            wandb.login(key=os.environ.get("WANDB_KEY"))
+            wandb_key = os.environ.get("WANDB_KEY")
+            if not wandb_key:
+                raise RuntimeError(
+                    "WANDB_KEY environment variable is not set. Set it before starting training."
+                )
+            wandb.login(key=wandb_key)
             wandb.init(
-                entity="amparr-stellarium",
-                project="diffusion-radio-galaxies",
+                entity=getattr(self.config, "wandb_entity", None),
+                project=getattr(self.config, "wandb_project", "diffusion-radio-galaxies"),
                 config=self.config
             )
             self.logger.info("Initialised Weights & Biases logging.")
@@ -508,7 +536,8 @@ class DiffusionTrainer:
         if isinstance(batch, list):
             match len(batch):
                 case 2:
-                    if self.inner_model.model.context_dim:
+                    context_dim = getattr(getattr(self.inner_model, "model", None), "context_dim", None)
+                    if context_dim:
                         img, context = batch
                     else:
                         img, labels = batch
@@ -592,9 +621,16 @@ class DiffusionTrainer:
         """
         validate_ema = validate_ema or self.validate_ema
 
+        if validate_ema and self.ema_model is None:
+            raise RuntimeError(
+                "Cannot validate with the EMA model before it has been initialized "
+                "(EMA starts updating after min(val_every, 500) iterations)."
+            )
+
         # Set model to evaluation mode
         self.model.eval()
-        self.ema_model.eval()
+        if self.ema_model is not None:
+            self.ema_model.eval()
 
         # Calculate loss
         with torch.no_grad():
@@ -619,7 +655,8 @@ class DiffusionTrainer:
 
         # Set model back to training mode
         self.model.train()
-        self.ema_model.train()
+        if self.ema_model is not None:
+            self.ema_model.train()
 
         return output
 
