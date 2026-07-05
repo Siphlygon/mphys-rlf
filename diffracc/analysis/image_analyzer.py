@@ -11,17 +11,19 @@ specifying the whole path for two different analyzers
 """
 import multiprocessing.pool
 import os
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
 
 import bdsf
 import bdsf.image
 import numpy as np
+import toml
 from astropy.io import fits
 
 from ..utils import paths
 from ..utils.distributed import DistributedUtils
 from ..utils.logger import LoggingLevels
-from ..utils.paths import cast_to_Path
+from ..utils.paths import cast_to_path
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
@@ -58,21 +60,83 @@ class NonDaemonPool(multiprocessing.pool.Pool):
 
 
 
+@dataclass(frozen=True)
+class ProcessArgs:
+    """
+    A dataclass to hold the arguments for the process_image function in PyBDSF.
+    """
+    # Default config
+    beam: tuple[float, float, float] = (0.00166667, 0.00166667, 0.0)
+    frequency: float = 144e6
+    mean_map: str = "zero"
+    rms_map: bool = True
+    rms_box: tuple[int, int] = (60, 15)
+    thresh: str = "hard"
+    thresh_isl: float = 4.0
+    thresh_pix: float = 5.0
+
+    # Adaptive box config
+    adaptive_rms_box: bool = True
+    adaptive_thresh: int = 150
+    rms_box_bright: tuple[int, int] = (60, 15)
+
+    # Advanced config
+    advanced_opts: bool = True
+    group_by_isl: bool = False
+    group_tol: int = 10
+    ini_method: str = "intensity"
+
+    # A trous config
+    atrous_do: bool = True
+    atrous_jmax: int = 4
+
+
+    @classmethod
+    def from_toml(cls, toml_path: str | Path) -> "ProcessArgs":
+        """
+        Create a ProcessArgs object from a TOML file.
+
+        Parameters
+        ----------
+        toml_path : str | Path
+            The path to the TOML file.
+
+        Returns
+        -------
+        ProcessArgs
+            A ProcessArgs object with the parameters from the TOML file.
+        """
+        toml_path = cast_to_path(toml_path)
+        if not toml_path.exists():
+            raise FileNotFoundError(f"TOML file {toml_path} does not exist")
+
+        with open(toml_path, 'r', encoding='utf-8') as f:
+            config = toml.load(f)
+
+        return cls(**config.get("default", {}),
+                   **config.get("adaptivebox", {}),
+                   **config.get("advanced", {}),
+                   **config.get("atrous", {}))
+
+
+    def to_dict(self) -> dict:
+        """
+        Convert the ProcessArgs object to a dictionary.
+
+        Returns
+        -------
+        dict
+            A dictionary representation of the ProcessArgs object.
+        """
+        return asdict(self)
+
+
+
+
 class ImageAnalyzer(RecursiveFileAnalyzer):
     """
     A class to analyze images of radio galaxies using PyBDSF, with LOFAR defaults
     """
-
-    LOFAR_process_arg_defaults = {
-        "process_beam": (0.00166667, 0.00166667, 0.0),
-        "process_thresh_isl": 5,
-        "process_thresh_pix": 0.5,
-        "process_mean_map": "const",
-        "process_rms_map": True,
-        "process_thresh": "hard",
-        "process_frequency": 144e6
-    }
-
     def __init__( self,
                   subdir: str | PurePath,
                   fits_input_dir: str | Path = paths.FITS_PARENT,
@@ -80,7 +144,7 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
                   catalog_dir: str | Path = paths.PYBDSF_CATALOG_PARENT,
                   img_dir: str | Path = paths.PYBDSF_EXPORT_IMAGE_PARENT,
                   write_catalog: bool = True,
-                  export_images: list[ str ] | None = None,
+                  export_images: list[str] | None = None,
                   log_level: int = LoggingLevels.INFO.value,
                   **kwargs: dict ):
         """
@@ -135,13 +199,16 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
             For PyBDSF, beam and frequency must be present.
         """
         #Ensure all types are paths
-        self.log_dir = cast_to_Path( log_dir )
-        self.catalog_dir = cast_to_Path( catalog_dir )
-        self.img_dir = cast_to_Path( img_dir )
-        self.fits_input_dir = cast_to_Path( fits_input_dir )
-        self.subdir = subdir if isinstance( subdir, PurePath ) else PurePath( subdir )
+        self.log_dir = cast_to_path(log_dir)
+        self.catalog_dir = cast_to_path(catalog_dir)
+        self.img_dir = cast_to_path(img_dir)
+        self.fits_input_dir = cast_to_path(fits_input_dir)
+
+        # Ensure subdir is a PurePath, so it can join paths without worrying about OS-specific path separators
+        self.subdir = subdir if isinstance(subdir, PurePath) else PurePath(subdir)
+
         self.write_catalog = write_catalog
-        export_images = export_images or []
+        export_images = export_images if export_images is not None else []
         self.export_images = export_images
 
         super().__init__( self.fits_input_dir / self.subdir, log_level )
@@ -198,8 +265,9 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
             self.export_img_args[ img_type ][ 'clobber' ] = self.export_img_args[ img_type ].get( 'clobber', True )
 
         #Set process arg defaults to project defaults if nothing passed
-        for key, val in ImageAnalyzer.LOFAR_process_arg_defaults.items():
-            self.process_args[ key[ len( 'process_' ): ] ] = self.process_args.get( key[ len( 'process_' ): ], val )
+        process_args_defaults = ProcessArgs.from_toml( paths.PYBDSF_CONFIG ).to_dict()
+        for key, val in process_args_defaults.items():
+            self.process_args[ key ] = self.process_args.get( key, val )
 
 
     def get_postfix( self, path: Path ) -> PurePath:

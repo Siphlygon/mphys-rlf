@@ -1,0 +1,36 @@
+# This is a TOML configuration file for PyBDSF (Python Blob Detection and Source Finder).
+[default] # Default settings for PyBDSF
+beam = [0.00166667, 0.00166667, 0.0]  # Beam size in degrees (major, minor, position angle)
+frequency = 144e6  # Frequency in Hz
+mean_map = "zero"  # "default", "zero", "const", "map" - what setting to use for the background mean map
+rms_box = [150, 15]  # Box size for RMS estimation in pixels
+rms_map = true  # Whether to compute the RMS as a 2D map
+thresh = "hard"  # "hard" (sigma clipping) or "fdr" (false detection rate) thresholding for source detection
+thresh_isl = 4.0  # Sigma threshold for island boundary detection
+thresh_pix = 5.0  # Sigma threshold for island peak detection
+
+[adaptivebox] # Settings for adaptive box size in PyBDSF
+adaptive_rms_box = true  # Use adaptive box size when determining RMS and mean maps
+adaptive_thresh = 150  # Sources with pixels above adaptive_thresh* clipped_rms will be considered as bright sources
+rms_box_bright = [60, 15]  # Box size for RMS estimation near bright sources in pixels
+
+[advanced] # Advanced settings for PyBDSF
+advanced_opts = true  # Enable advanced options for source detection
+group_by_isl = false  # Group sources by islands (connected components)
+group_tol = 10  # Tolerance for grouping sources by islands (in pixels)
+ini_method = "intensity"  # Method for initial source detection (intensity-based)
+
+[atrous]  # Settings for atrous wavelet transform in PyBDSF
+atrous_do = true  # Enable atrous wavelet transform (decomposition of the Gaussian residual image into multiple scales)
+atrous_jmax = 4  # Maximum number of scales for the atrous wavelet transform
+
+
+# Old config:
+# [default]
+# beam = [0.00166667, 0.00166667, 0.0]  # Beam size in degrees (major, minor, position angle)
+# frequency = 144e6  # Frequency in Hz
+# mean_map = "const"  # "default", "zero", "const", "map" - what setting to use for the background mean map
+# rms_map = true  # Whether to compute the RMS as a 2D map
+# thresh = "hard"  # "hard" (sigma clipping) or "fdr" (false detection rate) thresholding for source detection
+# thresh_isl = 5.0  # Sigma threshold for island boundary detection
+# thresh_pix = 0.5  # Sigma threshold for island peak detection
