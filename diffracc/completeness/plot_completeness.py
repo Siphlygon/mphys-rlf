@@ -5,7 +5,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
-from tqdm import tqdm
 
 from ..analysis.log_analyzer import get_model_flux
 from ..completeness.completeness_estimator import CompletenessEstimator
@@ -133,8 +132,14 @@ def plot_completeness(config_str: str,
             #                 paths.PYBDSF_LOG_PARENT / folder_name]
 
             # Get model images
+            expected_shape = ( 1, 1, 80, 80 )
             def read_model_images(path: Path):
-                return fits.getdata(path, 0)
+                data = fits.getdata(path, 0)
+                if data.shape != expected_shape:
+                    print( f'{path} has shape {data.shape} instead of expected {expected_shape}, substituting a '
+                          f'zero-filled array' )
+                    return np.zeros( expected_shape )
+                return data
 
             rfa = RecursiveFileAnalyzer(paths_to_use[0])
 
@@ -183,18 +188,8 @@ def plot_completeness(config_str: str,
                                                 show_progress=True).results
 
             pt = PeakFluxPowerTransformer( 'nobody_cares', maxvals=maxvals )
-            peak_fluxes_pt1 = pt.inverse_transform( np.array( peak_fluxes_tr_pt1 ) )
-            peak_fluxes_pt2 = pt.inverse_transform( np.array( peak_fluxes_tr_pt2 ) )
-
-
-            expected_shape = ( 1, 1, 80, 80 )
-            for arr_list in [ model_images_pt1, model_images_pt2 ]:
-                for i in tqdm(range( len( arr_list ) - 1, -1, -1 ),
-                              desc='Checking pybdsf image homogeneity', unit='image'):
-                    if arr_list[ i ].shape != expected_shape:
-                        print( f'Image at index {i} has shape {arr_list[ i ].shape} instead of expected '
-                              f'{expected_shape}, removing from arrays' )
-                        arr_list[i] = np.zeros( expected_shape )
+            peak_fluxes_pt1 = pt.inverse_transform( peak_fluxes_tr_pt1 )
+            peak_fluxes_pt2 = pt.inverse_transform( peak_fluxes_tr_pt2 )
 
             model_images = np.concatenate([model_images_pt1, model_images_pt2])
             model_images *= 1e3 # convert from Jy/beam to mJy/beam

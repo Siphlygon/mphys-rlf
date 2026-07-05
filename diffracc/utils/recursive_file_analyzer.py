@@ -16,14 +16,40 @@ from itertools import repeat
 from pathlib import Path
 from typing import Any, Callable, Generator, Generic, Iterator, Literal, NamedTuple, TypeVar, overload
 
+import numpy as np
+import numpy.typing as npt
 from astropy.io import fits
 from tqdm import tqdm
 
 from .logger import LoggingLevels, get_logger
 
+_module_logger = get_logger("RecursiveFileAnalyzer", LoggingLevels.DEBUG.value)
+
+
+
+
+def _pad_to_shape(array: npt.NDArray, target_shape: tuple[int, ...]) -> npt.NDArray:
+    """
+    Pads a numpy array with zeros to match a target shape.
+
+    Parameters
+    ----------
+    array : npt.NDArray
+        The input array to be padded.
+    target_shape : tuple[int, ...]
+        The desired shape of the output array.
+
+    Returns
+    -------
+    npt.NDArray
+        The padded array with the specified target shape.
+    """
+    pad_width = [(0, max(0, ts - s)) for s, ts in zip(array.shape, target_shape)]
+    return np.pad(array, pad_width, mode='constant', constant_values=0)
+
 
 # Utility functions for for_each
-def get_fits_primaryhdu_data( path: Path ) -> fits.FITS_rec:
+def get_fits_primaryhdu_data( path: Path, expected_shape: tuple[int, ...] | None = None ) -> fits.FITS_rec:
     """
     A function to get the primary HDU data from a FITS file.
 
@@ -31,6 +57,13 @@ def get_fits_primaryhdu_data( path: Path ) -> fits.FITS_rec:
     ----------
     path : Path
         The path to the FITS file
+    expected_shape : tuple[int, ...] | None, optional
+        The shape the data is expected to have once leading size-1 dimensions are stripped, by default None. Some
+        FITS images (e.g. PyBDSF outputs for the dr2 cutouts) are occasionally corrupt/inhomogeneous; when
+        expected_shape is given, data not matching it is replaced with a zero-filled array of that shape instead of
+        being returned as-is. This keeps shape normalisation next to the read itself, so callers collecting many of
+        these via RecursiveFileAnalyzer.run_pipeline get back a directly stackable array without a separate fix-up
+        pass. If None, no check is performed.
 
     Returns
     -------
@@ -42,6 +75,10 @@ def get_fits_primaryhdu_data( path: Path ) -> fits.FITS_rec:
     # Get rid of leading 1s in shape, e.g. (1,1,n,n) -> (n,n), but preserve 2 dimensions for single pixel images
     while len(data.shape) > 2 and data.shape[0] == 1:
         data = data[0]
+    if expected_shape is not None and data.shape != expected_shape:
+        _module_logger.warning("%s has shape %s instead of expected %s, substituting a zero-filled array", path,
+                               data.shape, expected_shape)
+        data = _pad_to_shape(data, expected_shape)
     return data
 
 
@@ -70,11 +107,44 @@ def get_fits_primaryhdu_header( path: Path, key: str | None = None ) -> fits.Hea
 
 
 
-# Constrained to exactly these two shapes: numbers is a list[int] when return_nums=True, else None. Letting
+# Constrained to exactly these two shapes: numbers is a NumberArray when return_nums=True, else None. Letting
 # ScanResult/PipelineResult be generic over this lets the @overload signatures below narrow `.numbers` to a
-# non-Optional list[int] whenever return_nums=True is passed as a literal, instead of every caller needing to
-# handle a spurious `list[int] | None`.
-NumbersT = TypeVar("NumbersT", list[int], None)
+# non-Optional NumberArray whenever return_nums=True is passed as a literal, instead of every caller needing to
+# handle a spurious `NumberArray | None`.
+NumberArray = npt.NDArray[np.int_]
+NumbersT = TypeVar("NumbersT", NumberArray, None)
+
+# numpy has no dtype for arbitrary Python objects, so a "1D array of Any" that may hold ragged/heterogeneous
+# per-file results is, in practice, an object-dtype array when it can't be stacked into a proper dtype.
+ResultArray = npt.NDArray[Any]
+
+
+def _to_array(items: Sequence[Any]) -> ResultArray:
+    """
+    Builds a numpy array from a sequence of per-file results. When the results are homogeneous (e.g. scalars, or
+    array-likes of identical shape - the latter expected to already be normalised by the reading function itself,
+    e.g. get_fits_primaryhdu_data's expected_shape), this produces a properly stacked, properly-dtyped array
+    directly usable by callers. When they are not homogeneous (e.g. a ragged per-file result), falls back to a 1D
+    object-dtype array of the raw items instead of raising.
+
+    Parameters
+    ----------
+    items : Sequence[Any]
+        The items to place into the array, in order.
+
+    Returns
+    -------
+    ResultArray
+        A numpy array containing `items`.
+    """
+    # Classic numpy as array
+    try:
+        return np.array(items)
+    # Fall back if there's inhomogenity
+    except ValueError:
+        array = np.empty(len(items), dtype=object)
+        array[:] = items
+        return array
 
 
 class ScanResult(NamedTuple, Generic[NumbersT]):
@@ -85,7 +155,7 @@ class ScanResult(NamedTuple, Generic[NumbersT]):
     ----------
     paths : list[Path]
         The matched file paths.
-    numbers : list[int] | None
+    numbers : NumberArray | None
         The numbers extracted from each file name via the pattern's capture group, in the same order as `paths`,
         or None if numbers were not requested (return_nums=False).
     """
@@ -99,13 +169,13 @@ class PipelineResult(NamedTuple, Generic[NumbersT]):
 
     Attributes
     ----------
-    results : list[Any]
-        The per-file (or per-batch, flattened) results of applying the pipeline function.
-    numbers : list[int] | None
+    results : ResultArray
+        The per-file (or per-batch, flattened) results of applying the pipeline function, as a numpy array.
+    numbers : NumberArray | None
         The numbers extracted from each file name via the pattern's capture group, in the same order as `results`,
         or None if numbers were not requested (return_nums=False).
     """
-    results: list[Any]
+    results: ResultArray
     numbers: NumbersT
 
 
@@ -149,14 +219,14 @@ class RecursiveFileAnalyzer:
                            pattern: str | None = None,
                            numeric_range: tuple[int, int] | None = None,
                            *,
-                           return_nums: Literal[True]) -> ScanResult[list[int]]: ...
+                           return_nums: Literal[True]) -> ScanResult[NumberArray]: ...
     @overload
     def get_unwrapped_list(self,
                            path: Path | str | None = None,
                            pattern: str | None = None,
                            numeric_range: tuple[int, int] | None = None,
                            *,
-                           return_nums: bool) -> ScanResult[list[int]] | ScanResult[None]: ...
+                           return_nums: bool) -> ScanResult[NumberArray] | ScanResult[None]: ...
     def get_unwrapped_list(self,
                            path: Path | str | None = None,
                            pattern: str | None = None,
@@ -190,7 +260,7 @@ class RecursiveFileAnalyzer:
                                                                return_nums=return_nums)))
             # sort paths and idxs by idxs
             idxs, file_paths = map(list, zip(*sorted(zip(idxs, file_paths))))
-            return ScanResult(paths=file_paths, numbers=idxs)
+            return ScanResult(paths=file_paths, numbers=np.array(idxs))
 
         file_paths = list(self._quick_scan(path=path, pattern=pattern, numeric_range=numeric_range))
         return ScanResult(paths=file_paths, numbers=None)
@@ -391,7 +461,7 @@ class RecursiveFileAnalyzer:
         progress_bar_desc : str | None, optional
             Description for the tqdm progress bar, by default "default". If None, no progress bar is shown. If
             "default", a default description is used.
-        file_paths : list[str  |  Path]
+        file_paths : Sequence[str | Path]
             A list of file paths to be processed.
 
         Returns
@@ -438,7 +508,7 @@ class RecursiveFileAnalyzer:
         ----------
         function : Callable
             The function to apply to each file.
-        file_paths : list[str  |  Path]
+        file_paths : Sequence[str | Path]
             A list of file paths to be processed.
         num_workers : int, optional
             The number of worker threads to use for concurrent processing, by default 8
@@ -513,7 +583,7 @@ class RecursiveFileAnalyzer:
         mode: str = "batch",
         progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
-        **kwargs) -> PipelineResult[list[int]]: ...
+        **kwargs) -> PipelineResult[NumberArray]: ...
     @overload
     def run_pipeline(
         self,
@@ -529,7 +599,7 @@ class RecursiveFileAnalyzer:
         mode: str = "batch",
         progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
-        **kwargs) -> PipelineResult[list[int]] | PipelineResult[None]: ...
+        **kwargs) -> PipelineResult[NumberArray] | PipelineResult[None]: ...
     def run_pipeline(
         self,
         *args,
@@ -575,8 +645,8 @@ class RecursiveFileAnalyzer:
         progress_bar_desc : str | None, optional
             Description for the tqdm progress bar, by default None. If None, no progress bar is shown. If "default", a
             default description is used.
-        file_paths_override : list[str  |  Path] | None, optional
-            A list of file paths to override the default file search, by default None. Cannot be combined with
+        file_paths_override : Sequence[str | Path] | None, optional
+            A sequence of file paths to override the default file search, by default None. Cannot be combined with
             return_nums=True, since numbers cannot be derived from an overridden file list.
 
         Returns
@@ -633,9 +703,9 @@ class RecursiveFileAnalyzer:
                 **kwargs
             )
 
-        # numbers' shape (list[int] vs None) always matches return_nums by construction above, but that
+        # numbers' shape (NumberArray vs None) always matches return_nums by construction above, but that
         # correlation isn't statically provable without duplicating the branch, hence the type: ignore.
-        return PipelineResult(results=return_values, numbers=numbers)  # type: ignore[arg-type]
+        return PipelineResult(results=_to_array(return_values), numbers=numbers)  # type: ignore[arg-type]
 
 
     def benchmark_pipeline(

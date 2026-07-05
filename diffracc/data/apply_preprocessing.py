@@ -130,8 +130,8 @@ class CutoutPreprocessor:
                                            mode="file",
                                            # kwargs for load_single_cutout
                                            logger=self.logger)
-        values = np.array(values, dtype=np.float32)
-        indices = np.array(indices, dtype=np.int32)
+        values = values.astype(np.float32)
+        indices = indices.astype(np.int32)
 
         # Check indices to see any missing cutout images
         true_cutouts = set(range(self.num_counts))

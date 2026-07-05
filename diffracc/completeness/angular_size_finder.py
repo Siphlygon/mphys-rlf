@@ -415,7 +415,7 @@ class AngularSizeFinder:
                                                        pattern=pattern,
                                                        return_nums=True).numbers
 
-            return np.array(fits_indices), ang_sizes
+            return fits_indices, ang_sizes
 
         # Run the pipeline to extract component data from each FITS file,
         components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
@@ -439,7 +439,7 @@ class AngularSizeFinder:
             df = pd.DataFrame(ang_sizes, columns=['Estimated Angular Size (arcseconds)'])
             df.to_csv(output_file, index=False)
 
-        return np.array(fits_indices), np.array(ang_sizes)
+        return fits_indices, np.array(ang_sizes)
 
 
 

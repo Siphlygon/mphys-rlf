@@ -6,7 +6,6 @@ from typing import Any, Literal, NamedTuple
 
 import h5py
 import numpy as np
-from tqdm import tqdm
 
 from ..analysis.log_analyzer import get_model_flux, get_rms, get_sigma_clipped_mean, get_sigma_clipped_rms
 from ..completeness.angular_size_finder import AngularSizeFinder
@@ -198,11 +197,6 @@ class ImageDataArrays:
         model_img_arrays = self.get_model_arrays(subdir)
         self.logger.debug(f'Gaussian model files length: {len(model_img_arrays.indices)}')
 
-        # Having notable issues with inhomogenity in the pybdsf images for the dr2 cutouts, so I am adding an explicit
-        # check to put a blank image instead of whatever is inhomogenous
-        self._fix_pybdsf_image_homogeneity(resid_arrays.arrays['residual_images'], subdir)
-        self._fix_pybdsf_image_homogeneity(model_img_arrays.arrays['model_images'], subdir)
-
         # Note the difference in data source due to the fact that estimated angular sizes for non-DR2 cutouts requires
         # PyBDSF catalogs, which are not available for every image and so require a different set of indices
         if use_dataset_h5:
@@ -218,30 +212,6 @@ class ImageDataArrays:
             sources.append(catalog)
 
         return sources
-
-
-    def _fix_pybdsf_image_homogeneity(self,
-                                      images: list[np.ndarray],
-                                      subdir: str,
-                                      expected_shape: tuple[int, int] = (80, 80)) -> None:
-        """
-        Replace any image not matching expected_shape with a blank image of that shape, in place. PyBDSF images for
-        the dr2 cutouts are occasionally inhomogeneous, which breaks stacking them into a single array later.
-        
-        Parameters
-        ----------
-        images : list[np.ndarray]
-            The list of images to check and potentially replace.
-        subdir : str
-            The name of the subdirectory being processed, for logging purposes.
-        expected_shape : tuple[int, int], optional
-            The expected shape of the images, by default (80, 80)
-        """
-        for i in tqdm(range(len(images)), desc=f'Checking pybdsf image homogeneity for {subdir}'):
-            if images[i].shape != expected_shape:
-                self.logger.debug(f'Image at index {i} in subdir {subdir} has shape {images[i].shape} instead of '
-                                  f'expected {expected_shape}, removing from arrays')
-                images[i] = np.zeros(expected_shape)
 
 
     def _align_arrays(self, sources: list[NamedArrays]) -> dict[str, np.ndarray]:
@@ -382,14 +352,12 @@ class ImageDataArrays:
         norm_model_fluxes, log_ana_inds = rfa.run_pipeline(function=get_model_flux,
                                                            pattern=la_pattern,
                                                            return_nums=True)
-        norm_model_fluxes = np.array(norm_model_fluxes)
 
-        sigma_clipped_means = np.array(rfa.run_pipeline(function=get_sigma_clipped_mean,
-                                                        pattern=la_pattern).results) / 1000 #normalized Jy units
-        sigma_clipped_rmsds = np.array(rfa.run_pipeline(function=get_sigma_clipped_rms,
-                                                        pattern=la_pattern).results) / 1000 #normalized Jy units
-        unclipped_rmsds = np.array(rfa.run_pipeline(function=get_rms,
-                                                    pattern=la_pattern).results)
+        sigma_clipped_means = rfa.run_pipeline(function=get_sigma_clipped_mean,
+                                               pattern=la_pattern).results / 1000 #normalized Jy units
+        sigma_clipped_rmsds = rfa.run_pipeline(function=get_sigma_clipped_rms,
+                                               pattern=la_pattern).results / 1000 #normalized Jy units
+        unclipped_rmsds = rfa.run_pipeline(function=get_rms, pattern=la_pattern).results
 
         arrays = {
             'normalized_model_fluxes': norm_model_fluxes,
@@ -397,7 +365,7 @@ class ImageDataArrays:
             'sigma_clipped_rmsds': sigma_clipped_rmsds,
             'unclipped_rmsds': unclipped_rmsds,
         }
-        return NamedArrays(arrays, np.array(log_ana_inds))
+        return NamedArrays(arrays, log_ana_inds)
 
 
     def get_residual_arrays(self, subdir: str) -> NamedArrays:
@@ -419,8 +387,9 @@ class ImageDataArrays:
         rfa = RecursiveFileAnalyzer(paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid')
         residual_images, residual_indexes = rfa.run_pipeline(function=get_fits_primaryhdu_data,
                                                              pattern=r'.*?\D+(\d+)\.fits$',
-                                                             return_nums=True)
-        return NamedArrays({'residual_images': residual_images}, np.array(residual_indexes))  # type: ignore
+                                                             return_nums=True,
+                                                             expected_shape=(80, 80))
+        return NamedArrays({'residual_images': residual_images}, residual_indexes)  # type: ignore
 
 
     def get_model_arrays(self, subdir: str) -> NamedArrays:
@@ -442,8 +411,9 @@ class ImageDataArrays:
         rfa = RecursiveFileAnalyzer(paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_model')
         model_images, model_indexes = rfa.run_pipeline(function=get_fits_primaryhdu_data,
                                                        pattern=r'.*?\D+(\d+)\.fits$',
-                                                       return_nums=True)
-        return NamedArrays({'model_images': model_images}, np.array(model_indexes))  # type: ignore
+                                                       return_nums=True,
+                                                       expected_shape=(80, 80))
+        return NamedArrays({'model_images': model_images}, model_indexes)  # type: ignore
 
 
     def get_dataset_arrays_from_h5(self) -> NamedArrays:
@@ -488,14 +458,13 @@ class ImageDataArrays:
         images, data_inds = rfa.run_pipeline(function=get_fits_primaryhdu_data,
                                              pattern=r'.*?\D+(\d+)\.fits$',
                                              return_nums=True)
-        images = np.asarray(images)
 
-        peak_fluxes_tr = np.array(rfa.run_pipeline(function=get_fits_primaryhdu_header,
-                                                   pattern=r'.*?\D+(\d+)\.fits$',
-                                                   key='FXSCLD').results)
+        peak_fluxes_tr = rfa.run_pipeline(function=get_fits_primaryhdu_header,
+                                          pattern=r'.*?\D+(\d+)\.fits$',
+                                          key='FXSCLD').results
 
         arrays = {'images': images, 'peak_fluxes_tr': peak_fluxes_tr}
-        return NamedArrays(arrays, np.array(data_inds))
+        return NamedArrays(arrays, data_inds)
 
 
     def get_catalog_arrays(self, subdir: str) -> NamedArrays:
@@ -521,7 +490,7 @@ class ImageDataArrays:
         las_values, catalog_indexes = asf.estimate_angular_sizes(output_file=output_file,
                                                                  fits_dir=paths.PYBDSF_CATALOG_PARENT / subdir,
                                                                  pattern=r'.*?\D+(\d+)\.fits$')
-        return NamedArrays({'las_values': las_values}, np.array(catalog_indexes))
+        return NamedArrays({'las_values': las_values}, catalog_indexes)
 
 
     # ---------- SAVING ----------

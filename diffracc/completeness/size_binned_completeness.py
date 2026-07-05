@@ -76,7 +76,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
                                             mode="file",
                                             pattern=r'.*?\D+(\d+)\.fits$',
                                             show_progress=False)
-            self.model_images = np.array(model_images)
+            self.model_images = model_images
             self.model_images *= 1e3 # convert from Jy/beam to mJy/beam
 
             # Get model fluxes
@@ -87,7 +87,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
                                                 root_dir=paths_to_use[2],
                                                 mode="file",
                                                 show_progress=False)
-            self.model_fluxes = np.array(model_fluxes)
+            self.model_fluxes = model_fluxes
             self.model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
 
             # Filter the sizes, model images, and model fluxes to only include those with matching indices across all

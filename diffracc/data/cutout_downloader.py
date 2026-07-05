@@ -349,7 +349,6 @@ class CutoutDownloader:
         # Now test if they can be loaded
         self.logger.info(f"Testing loadability of {len(cutout_paths)} cutout files...")
         values = rfa.run_pipeline(function=self._test_load_single_cutout, file_paths_override=cutout_paths).results
-        values = np.array(values, dtype=np.bool_)
         num_corrupted = np.sum(~values)
         if num_corrupted > 0:
             self.logger.warning(f"Found {num_corrupted} corrupted cutout files. "
