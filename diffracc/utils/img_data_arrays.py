@@ -10,7 +10,7 @@ import numpy as np
 from astropy.io import fits
 from tqdm import tqdm
 
-from ..analysis import log_analyzer as la
+from ..analysis.log_analyzer import get_model_flux, get_rms, get_sigma_clipped_mean, get_sigma_clipped_rms
 from ..completeness.angular_size_finder import AngularSizeFinder
 from ..utils import paths
 from .distributed import DistributedUtils
@@ -337,15 +337,23 @@ class ImageDataArrays:
             A tuple containing the log analyzer arrays: (normalized_model_fluxes, sigma_clipped_means,
             sigma_clipped_rmsds, unclipped_rmsds) and the indexes corresponding to the log analyzer values.
         """
-        log_analyzer = la.LogAnalyzer( subdir )
-        normalized_model_fluxes, log_analyzer_inds = log_analyzer.for_each( la.get_model_flux, return_nums=True )
-        normalized_model_fluxes = np.array( normalized_model_fluxes )
-        sigma_clipped_means = np.array( log_analyzer.for_each( la.get_sigma_clipped_mean ).results ) / 1000 #normalized Jy units
-        sigma_clipped_rmsds = np.array( log_analyzer.for_each( la.get_sigma_clipped_rms ).results ) / 1000 #normalized Jy units
-        unclipped_rmsds = np.array( log_analyzer.for_each( la.get_rms ).results )
-        log_analyzer_values = [ normalized_model_fluxes, sigma_clipped_means, sigma_clipped_rmsds, unclipped_rmsds ]
+        la_pattern = r'.*?\D*(\d+)\.fits\.pybdsf\.log$'
+        rfa = RecursiveFileAnalyzer( paths.PYBDSF_LOG_PARENT / subdir )
+        norm_model_fluxes, log_ana_inds = rfa.run_pipeline( function=get_model_flux,
+                                                            pattern=la_pattern,
+                                                            return_nums=True )
+        norm_model_fluxes = np.array( norm_model_fluxes )
 
-        return log_analyzer_values, np.array( log_analyzer_inds )
+        sigma_clipped_means = np.array( rfa.run_pipeline( function=get_sigma_clipped_mean,
+                                                          pattern=la_pattern ).results ) / 1000 #normalized Jy units
+        sigma_clipped_rmsds = np.array( rfa.run_pipeline( function=get_sigma_clipped_rms,
+                                                          pattern=la_pattern ).results ) / 1000 #normalized Jy units
+        unclipped_rmsds = np.array( rfa.run_pipeline( function=get_rms,
+                                                      pattern=la_pattern ).results )
+
+        log_analyzer_values = [ norm_model_fluxes, sigma_clipped_means, sigma_clipped_rmsds, unclipped_rmsds ]
+
+        return log_analyzer_values, np.array( log_ana_inds )
 
 
     def get_residual_arrays(self, subdir: str) -> tuple[list[np.ndarray], np.ndarray]:
@@ -366,8 +374,8 @@ class ImageDataArrays:
         """
         residual_files = RecursiveFileAnalyzer( paths.PYBDSF_EXPORT_IMAGE_PARENT / subdir / 'gaus_resid' )
         residual_images, residual_indexes = residual_files.run_pipeline( function=self.get_fits_primaryhdu_data,
-                                                                        pattern=r'.*?\D+(\d+)\.fits$',
-                                                                        return_nums=True )
+                                                                         pattern=r'.*?\D+(\d+)\.fits$',
+                                                                         return_nums=True )
         residual_values = [ residual_images ]
 
         return residual_values, np.array( residual_indexes ) # type: ignore
@@ -445,12 +453,12 @@ class ImageDataArrays:
         self.logger.debug( f'Not using dataset h5 for {subdir}' )
         data_files = RecursiveFileAnalyzer( paths.FITS_PARENT / subdir )
         images, data_inds = data_files.run_pipeline( function=self.get_fits_primaryhdu_data,
-                                                    pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
+                                                     pattern=r'.*?\D+(\d+)\.fits$', return_nums=True )
         images = np.asarray( images )
 
         peak_fluxes_transformed = np.array( data_files.run_pipeline( function=self.get_fits_primaryhdu_header,
-                                                                    pattern=r'.*?\D+(\d+)\.fits$',
-                                                                    key='FXSCLD').results )
+                                                                     pattern=r'.*?\D+(\d+)\.fits$',
+                                                                     key='FXSCLD').results )
 
         data_values = [ images, peak_fluxes_transformed ]
 

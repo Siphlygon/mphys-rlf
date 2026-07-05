@@ -22,7 +22,7 @@ from astropy.io import fits
 
 from ..utils import paths
 from ..utils.distributed import DistributedUtils
-from ..utils.logger import LoggingLevels
+from ..utils.logger import LoggingLevels, get_logger
 from ..utils.paths import cast_to_path
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
@@ -133,7 +133,7 @@ class ProcessArgs:
 
 
 
-class ImageAnalyzer(RecursiveFileAnalyzer):
+class ImageAnalyzer():
     """
     A class to analyze images of radio galaxies using PyBDSF, with LOFAR defaults
     """
@@ -198,6 +198,8 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
             process_mean_map = 'const', process_rms_map = True, process_thresh = 'hard', process_frequency = 144e6".
             For PyBDSF, beam and frequency must be present.
         """
+        self.logger = get_logger("ImageAnalyzer", log_level)
+
         #Ensure all types are paths
         self.log_dir = cast_to_path(log_dir)
         self.catalog_dir = cast_to_path(catalog_dir)
@@ -211,7 +213,7 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
         export_images = export_images if export_images is not None else []
         self.export_images = export_images
 
-        super().__init__( self.fits_input_dir / self.subdir, log_level )
+        self.rfa = RecursiveFileAnalyzer(self.fits_input_dir / self.subdir, log_level )
 
         self.process_args = {}
         self.catalog_args = {}
@@ -313,7 +315,7 @@ class ImageAnalyzer(RecursiveFileAnalyzer):
         self.logger.info( "Using %i cpu" + ( "s" if n_cpus != 1 else "" ), n_cpus )
         input_subdir = self.fits_input_dir / self.subdir
 
-        files : list[Path] = self.get_unwrapped_list( input_subdir, r'.*?\.fits$' ) # type: ignore
+        files = self.rfa.get_unwrapped_list( path=input_subdir, pattern=r'.*?\.fits$' ).paths
 
         #distribute across multiple tasks
         n_files = len( files )

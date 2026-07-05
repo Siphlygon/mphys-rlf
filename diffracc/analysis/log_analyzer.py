@@ -1,6 +1,5 @@
 import re
 from pathlib import Path, PurePath
-from typing import Callable
 
 from ..utils import paths
 from ..utils.logger import LoggingLevels
@@ -182,7 +181,7 @@ def get_flux_mean_rms( path: Path ):
 
 
 
-class LogAnalyzer( RecursiveFileAnalyzer ):
+class LogAnalyzer():
     """
     A class to analyze PyBDSF log files
     """
@@ -204,51 +203,5 @@ class LogAnalyzer( RecursiveFileAnalyzer ):
         log_level : int = logging.INFO
             The logging level to use for this object. By default, this is logging.INFO
         """
-        super().__init__( log_file_dir / subdir, log_level )
+        self.rfa = RecursiveFileAnalyzer( log_file_dir / subdir, log_level )
         self.subdir = subdir if isinstance( subdir, PurePath ) else PurePath( subdir )
-
-
-    # Override default pattern
-    def for_each( self,
-                 function : Callable,
-                 pattern: str | None = r'.*?\D*(\d+)\.fits\.pybdsf\.log$',
-                 numeric_range: tuple[int,int] | None = None,
-                 return_nums: bool = False,
-                 *args, **kwargs ):
-        """
-        A method to perform a generic function on all files within the log directory and return the output, along with
-        optionally a number as gathered from the first capture group in pattern applied to the file pth.
-
-        Parameters
-        ----------
-        function : Callable
-            The function which will be called on each file in path recursively
-        pattern : str | None = r'.*?\D*(\\d)\\.fits\\.pybdsf\\.log$'
-            The regex pattern to search for. Items not matching will have the function operate on them. If None, operate
-            on all.
-        numeric_range: int | None = None
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture group
-            into an integer. If the integer is within the numeric range (inclusive begin, exclusive end), match,
-            otherwise don't match. None matches all.
-        return_nums: bool = False
-            If there is a regex pattern to search for and it has a capture group, attempt to parse the capture group
-            into an integer.
-        args : list[ Any ] | None = None
-            arguments to pass on to the called function
-        kwargs : dict[ str, Any ] | None = None
-            keyword arguments to pass on to the called function
-
-        Returns
-        -------
-        list[ function( <b>: ) ]</b>
-            returns a list of the file return values within the path directory self.path / self.subdir, of length files
-        list[ int ] (optional)
-            if return_nums, also returns a list of integers for the values captured by the first capture group in
-            pattern from the file path str
-        """
-        return super().run_pipeline(*args,
-                                    function=function,
-                                    return_nums=return_nums,
-                                    numeric_range=numeric_range,
-                                    pattern=pattern,
-                                    **kwargs )

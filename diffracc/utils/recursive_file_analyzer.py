@@ -374,7 +374,7 @@ class RecursiveFileAnalyzer:
                        function: Callable,
                        num_workers: int = 16,
                        output_file: str | Path | None = None,
-                       show_progress: bool = True,
+                       progress_bar_desc: str | None = "default",
                        file_paths: Sequence[str | Path],
                        **kwargs) -> list[Any]:
         """
@@ -388,8 +388,9 @@ class RecursiveFileAnalyzer:
             The number of worker threads to use for concurrent processing, by default 16
         output_file : str | Path | None, optional
             Optional path to a file where results will be written. If None, results are kept in memory, by default None
-        show_progress : bool, optional
-            Whether to display a tqdm progress bar, by default True
+        progress_bar_desc : str | None, optional
+            Description for the tqdm progress bar, by default "default". If None, no progress bar is shown. If
+            "default", a default description is used.
         file_paths : list[str  |  Path]
             A list of file paths to be processed.
 
@@ -402,13 +403,15 @@ class RecursiveFileAnalyzer:
         # Create a partial function with the provided args and kwargs
         func_with_args = partial(function, *args, **kwargs)
 
+        if progress_bar_desc == "default":
+            progress_bar_desc = f"Processing files (file mode, workers={num_workers})"
+
         with open(output_file, "a", encoding="utf-8") if output_file else nullcontext() as out_handle:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 self.logger.info("Processing %d files with %d workers", len(file_paths), num_workers)
                 iterator = executor.map(self._process_file, file_paths, repeat(func_with_args))
-                if show_progress:
-                    iterator = tqdm(iterator, total=len(file_paths), min_interval=1.0,
-                        desc=f"Processing files (file mode, workers={num_workers})")
+                if progress_bar_desc is not None:
+                    iterator = tqdm(iterator, total=len(file_paths), min_interval=1.0,desc=progress_bar_desc)
 
                 for result in iterator:
                     if out_handle:
@@ -425,7 +428,7 @@ class RecursiveFileAnalyzer:
                         num_workers: int = 8,
                         batch_size: int = 500,
                         output_file: str | Path | None = None,
-                        show_progress: bool = True,
+                        progress_bar_desc: str | None = "default",
                         file_paths: Sequence[str | Path],
                         **kwargs) -> list[Any]:
         """
@@ -443,8 +446,9 @@ class RecursiveFileAnalyzer:
             The number of files to process in each batch, by default 500
         output_file : str | Path | None, optional
             Optional path to a file where results will be written. If None, results are kept in memory, by default None
-        show_progress : bool, optional
-            Whether to display a tqdm progress bar, by default True
+        progress_bar_desc : str | None, optional
+            Description for the tqdm progress bar, by default "default". If None, no progress bar is shown. If
+            "default", a default description is used.
 
         Returns
         -------
@@ -454,6 +458,9 @@ class RecursiveFileAnalyzer:
         results = []
         batches = list(self._batcher(file_paths, batch_size))
 
+        if progress_bar_desc == "default":
+            progress_bar_desc = f"Processing files (batch mode, workers={num_workers}, batch size={batch_size})"
+
         # Create a partial function with the provided args and kwargs
         func_with_args = partial(function, *args, **kwargs)
 
@@ -462,9 +469,8 @@ class RecursiveFileAnalyzer:
                 self.logger.info("Processing %d files in %d batches with batch size %d using %d workers",
                                  len(file_paths), len(batches), batch_size, num_workers)
                 iterator = executor.map(self._process_batch, batches, repeat(func_with_args))
-                if show_progress:
-                    iterator = tqdm(iterator, total=len(batches),
-                        desc=f"Processing files (batch mode, workers={num_workers}, batch size={batch_size})")
+                if progress_bar_desc is not None:
+                    iterator = tqdm(iterator, total=len(batches), desc=progress_bar_desc)
 
                 for batch_results in iterator:
                     if out_handle:
@@ -489,7 +495,7 @@ class RecursiveFileAnalyzer:
         num_workers: int | None = None,
         output_file: str | Path | None = None,
         mode: str = "batch",
-        show_progress: bool = True,
+        progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[None]: ...
     @overload
@@ -505,7 +511,7 @@ class RecursiveFileAnalyzer:
         num_workers: int | None = None,
         output_file: str | Path | None = None,
         mode: str = "batch",
-        show_progress: bool = True,
+        progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[list[int]]: ...
     @overload
@@ -521,7 +527,7 @@ class RecursiveFileAnalyzer:
         num_workers: int | None = None,
         output_file: str | Path | None = None,
         mode: str = "batch",
-        show_progress: bool = True,
+        progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[list[int]] | PipelineResult[None]: ...
     def run_pipeline(
@@ -536,7 +542,7 @@ class RecursiveFileAnalyzer:
         num_workers: int | None = None,
         output_file: str | Path | None = None,
         mode: str = "batch",
-        show_progress: bool = True,
+        progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult:
         """
@@ -566,8 +572,9 @@ class RecursiveFileAnalyzer:
             The file to write output to, by default None
         mode : str, optional
             The mode to run the pipeline in, by default "batch"
-        show_progress : bool, optional
-            Whether to show progress, by default True
+        progress_bar_desc : str | None, optional
+            Description for the tqdm progress bar, by default None. If None, no progress bar is shown. If "default", a
+            default description is used.
         file_paths_override : list[str  |  Path] | None, optional
             A list of file paths to override the default file search, by default None. Cannot be combined with
             return_nums=True, since numbers cannot be derived from an overridden file list.
@@ -607,7 +614,7 @@ class RecursiveFileAnalyzer:
                 function=function,
                 num_workers=num_workers,
                 output_file=output_file,
-                show_progress=show_progress,
+                progress_bar_desc=progress_bar_desc,
                 file_paths=file_paths,
                 **kwargs
             )
@@ -621,7 +628,7 @@ class RecursiveFileAnalyzer:
                 num_workers=num_workers,
                 batch_size=batch_size,
                 output_file=output_file,
-                show_progress=show_progress,
+                progress_bar_desc=progress_bar_desc,
                 file_paths=file_paths,
                 **kwargs
             )
@@ -644,7 +651,7 @@ class RecursiveFileAnalyzer:
         sample_size: int | None = 5000,
         repeats: int = 1,
         output_csv: str | Path | None = None,
-        show_progress: bool = True,
+        progress_bar_desc: str | None = None,
         **kwargs) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """
         Runs a benchmark on the provided function using different numbers of workers and batch sizes, and returns the
@@ -674,8 +681,9 @@ class RecursiveFileAnalyzer:
             The number of times to repeat each benchmark, by default 1
         output_csv : str | Path | None, optional
             The path to the CSV file to write the results to, by default None
-        show_progress : bool, optional
-            Whether to show a progress bar, by default True
+        progress_bar_desc : str | None, optional
+            Description for the tqdm progress bar, by default None. If None, no progress bar is shown. If "default", a
+            default description is used.
 
         Returns
         -------
@@ -721,7 +729,7 @@ class RecursiveFileAnalyzer:
                     root_dir=root_dir,
                     num_workers=workers,
                     mode="file",
-                    show_progress=show_progress,
+                    progress_bar_desc=progress_bar_desc,
                     file_paths_override=file_paths,
                     **kwargs
                 )
@@ -750,7 +758,7 @@ class RecursiveFileAnalyzer:
                         batch_size=batch_size,
                         num_workers=workers,
                         mode="batch",
-                        show_progress=show_progress,
+                        progress_bar_desc=progress_bar_desc,
                         file_paths_override=file_paths,
                         **kwargs
                     )
