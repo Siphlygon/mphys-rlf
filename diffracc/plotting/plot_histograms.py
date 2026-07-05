@@ -1,13 +1,13 @@
 import argparse
 
-import analysis.log_analyzer as la
+import astropy.stats
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from ..analysis.log_analyzer import LogAnalyzer
+from ..analysis.log_analyzer import get_model_flux
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_data
@@ -179,9 +179,10 @@ class HistogramPlotter:
             if fluxes_path.exists():
                 normalized_model_fluxes = np.load( fluxes_path )
             else:
-                log_analyzer = LogAnalyzer( subdir )
-                normalized_model_fluxes = log_analyzer.for_each( la.get_model_flux,
-                                                                progress_bar_desc=f'{subdir} fluxes...' ).results
+                rfa = RecursiveFileAnalyzer( paths.PYBDSF_LOG_PARENT / subdir )
+                normalized_model_fluxes = rfa.run_pipeline(function=get_model_flux,
+                                                           pattern=r'.*?\D*(\d+)\.fits\.pybdsf\.log$',
+                                                           progress_bar_desc=f'{subdir} fluxes...' ).results
                 normalized_model_fluxes = np.array( normalized_model_fluxes )
                 np.save( fluxes_path, normalized_model_fluxes )
 
