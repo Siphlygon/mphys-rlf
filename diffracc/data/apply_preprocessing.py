@@ -26,6 +26,7 @@ class CutoutPreprocessor:
     def __init__(self,
                  snr_threshold: float = 15,
                  edge_max_threshold: float = 0.8,
+                 peak_flux_threshold: float = 500,
                  exclusive: bool = False):
         """
         A class that takes cutouts of resolved sources from the Hardcastle 2023 dataset and applies pre-processing steps
@@ -37,6 +38,8 @@ class CutoutPreprocessor:
             The signal-to-noise ratio threshold for selecting images, by default 15
         edge_max_threshold : float, optional
             The maximum threshold for edge pixels, by default 0.8
+        peak_flux_threshold : float, optional
+            The maximum peak flux threshold for selecting images, by default 500 mJy/beam.
         exclusive : bool, optional
             Whether to use exclusive criteria for RLAGN selection, by default False
         """
@@ -44,6 +47,7 @@ class CutoutPreprocessor:
 
         self.snr_threshold = snr_threshold
         self.edge_max_threshold = edge_max_threshold
+        self.peak_flux_threshold = peak_flux_threshold
         self.exclusive = exclusive
 
         self.num_counts = 314969
@@ -195,10 +199,15 @@ class CutoutPreprocessor:
                                        'incomplete': False})
 
         # Initialise all other columns to default right now
-        catalogue_data = [{**item, 'size': 0, 'S/N': 0, 'edge_max': 0, 'rlagn': False} for item in catalogue_data]
+        catalogue_data = [{**item,
+                           'size': 0,
+                           'S/N': 0,
+                           'edge_max': 0,
+                           'peak_flux': 0,
+                           'rlagn': False} for item in catalogue_data]
 
         # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'broken', 'incomplete', 'size', 'S/N', 'edge_max', 'rlagn']
+        columns = ['index', 'pixel_values', 'broken', 'incomplete', 'size', 'S/N', 'edge_max', 'peak_flux', 'rlagn']
         dataset = pd.DataFrame(catalogue_data, columns=columns)
 
         return dataset
@@ -469,15 +478,16 @@ class CutoutPreprocessor:
         sizes = np.array([info['LAS'] for info in cat_info])[valid_mask]
         self.logger.info(f"Size flags created in {time.time() - start_time} seconds")
 
-        # Vectorised SNR calculation using catalogue information
-        self.logger.info("Creating vectorised flags for S/N ratio...")
+        # Vectorised SNR calculation and peak flux using catalogue information & pixel values
+        self.logger.info("Creating vectorised flags for S/N ratio and peak flux...")
         start_time = time.time()
         noise_levels = np.array([info['Isl_rms'] for info in cat_info])[valid_mask]
         # peak_fluxes = np.array([info['Peak_flux'] for info in cat_info])[valid_mask]
         peak_fluxes = images.max(axis=(1, 2)) * 1000 # convert from Jy/beam to mJy/beam
-        snr_list = np.where(~broken, self._calculate_snr_vectorised(noise_levels, peak_fluxes), -99)
+        snr_list = np.where(valid_mask, self._calculate_snr_vectorised(noise_levels, peak_fluxes), -99)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
+        # Vectorised RLAGN selection using catalogue information
         self.logger.info("Creating vectorised flags for RLAGN selection...")
         start_time = time.time()
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
@@ -492,6 +502,7 @@ class CutoutPreprocessor:
         dataset.loc[valid_mask, 'edge_max'] = edge_ratio
         dataset.loc[valid_mask, 'size'] = sizes
         dataset.loc[valid_mask, 'S/N'] = snr_list
+        dataset.loc[valid_mask, 'peak_flux'] = peak_fluxes
         dataset.loc[valid_mask, 'rlagn'] = rlagn_mask
 
 
@@ -511,10 +522,11 @@ class CutoutPreprocessor:
         cat_info : fits.FITS_rec
             The catalogue information for each source.
         """
-        size = []
-        snr = []
-        edge_max = []
-        rlagn = []
+        size_list = []
+        snr_list = []
+        edge_max_list = []
+        peak_flux_list = []
+        rlagn_list = []
 
         # Get indices to iterate over excluding broken and incomplete images
         valid_indices = dataset.index[~dataset['broken'] & ~dataset['incomplete']]
@@ -523,20 +535,21 @@ class CutoutPreprocessor:
             img = dataset.at[idx, 'pixel_values']
             source = cat_info[idx]
 
-            size.append(source['LAS'])
+            size_list.append(source['LAS'])
             noise = source['Isl_rms']
             peak_flux = img.max() * 1000
-            snr.append(self._calculate_snr_single(noise, peak_flux))
+            snr_list.append(self._calculate_snr_single(noise, peak_flux))
+            peak_flux_list.append(peak_flux)
 
-            edge_max.append(self._calculate_edge_max_single(img))
+            edge_max_list.append(self._calculate_edge_max_single(img))
             if np.isnan([source['mag_w2'],
                          source['mag_w3'],
                          source['magerr_w3'],
                          source['L_144'],
                          source['z_best']]).any():
-                rlagn.append(True) # if we don't have the info to determine if it's an RLAGN, we will assume it is
+                rlagn_list.append(True) # if we don't have the info to determine if it's an RLAGN, we will assume it is
             else:
-                rlagn.append(self._select_rlagn(source['mag_w2'],
+                rlagn_list.append(self._select_rlagn(source['mag_w2'],
                                                source['mag_w3'],
                                                source['magerr_w3'],
                                                source['L_144'],
@@ -544,10 +557,11 @@ class CutoutPreprocessor:
                                                peak_flux))
 
         # Put the flags into the dataset
-        dataset.loc[valid_indices, 'size'] = size
-        dataset.loc[valid_indices, 'S/N'] = snr
-        dataset.loc[valid_indices, 'edge_max'] = edge_max
-        dataset.loc[valid_indices, 'rlagn'] = rlagn
+        dataset.loc[valid_indices, 'size'] = size_list
+        dataset.loc[valid_indices, 'S/N'] = snr_list
+        dataset.loc[valid_indices, 'edge_max'] = edge_max_list
+        dataset.loc[valid_indices, 'rlagn'] = rlagn_list
+        dataset.loc[valid_indices, 'peak_flux'] = peak_flux_list
 
 
     # ---------- MAIN FUNCTION ----------
@@ -555,7 +569,7 @@ class CutoutPreprocessor:
                             vectorised: bool = False,
                             save_hdf5: bool = True,
                             catalogue_path: Path = paths.STRIPPED_CATALOGUE_PATH,
-                            output_file_path: Path | None = None):
+                            output_file_path: Path | str | None = None):
         """
         Applies the pre-processing steps to the Hardcastle dataset, filtering out images that do not meet the specified
         criteria and saving the cleaned dataset to a specified file format.
@@ -568,14 +582,22 @@ class CutoutPreprocessor:
             Whether to save the cleaned dataset as an HDF5 file (True) or a FITS file (False), by default True
         catalogue_path : Path, optional
             The path to the catalogue file, by default paths.STRIPPED_CATALOGUE_PATH
-        output_file_path : Path | None, optional
-            The path to save the cleaned dataset file, by default None
+        output_file_path : Path | str | None, optional
+            The path to save the cleaned dataset file, by default None, which will save to the default
+            paths.DATASET_PATH_H5 or paths.DATASET_PATH_FITS based on the save_hdf5 flag. If set to "default", it will
+            save to a file named based on the filtering criteria in the paths.DATASET_PARENT directory.
         """
         if output_file_path is None:
             if save_hdf5:
                 output_file_path = paths.DATASET_PATH_H5
             else:
                 output_file_path = paths.DATASET_PATH_FITS
+
+        if output_file_path == "default":
+            if save_hdf5:
+                output_file_path = paths.DATASET_PARENT / f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{'exclusive' if self.exclusive else 'inclusive'}.h5"
+            else:
+                output_file_path = paths.DATASET_PARENT / f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{'exclusive' if self.exclusive else 'inclusive'}.fits"
 
         # Load the initial dataset with pixel values
         dataset, cat_info, cat_columns = self._load_initial_dataset(catalogue_path)
@@ -594,6 +616,7 @@ class CutoutPreprocessor:
             (dataset["size"] <= 120), # max size of a cutout
             (dataset["S/N"] >= self.snr_threshold),
             (dataset["edge_max"] <= self.edge_max_threshold),
+            (dataset["peak_flux"] <= self.peak_flux_threshold),
             dataset["rlagn"]
         ]
 
@@ -609,14 +632,16 @@ class CutoutPreprocessor:
         num_too_large = lengths[2] - lengths[3]
         num_low_snr = lengths[3] - lengths[4]
         num_edge_max = lengths[4] - lengths[5]
-        num_rqqsfg = lengths[5] - lengths[6]
-        total =  num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_rqqsfg
+        num_peak_flux = lengths[5] - lengths[6]
+        num_rqqsfg = lengths[6] - lengths[7]
+        total =  num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_peak_flux + num_rqqsfg
 
         self.logger.info(f"Number of sources removed as broken/missing: {num_broken}")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as too large: {num_too_large}")
         self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
+        self.logger.info(f"Number of sources removed as high peak flux: {num_peak_flux}")
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
         self.logger.info(f"Total number of sources removed: {total}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
@@ -673,7 +698,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--output_file_path",
         help=f"The path to save the cleaned dataset file, as a .h5 or .fits file. Default {paths.DATASET_PATH_H5}",
         type=Path,
-        default=paths.DATASET_PATH_H5
+        default=None
     )
     parser.add_argument(
         "--snr_threshold",
@@ -707,5 +732,5 @@ if __name__ == "__main__":
     preprocessor.apply_preprocessing(vectorised=args.vectorised,
                                      save_hdf5=not args.save_fits,
                                      catalogue_path=args.catalogue_path,
-                                     output_file_path=args.output_file_path)
+                                     output_file_path="default" if args.output_file_path is None else args.output_file_path)
     preprocessor.logger.info('done')
