@@ -5,6 +5,8 @@ recursively, as this is useful for multiprocessing or other scenareos where know
 helpful. The HistogramErrorDrawer is a utility class to house its Draw function, which draws a histogram and calculates
 its errors with astropy.stats.poisson_conf_interval
 """
+from __future__ import annotations
+
 import os
 import re
 import time
@@ -14,7 +16,7 @@ from contextlib import nullcontext
 from functools import partial
 from itertools import repeat
 from pathlib import Path
-from typing import Any, Callable, Generator, Generic, Iterator, Literal, NamedTuple, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Callable, Generator, Generic, Iterator, Literal, NamedTuple, TypeVar, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -147,36 +149,49 @@ def _to_array(items: Sequence[Any]) -> ResultArray:
         return array
 
 
-class ScanResult(NamedTuple, Generic[NumbersT]):
-    """
-    The result of a directory scan.
+# Generic NamedTuples (`class X(NamedTuple, Generic[T])`) are only valid at runtime on Python 3.11+; on 3.10 the class
+# statement itself raises TypeError. Type checkers understand generic NamedTuples regardless of the running interpreter,
+# so we expose the generic definitions to them here -- preserving the @overload narrowing of `.numbers` to NumberArray
+# vs None -- while the runtime (below) uses plain NamedTuples. This keeps the module importable on Python 3.10 with no
+# loss of static typing and no change to runtime behaviour (still real, tuple-unpackable NamedTuples).
+if TYPE_CHECKING:
+    class ScanResult(NamedTuple, Generic[NumbersT]):
+        """
+        The result of a directory scan.
 
-    Attributes
-    ----------
-    paths : list[Path]
-        The matched file paths.
-    numbers : NumberArray | None
-        The numbers extracted from each file name via the pattern's capture group, in the same order as `paths`,
-        or None if numbers were not requested (return_nums=False).
-    """
-    paths: list[Path]
-    numbers: NumbersT
+        Attributes
+        ----------
+        paths : list[Path]
+            The matched file paths.
+        numbers : NumberArray | None
+            The numbers extracted from each file name via the pattern's capture group, in the same order as `paths`,
+            or None if numbers were not requested (return_nums=False).
+        """
+        paths: list[Path]
+        numbers: NumbersT
 
+    class PipelineResult(NamedTuple, Generic[NumbersT]):
+        """
+        The result of a processing pipeline run.
 
-class PipelineResult(NamedTuple, Generic[NumbersT]):
-    """
-    The result of a processing pipeline run.
+        Attributes
+        ----------
+        results : ResultArray
+            The per-file (or per-batch, flattened) results of applying the pipeline function, as a numpy array.
+        numbers : NumberArray | None
+            The numbers extracted from each file name via the pattern's capture group, in the same order as `results`,
+            or None if numbers were not requested (return_nums=False).
+        """
+        results: ResultArray
+        numbers: NumbersT
+else:
+    class ScanResult(NamedTuple):
+        paths: list
+        numbers: object
 
-    Attributes
-    ----------
-    results : ResultArray
-        The per-file (or per-batch, flattened) results of applying the pipeline function, as a numpy array.
-    numbers : NumberArray | None
-        The numbers extracted from each file name via the pattern's capture group, in the same order as `results`,
-        or None if numbers were not requested (return_nums=False).
-    """
-    results: ResultArray
-    numbers: NumbersT
+    class PipelineResult(NamedTuple):
+        results: object
+        numbers: object
 
 
 
