@@ -188,7 +188,7 @@ class DiffusionTrainer:
         if self.distributed:
             self.logger.info(f"Parallel training on multiple GPUs - local rank {self.local_rank}, "
                              f"global rank {self.global_rank}")
-            self.model.to(f"cuda: {self.local_rank}")  # Necessary for DataParallel
+            self.model.to(f"cuda:{self.local_rank}")  # Necessary for DataParallel
             self.model = DistributedDataParallel(self.model, device_ids=[self.local_rank])
             self.inner_model = self.model.module
 
@@ -454,10 +454,11 @@ class DiffusionTrainer:
 
         # Initialise wandb logging
         if self.is_primary():
-            wandb_key = os.environ.get("WANDB_KEY")
+            # Accept either name; WANDB_API_KEY is wandb's own standard variable (and what the SLURM scripts export).
+            wandb_key = os.environ.get("WANDB_KEY") or os.environ.get("WANDB_API_KEY")
             if not wandb_key:
                 raise RuntimeError(
-                    "WANDB_KEY environment variable is not set. Set it before starting training."
+                    "Neither WANDB_KEY nor WANDB_API_KEY is set. Set one before starting training."
                 )
             wandb.login(key=wandb_key)
             wandb.init(
