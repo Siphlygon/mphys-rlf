@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, random_split
 
 import wandb
 
-from ..data.datasets import TrainDatasetNoScale
+from ..data.datasets import TrainDatasetNoScale, TrainDatasetScaled
 from ..model import unet
 from ..model.config import ModelConfig
 from ..model.model_utils import load_parameters
@@ -73,7 +73,7 @@ class DiffusionTrainer:
         self,
         *,
         config: ModelConfig,
-        dataset: TrainDatasetNoScale,
+        dataset: TrainDatasetNoScale | TrainDatasetScaled,
         device: torch.device | None = None,
         pickup: bool = False,
         model_name: str | None = None,  # Required for pickup if no config is passed
@@ -215,6 +215,11 @@ class DiffusionTrainer:
 
         # Initialize data
         self.dataset = dataset
+        # Record the dataset's global flux transform (if any) in the config, so it is saved with the model and can be
+        # inverted at sampling time to recover physical Jy/beam images.
+        if getattr(self.dataset, "flux_transform", None) is not None:
+            self.config.flux_transform = self.dataset.flux_transform.to_dict()
+            self.logger.info(f"Recording flux transform in config: {self.config.flux_transform}")
         if hasattr(self.config, "context"):
             self.logger.info(f"Working with context: {self.config.context}.")
             if "max_values_tr" in self.config.context:
@@ -551,32 +556,48 @@ class DiffusionTrainer:
 
     def training_step(self, scaler: torch.cuda.amp.GradScaler, it: int) -> Tensor:
         """
-        Perform a single training step. Zero gradients, calculate loss, backward pass and optimizer step. Update EMA
+        Perform a single optimizer step. Zero gradients, calculate loss, backward pass and optimizer step. Update EMA
         model after 500 iterations or at first validation interval.
+
+        If ``config.accumulation_steps`` is greater than 1, gradients are accumulated over that many micro-batches
+        before a single optimizer step is taken. This yields the gradient of an effective batch of
+        ``batch_size * accumulation_steps`` while only ever holding one micro-batch of activations in memory, so peak
+        VRAM stays at the ``batch_size`` level. Each micro-batch loss is divided by ``accumulation_steps`` so the
+        accumulated (summed) gradient equals the *mean* gradient over the effective batch -- identical in expectation
+        to training on one large batch. Because the network uses GroupNorm (not BatchNorm), there are no batch-coupled
+        statistics, so this is a faithful stand-in for a true large batch rather than an approximation.
 
         Parameters
         ----------
         scaler : torch.cuda.amp.GradScaler
             Gradient scaler for mixed precision training.
         it : int
-            Current iteration number.
+            Current iteration number (counts optimizer steps, not micro-batches).
 
         Returns
         -------
         loss : torch.Tensor
-            Average loss value for the training batch at current iteration.
+            Mean loss value over the effective (accumulated) batch at the current iteration.
         """
-        # Zero gradients
+        # Number of gradient-accumulation micro-batches (1 == standard, un-accumulated training).
+        accumulation_steps = int(getattr(self.config, "accumulation_steps", 1))
+
+        # Zero gradients once for the whole accumulated optimizer step.
         self.optimizer.zero_grad()
 
-        # Get batch
-        batch, context, labels = self.unpack_batch(next(self.train_data))
+        # Accumulate gradients over `accumulation_steps` distinct micro-batches. Dividing each loss by
+        # `accumulation_steps` makes the summed gradient the mean over the effective batch. `scaler.scale` uses the same
+        # loss-scale for every micro-batch within a step (the scale only changes on `scaler.update()`), so the
+        # accumulation is internally consistent.
+        loss = 0.0
+        for _ in range(accumulation_steps):
+            batch, context, labels = self.unpack_batch(next(self.train_data))
+            with autocast():
+                micro_loss = self.batch_loss(batch, context=context, labels=labels) / accumulation_steps
+            scaler.scale(micro_loss).backward()
+            loss = loss + micro_loss.detach()
 
-        with autocast():
-            loss = self.batch_loss(batch, context=context, labels=labels)
-
-        # Backward pass & optimizer step
-        scaler.scale(loss).backward()
+        # Backward pass & optimizer step (a single step per accumulated batch).
         scaler.unscale_(self.optimizer)
         scaler.step(self.optimizer)
         scaler.update()
@@ -697,8 +718,8 @@ class DiffusionTrainer:
                 context=context,
                 class_labels=labels,
                 sigma_data=self.config.sigma_data,
-                P_mean=self.config.p_mean,
-                P_std=self.config.p_std,
+                p_mean=self.config.p_mean,
+                p_std=self.config.p_std,
             )
 
         return loss
