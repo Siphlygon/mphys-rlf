@@ -327,6 +327,10 @@ class ImagePathDataset(torch.utils.data.Dataset):
         las_values : array-like
             An array-like object containing the LAS values for each image in the dataset.
         """
+        # A field view of an HDF5 structured/compound array (e.g. f["cat_info"][:]["LAS"]) is non-contiguous -- its
+        # stride is the whole record size -- which torch.tensor rejects ("strides not a multiple of the element byte
+        # size"). np.ascontiguousarray makes an owned, contiguous float32 copy that converts cleanly.
+        las_values = np.ascontiguousarray(las_values, dtype=np.float32)
         self.las_values = torch.tensor(las_values, dtype=torch.float32)
 
 
