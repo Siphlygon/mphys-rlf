@@ -102,10 +102,13 @@ def fit_and_report(
     ValueError
         If an unknown transform kind is specified.
     """
+    logger.info(f"Fitting a {kind} flux transform to the dataset at {dataset_path}...")
+    logger.info(f"Loading images from key '{key}' with sample size {sample_images} and seed {seed}...")
     imgs = _load_images(dataset_path, key, sample_images, seed)
     finite = imgs[np.isfinite(imgs)]
 
     # Compute the raw standard deviation of the finite pixels and estimate the robust background noise
+    logger.info(f"Computing raw std and robust noise estimate for {finite.size} finite pixels...")
     raw_std = float(finite.std())
     noise = ft.robust_noise(ft._flat_sample(imgs, 100_000, seed))
     logger.info(f"Loaded {imgs.shape[0]} images from {dataset_path}.")
@@ -123,29 +126,30 @@ def fit_and_report(
 
     # Diagnostics: achieved std, round-trip error, and (for asinh) how much of the data is in the quasi-linear regime
     # |x| < beta.
+    logger.info("Computing diagnostics for the fitted transform...")
     transformed = transform.forward(finite)
     achieved_std = float(np.asarray(transformed).std())
     roundtrip_err = transform.max_abs_roundtrip_error(imgs, seed=seed)
     rel_err = roundtrip_err / (np.abs(finite).max() + 1e-30)
 
-    print("\n================ flux transform report ================")
-    print(f"dataset            : {dataset_path}")
-    print(f"kind               : {transform.name}")
-    print(f"params             : {transform.to_dict()}")
-    print(f"raw pooled std     : {raw_std:.4e} Jy/beam")
-    print(f"robust noise sigma : {noise:.4e} Jy/beam ({noise * 1e6:.1f} uJy/beam)")
-    print(f"target sigma_data  : {sigma_data}")
-    print(f"achieved std       : {achieved_std:.4f}   (should be ~= sigma_data)")
+    logger.info("\n================ flux transform report ================")
+    logger.info(f"dataset            : {dataset_path}")
+    logger.info(f"kind               : {transform.name}")
+    logger.info(f"params             : {transform.to_dict()}")
+    logger.info(f"raw pooled std     : {raw_std:.4e} Jy/beam")
+    logger.info(f"robust noise sigma : {noise:.4e} Jy/beam ({noise * 1e6:.1f} uJy/beam)")
+    logger.info(f"target sigma_data  : {sigma_data}")
+    logger.info(f"achieved std       : {achieved_std:.4f}   (should be ~= sigma_data)")
     if transform.name == "asinh":
         frac_linear = float(np.mean(np.abs(finite) < transform.beta))
-        print(f"beta               : {transform.beta:.4e} Jy/beam ({transform.beta * 1e3:.3f} mJy/beam)")
-        print(f"frac |x| < beta    : {frac_linear:.3f}   (fraction of pixels in the ~linear regime)")
-    print(f"max round-trip err : {roundtrip_err:.3e} Jy/beam  (relative {rel_err:.2e})")
-    print("-------------------------------------------------------")
-    print("Recommended config values (in transformed units):")
-    print(f'    "sigma_data": {sigma_data},  "sigma_min": 0.002,  "sigma_max": 80,')
-    print('    "p_mean": -2.5,  "p_std": 1.8,  "ema_rate": 0.9999')  # this is the same as the config defaults
-    print("=======================================================\n")
+        logger.info(f"beta               : {transform.beta:.4e} Jy/beam ({transform.beta * 1e3:.3f} mJy/beam)")
+        logger.info(f"frac |x| < beta    : {frac_linear:.3f}   (fraction of pixels in the ~linear regime)")
+    logger.info(f"max round-trip err : {roundtrip_err:.3e} Jy/beam  (relative {rel_err:.2e})")
+    logger.info("-------------------------------------------------------")
+    logger.info("Recommended config values (in transformed units):")
+    logger.info(f'    "sigma_data": {sigma_data},  "sigma_min": 0.002,  "sigma_max": 80,')
+    logger.info('    "p_mean": -2.5,  "p_std": 1.8,  "ema_rate": 0.9999')  # this is the same as the config defaults
+    logger.info("=======================================================\n")
 
     # Check that the round-trip error is within a reasonable tolerance. If it exceeds 0.1% of the maximum absolute value
     # of the finite pixels, log a warning.
@@ -154,7 +158,7 @@ def fit_and_report(
 
     out_path = output if output is not None else dataset_path.parent
     saved = transform.save(out_path)
-    print(f"Saved transform to: {saved}")
+    logger.info(f"Saved transform to: {saved}")
     return transform
 
 
