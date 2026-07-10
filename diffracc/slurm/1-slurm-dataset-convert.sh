@@ -18,4 +18,4 @@ source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 export HDF5_USE_FILE_LOCKING='FALSE'
-python /share/nas2_3/lgreen/mphys-rlf/src/dataset_prep/dataset_h5_to_fits.py --config DEFAULT
+python /share/nas2_3/lgreen/mphys-rlf/diffracc/dataset_prep/dataset_h5_to_fits.py --config DEFAULT

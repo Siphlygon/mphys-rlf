@@ -38,4 +38,4 @@ export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
 
 echo "Starting sweep agent"
-python /share/nas2_3/lgreen/mphys-rlf/src/training/sweep_runner.py
+python /share/nas2_3/lgreen/mphys-rlf/diffracc/training/sweep_runner.py

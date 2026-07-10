@@ -40,5 +40,5 @@ srun torchrun \
     --rdzv_id $RANDOM \
     --rdzv_backend c10d \
     --rdzv_endpoint $head_node_ip:$MASTER_PORT \
-    /share/nas2_3/lgreen/mphys-rlf/src/training/train.py
+    /share/nas2_3/lgreen/mphys-rlf/diffracc/training/train.py
 
