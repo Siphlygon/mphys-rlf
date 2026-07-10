@@ -224,6 +224,8 @@ class DiffusionTrainer:
             self.logger.info(f"Working with context: {self.config.context}.")
             if "max_values_tr" in self.config.context:
                 self.dataset.transform_max_vals()
+            if "las_values_tr" in self.config.context:
+                self.dataset.transform_las_vals()
             self.dataset.set_context(*self.config.context)
         self.config.batch_size = int(self.config.batch_size)
         self.val_every = (self.config.val_every

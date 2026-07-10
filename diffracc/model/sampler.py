@@ -424,6 +424,42 @@ class Sampler:
 
         return lambda n: model_dist.rvs(size=n)
 
+    def get_las_model_dist(self, train_set_path: str | None, las_values: np.ndarray | None = None):
+        """
+        Build a sampler over standardised LAS values from the training set, mirroring :meth:`get_fpeak_model_dist`.
+
+        LAS is standardised with the same power transform used during training (see
+        ``TrainDatasetNoScale.transform_las_vals``): Box-Cox for strictly-positive values, else Yeo-Johnson. Use the
+        returned function to draw LAS conditioning prompts consistent with the training distribution, so the joint
+        (peak flux, LAS) prompts stay on the training manifold. To prompt a *specific* physical LAS instead, fit the
+        same transform and call ``pt.transform([[physical_las]])``.
+
+        Parameters
+        ----------
+        train_set_path : Path or str or None
+            Path to the training HDF5 file. If given, LAS is read from ``cat_info['LAS']``. If None, ``las_values`` is
+            used instead.
+        las_values : np.ndarray, optional
+            LAS values to use when ``train_set_path`` is None.
+
+        Returns
+        -------
+        callable
+            A function mapping an integer n to n random standardised LAS samples.
+        """
+        if train_set_path is not None:
+            with h5py.File(train_set_path, "r") as f:
+                las_values = f["cat_info"][:]["LAS"]
+
+        arr = np.asarray(las_values, dtype=float).reshape(-1, 1)
+        method = "yeo-johnson" if (arr <= 0).any() else "box-cox"
+        pt = PowerTransformer(method=method)
+        las_tr = pt.fit_transform(arr).reshape(-1)
+        hist_tr = np.histogram(las_tr, bins=100)
+        model_dist = rv_histogram(hist_tr, density=False)
+
+        return lambda n: model_dist.rvs(size=n)
+
     def get_labels(self, n_labels=4, samples_per_label=None):
         """
         Get an array of labels for class-conditioned sampling.

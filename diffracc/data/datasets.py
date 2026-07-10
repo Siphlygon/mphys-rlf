@@ -238,24 +238,61 @@ class ImagePathDataset(torch.utils.data.Dataset):
         self.max_values = torch.stack([torch.max(img) for img in self.data])
 
 
+    @staticmethod
+    def _power_transform(values):
+        """
+        Fit a sklearn PowerTransformer to a 1-D context quantity and standardise it to ~N(0, 1).
+
+        Uses Box-Cox for strictly-positive data (matching the original peak-flux treatment) and falls back to
+        Yeo-Johnson if any value is <= 0 (Box-Cox requires positivity).
+
+        Parameters
+        ----------
+        values : torch.Tensor
+            The 1-D context values to standardise.
+
+        Returns
+        -------
+        tuple[np.ndarray, PowerTransformer]
+            The standardised values (numpy, same shape as ``values``) and the fitted transformer (kept so a physical
+            prompt can be mapped into the same standardised space at sampling time).
+        """
+        method = "yeo-johnson" if bool((values <= 0).any()) else "box-cox"
+        pt = PowerTransformer(method=method)
+        transformed = pt.fit_transform(values.view(-1, 1))
+        return transformed.reshape(tuple(values.shape)), pt
+
+
     def transform_max_vals(self):
         """
-        Applies a Box-Cox transformation to the maximum pixel values of the images in the dataset, which is passed to
-        the model as an additional context attribute.
-        
-        This transformation is useful for stabilising variance and making the data more normally distributed, which can
-        improve the performance of machine learning models.
+        Standardise the maximum pixel values (peak-flux conditioning signal) with a power transform, stored as
+        ``max_values_tr``.
+
+        This stabilises variance and makes the values approximately normally distributed, which conditions better and
+        keeps the peak-flux feature on the same ~N(0, 1) scale as any other standardised context (e.g. LAS).
         """
         if not hasattr(self, "max_values"):
             self.set_max_values()
+        self.max_values_tr, self.max_power_transformer = self._power_transform(self.max_values)
+        self.box_cox_lambda = self.max_power_transformer.lambdas_
+        print(f"Max values transformed with power transform ({self.max_power_transformer.lambdas_}).")
 
-        pt = PowerTransformer(method="box-cox")
-        pt.fit(self.max_values.view(-1, 1))
-        max_values_tr = pt.transform(self.max_values.view(-1, 1))
 
-        self.max_values_tr = max_values_tr.reshape(self.max_values.shape)
-        self.box_cox_lambda = pt.lambdas_
-        print(f"Max values transformed with Box-Cox transformation ({pt.lambdas_}).")
+    def transform_las_vals(self):
+        """
+        Standardise the LAS (Largest Angular Size) conditioning values with a power transform, stored as
+        ``las_values_tr`` -- the direct analogue of :meth:`transform_max_vals` for peak flux.
+
+        LAS enters the model as a second conditioning parameter alongside the (already standardised) transformed peak
+        flux. Feeding *raw* LAS (~arcsec, values ~2-120) next to a ~N(0, 1) peak-flux feature lets LAS dominate the
+        shared context embedding and degrades peak-flux calibration; standardising both to ~N(0, 1) removes that scale
+        mismatch. The fitted transformer is kept on ``self.las_power_transformer`` so a physical LAS prompt can be
+        mapped into the same standardised space at sampling time.
+        """
+        assert hasattr(self, "las_values"), "LAS values not set; call set_las_values before transform_las_vals."
+        self.las_values_tr, self.las_power_transformer = self._power_transform(self.las_values)
+        self.las_box_cox_lambda = self.las_power_transformer.lambdas_
+        print(f"LAS values transformed with power transform ({self.las_power_transformer.lambdas_}).")
 
 
     def apply_flux_transform(self, transform: _GlobalFluxTransform) -> None:
