@@ -405,13 +405,17 @@ class EDMPrecond(configModuleBase):
             The denoised output tensor.
         """
 
-        # Expand sigma to shape [batch_size, 1, 1, 1]
-        sigma = sigma.view([-1, 1, 1, 1])
+        # Expand sigma to shape [batch_size, 1, 1, 1].
+        # Coefficients are computed in float32 even under autocast: for small sigma_data the
+        # terms sigma_data**2 / sigma**2 underflow float16 to 0, giving 0/0 = NaN in c_skip and
+        # inf in the loss weight. fp32 here is numerically free and removes that failure mode.
+        sigma = sigma.view([-1, 1, 1, 1]).float()
+        sigma_data = float(self.sigma_data)
 
         # Weight coefficients for each term
-        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
-        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2).sqrt()
-        c_in = 1 / (self.sigma_data**2 + sigma**2).sqrt()
+        c_skip = sigma_data**2 / (sigma**2 + sigma_data**2)
+        c_out = sigma * sigma_data / (sigma**2 + sigma_data**2).sqrt()
+        c_in = 1 / (sigma_data**2 + sigma**2).sqrt()
         c_noise = sigma.log() / 4
 
         # Apply inner model
