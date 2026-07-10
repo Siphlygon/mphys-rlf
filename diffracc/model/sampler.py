@@ -67,6 +67,10 @@ class Sampler:
             # Output setup
             "comment": "",
             "return_steps": True,
+            # Optional global flux transform (instance, param dict, or path to flux_transform.json). If set, its inverse
+            # is applied to the generated images to map them back to physical Jy/beam. None leaves the model's output
+            # space untouched.
+            "flux_transform": None,
             # Solver setup
             "timesteps": 25,
             "guidance_strength": 0.1,
@@ -78,10 +82,11 @@ class Sampler:
             "S_max": torch.inf,
             "S_noise": 1,
         }
-        self.settings_not_save = ["n_samples", "n_devices", "samples_per_device"]
+        self.settings_not_save = ["n_samples", "n_devices", "samples_per_device", "flux_transform"]
 
         # Update settings with user input
         self.settings.update(settings)
+
 
     def sample(
         self,
@@ -192,6 +197,7 @@ class Sampler:
         )
 
         return imgs
+
 
     def quick_sample(
         self,
@@ -354,8 +360,13 @@ class Sampler:
         else:
             imgs = torch.concat(batch_list).cpu().numpy()
 
-        # Scale images from [-1, 1] to [0, 1]
-        #imgs = (imgs + 1) / 2
+        # Invert the global flux transform (if any) to map samples back to physical Jy/beam.
+        # Applied to every step, since the transform is a monotonic bijection.
+        if self.settings.get("flux_transform") is not None:
+            from ..data.flux_transforms import load as load_flux_transform  # import if necessary
+            transform = load_flux_transform(self.settings["flux_transform"])
+            self.logger.info(f"Inverting flux transform on samples: {transform.to_dict()}")
+            imgs = transform.inverse(imgs)
 
         # Release GPU memory
         del model, batch_list
