@@ -11,6 +11,7 @@ import torch.distributed as dist
 
 from ..data import datasets
 from ..model.config import ModelConfig
+from ..utils import paths
 from .trainer import DiffusionTrainer
 
 
@@ -44,8 +45,8 @@ if __name__ == "__main__":
     #device_utils.set_visible_devices(1)
 
     # Set model preset:
-    # (i.e. name of the json file in the model_configs directory)
-    MODEL_PRESET = "LOFAR_retrained"
+    # (i.e. name of the json file in the model_configs directory; override with the MODEL_PRESET env var)
+    MODEL_PRESET = os.environ.get("MODEL_PRESET", "LOFAR_retrained")
 
     # Hyperparameters
     conf = ModelConfig.from_preset(MODEL_PRESET)
@@ -60,12 +61,16 @@ if __name__ == "__main__":
     if "DATASET_PATH" in os.environ:
         dataset_path = os.environ["DATASET_PATH"]
     else:
-        dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
+        dataset_path = paths.DATASET_PATH_H5
 
+    # Optional global flux transform: path to a flux_transform.json (or the directory containing it), as produced by
+    # `python -m diffracc.dataset_prep.fit_flux_transform`. Required to train the LOFAR_asinh config, which assumes the
+    # data has been brought to sigma_data ~ 0.5; without it the raw Jy data (std ~1e-2) is mismatched to sigma_data.
+    flux_transform = os.environ.get("FLUX_TRANSFORM")
     if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
         dataset = datasets.TrainDatasetScaled(dataset_path)
     else:
-        dataset = datasets.TrainDatasetNoScale(dataset_path)
+        dataset = datasets.TrainDatasetNoScale(dataset_path, flux_transform=flux_transform)
 
     # Get LAS values for the dataset context
     if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
