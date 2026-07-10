@@ -25,7 +25,7 @@ def _pad_to_80x80(arr: np.ndarray) -> np.ndarray:
         The padded array with shape (80, 80).
     """
     target_shape = (80, 80)
-    padded = np.full(target_shape, np.nan)
+    padded = np.full(target_shape, np.nan, dtype=np.float32)
 
     # Get original values and copy them to the padded array
     h, w = arr.shape
@@ -140,7 +140,7 @@ def load_single_cutout(file: Path, logger: Logger) -> np.ndarray:
 
     except Exception as e:
         logger.error(f"Error loading cutout file {file}: {e}. Returning NaNs for this item.")
-        return np.full((80, 80), np.nan)
+        return np.full((80, 80), np.nan, dtype=np.float32)
 
 
 
