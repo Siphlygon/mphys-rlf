@@ -163,10 +163,21 @@ class Unet(configModuleBase):
         self.label_dropout = label_dropout
         self.n_labels = n_labels
 
-        # Context embedding
-        self.context_emb = (
-            LinearFeatureEmbedding(context_dim, emb_dim) if context_dim else None
-        )
+        # Context embedding.
+        #   - No context               -> None.
+        #   - Single conditioning param -> one LinearFeatureEmbedding, identical to the original architecture
+        #     (same submodule and state-dict keys, so existing single-condition models/checkpoints are unaffected).
+        #   - Multiple conditioning params -> AdditiveContextEmbedding: embed each feature separately and sum, so no
+        #     single (possibly larger-magnitude) condition dominates a shared linear layer, and each condition can be
+        #     dropped independently for classifier-free guidance.
+        if not context_dim:
+            self.context_emb = None
+        elif context_dim == 1:
+            self.context_emb = LinearFeatureEmbedding(context_dim, emb_dim)
+        else:
+            self.context_emb = AdditiveContextEmbedding(
+                context_dim, LinearFeatureEmbedding, dim_in=1, dim_out=emb_dim
+            )
         self.context_dim = context_dim
         self.context_dropout = context_dropout
 
@@ -304,12 +315,23 @@ class Unet(configModuleBase):
 
         # Context embedding
         if self.context_emb is not None and context is not None:
-            context_emb = self.context_emb(context.to(x.dtype))
+            context = context.to(x.dtype)
 
-            if self.training and self.context_dropout:
-                mask = torch.rand([x.shape[0], 1], device=x.device)
-                mask = mask >= self.context_dropout
-                context_emb = context_emb * mask.to(context_emb.dtype)
+            if isinstance(self.context_emb, AdditiveContextEmbedding):
+                # Multiple conditions: embed each feature separately and drop them *independently*, so the model sees
+                # every subset of conditions during training and learns each one's marginal effect -- required for
+                # disentangled, independently-promptable control.
+                per_feature = self.context_emb.embed_each(context)  # (batch, context_dim, emb_dim)
+                if self.training and self.context_dropout:
+                    keep = torch.rand(per_feature.shape[:2], device=x.device) >= self.context_dropout
+                    per_feature = per_feature * keep.to(per_feature.dtype)[..., None]
+                context_emb = per_feature.sum(dim=1)
+            else:
+                # Single condition: unchanged joint dropout (identical to the original behaviour).
+                context_emb = self.context_emb(context)
+                if self.training and self.context_dropout:
+                    mask = torch.rand([x.shape[0], 1], device=x.device) >= self.context_dropout
+                    context_emb = context_emb * mask.to(context_emb.dtype)
 
             emb = emb + context_emb
 

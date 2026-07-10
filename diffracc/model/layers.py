@@ -320,24 +320,40 @@ class AdditiveContextEmbedding(nn.Module):
         for i, layer in enumerate(self.emb_layers):
             self.add_module(f"emb_{i}", layer)
 
-    def forward(self, x):
+    def embed_each(self, x):
         """
-        Forward pass of the AdditiveContextEmbedding layer.
+        Embed each context feature separately, without summing.
 
         Parameters
         ----------
         x : torch.Tensor
-            Input tensor.
+            Context tensor of shape (batch_size, context_dim).
 
         Returns
         -------
         torch.Tensor
-            Embedding tensor.
+            Per-feature embeddings of shape (batch_size, context_dim, dim). Summing over dim=1 gives the standard
+            additive context embedding; keeping them separate lets the caller drop each feature independently.
         """
-        print(f"Context on {x.device}")
-        return sum(
-            layer(x[:, i].view(-1, 1)) for i, layer in enumerate(self.emb_layers)
+        return torch.stack(
+            [layer(x[:, i].view(-1, 1)) for i, layer in enumerate(self.emb_layers)], dim=1
         )
+
+    def forward(self, x):
+        """
+        Forward pass of the AdditiveContextEmbedding layer: the sum of the per-feature embeddings.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, context_dim).
+
+        Returns
+        -------
+        torch.Tensor
+            Summed embedding of shape (batch_size, dim).
+        """
+        return self.embed_each(x).sum(dim=1)
 
 
 class WeightStandardizedConv2d(nn.Conv2d):

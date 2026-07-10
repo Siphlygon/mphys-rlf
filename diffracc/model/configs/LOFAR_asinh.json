@@ -34,7 +34,7 @@
     "n_devices": 2,
     "context": [
         "max_values_tr",
-        "las_values"
+        "las_values_tr"
     ],
     "context_dropout": 0.1,
     "context_dim": 1
