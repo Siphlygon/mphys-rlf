@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import random
 from collections.abc import Iterable
 from pathlib import Path
@@ -14,6 +16,8 @@ from .transforms import TrainTransformNoScale
 
 if TYPE_CHECKING:
     import torchvision.transforms as T
+
+    from .flux_transforms import _GlobalFluxTransform
 
 # Assuming this is in datasets.datasets or a similar module
 logger = get_logger(__name__)
@@ -65,6 +69,9 @@ class ImagePathDataset(torch.utils.data.Dataset):
         # Set up attributes
         self.transforms = transforms
         self._context = []
+        # Global, invertible flux-space transform (see data.flux_transforms). None means the raw pixel values are used
+        # unchanged.
+        self.flux_transform = None
 
         # Documenting future attributes for type checking and clarity
         self.data : torch.Tensor
@@ -251,6 +258,28 @@ class ImagePathDataset(torch.utils.data.Dataset):
         print(f"Max values transformed with Box-Cox transformation ({pt.lambdas_}).")
 
 
+    def apply_flux_transform(self, transform: _GlobalFluxTransform) -> None:
+        """
+        Apply a global, invertible flux-space transform (see :mod:`diffracc.data.flux_transforms`) in place to every
+        image in the dataset.
+
+        This must be called after ``set_max_values`` so that ``self.max_values`` (the peak-flux conditioning signal)
+        remains in physical Jy/beam units, letting the model be prompted with real fluxes while it trains on transformed
+        pixels. The transform is stored on ``self.flux_transform`` so it can be recorded with the model and inverted at
+        sampling time.
+
+        Parameters
+        ----------
+        transform : flux_transforms._GlobalFluxTransform
+            A fitted flux transform exposing ``forward`` / ``inverse``.
+        """
+        if not hasattr(self, "max_values"):
+            self.set_max_values()
+        self.data = transform.forward(self.data)
+        self.flux_transform = transform
+        logger.info(f"Applied flux transform to dataset images: {transform.to_dict()}")
+
+
     def set_las_values(self, las_values):
         """
         Sets the LAS (Largest Angular Size) values for the images in the dataset, which can be used as an additional
@@ -264,6 +293,7 @@ class ImagePathDataset(torch.utils.data.Dataset):
         self.las_values = torch.tensor(las_values, dtype=torch.float32)
 
 
+
 class TrainDatasetNoScale(ImagePathDataset):
     """
     A subclass of ImagePathDataset that applies a specific set of transformations for training without scaling the
@@ -271,11 +301,52 @@ class TrainDatasetNoScale(ImagePathDataset):
     
     This is used for our program as we do not implement scaling to try and keep pixel values as close to the original as
     possible, and to avoid losing information in the images.
-
-    Parameters
-    ----------
-    ImagePathDataset : _type_
-        _description_
     """
-    def __init__(self, path, img_size=80, **kwargs):
+    def __init__(self, path: str | Path, img_size: int = 80, **kwargs):
+        """
+        Initialises the TrainDatasetNoScale class.
+
+        Parameters
+        ----------
+        path : str | Path
+            Path to the dataset (see :class:`ImagePathDataset`).
+        img_size : int, optional
+            Image size for the augmentation transforms, by default 80
+        """
         super().__init__(path, transforms=TrainTransformNoScale(img_size), **kwargs)
+
+
+
+class TrainDatasetScaled(ImagePathDataset):
+    """
+    A subclass of ImagePathDataset that applies invertible flux-space transforms to the images. This is used for
+    training models that benefit from using scaled inputs, such as diffusion models.
+    
+    This is used for our program as we do not implement per-image relative scaling to be able to feed images that stand
+    in a global distribution into the model.
+    """
+    def __init__(self,
+                 path: str | Path,
+                 img_size: int = 80,
+                 flux_transform: str | Path | dict | _GlobalFluxTransform | None = None,
+                 **kwargs):
+        """
+        Initialises the TrainDatasetScaled class.
+        
+        Parameters
+        ----------
+        path : str | Path
+            Path to the dataset (see :class:`ImagePathDataset`).
+        img_size : int, optional
+            Image size for the augmentation transforms, by default 80.
+        flux_transform : str | Path | dict | _GlobalFluxTransform | None, optional
+            A global, invertible flux-space transform to apply to every image (an instance, a parameter dict, or a
+            path/directory to a saved ``flux_transform.json``; see :func:`diffracc.data.flux_transforms.load`). 
+            ``None`` (default) keeps raw pixel values, reproducing the original no-scaling behaviour.
+        """
+        super().__init__(path, transforms=TrainTransformNoScale(img_size), **kwargs)
+
+        if flux_transform is not None:
+            # Imported here to avoid a circular import at module load time.
+            from .flux_transforms import load as load_flux_transform
+            self.apply_flux_transform(load_flux_transform(flux_transform))

@@ -202,9 +202,9 @@ def main():
         dataset_path = "hardcastle_catalogue/clean_hardcastle_catalogue.h5"
 
     if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
-        dataset = datasets.TrainDatasetNoScale(dataset_path)
+        dataset = datasets.TrainDatasetScaled(dataset_path)
     else:
-        dataset = datasets.ImagePathDataset(dataset_path)
+        dataset = datasets.TrainDatasetNoScale(dataset_path)
 
     # Get LAS values for the dataset context
     if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
