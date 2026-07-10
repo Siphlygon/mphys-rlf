@@ -316,7 +316,9 @@ class CutoutPreprocessor:
         Returns
         -------
         np.ndarray
-            A boolean mask indicating which sources are RLAGN.
+            A boolean mask indicating which sources are RLAGN. Sources lacking the WISE/luminosity/redshift data
+            needed to classify them as SFG or RQQ are kept by default (self.exclusive=False) or dropped
+            (self.exclusive=True), except for the low peak-flux / low-redshift override, which always applies.
         """
         # Extract the WISE magnitudes and frequencies
         wise_3_flux = mag_to_flux_w3(wise_3_mag)
@@ -342,7 +344,16 @@ class CutoutPreprocessor:
             & (wise_3_absmag < -27) & ~np.isnan(wise_3_magerr)
         rlagn_mask = ~sfg_mask & ~rqq_mask
 
-        # They also cut out peak fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01
+        # Sources without enough WISE/luminosity/redshift data to be classified as SFG or RQQ fall through to
+        # ~sfg_mask & ~rqq_mask = True above, i.e. they are kept by default. self.exclusive flips this default: only
+        # sources with the data to positively confirm they're not SFG/RQQ are kept, so undetermined sources are cut.
+        if self.exclusive:
+            insufficient_data = np.isnan(wise_2_mag) | np.isnan(wise_3_mag) | np.isnan(wise_3_magerr) \
+                | np.isnan(luminosities) | np.isnan(redshifts)
+            rlagn_mask = rlagn_mask & ~insufficient_data
+
+        # They also cut out peak fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
+        # regardless of exclusivity, since this override doesn't depend on the WISE-based classification above
         rlagn_mask = rlagn_mask | (peak_flux <= 1.1) | (redshifts <= 0.01)
 
         return rlagn_mask
@@ -542,19 +553,13 @@ class CutoutPreprocessor:
             peak_flux_list.append(peak_flux)
 
             edge_max_list.append(self._calculate_edge_max_single(img))
-            if np.isnan([source['mag_w2'],
-                         source['mag_w3'],
-                         source['magerr_w3'],
-                         source['L_144'],
-                         source['z_best']]).any():
-                rlagn_list.append(True) # if we don't have the info to determine if it's an RLAGN, we will assume it is
-            else:
-                rlagn_list.append(self._select_rlagn(source['mag_w2'],
-                                               source['mag_w3'],
-                                               source['magerr_w3'],
-                                               source['L_144'],
-                                               source['z_best'],
-                                               peak_flux))
+            # _select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
+            rlagn_list.append(self._select_rlagn(source['mag_w2'],
+                                           source['mag_w3'],
+                                           source['magerr_w3'],
+                                           source['L_144'],
+                                           source['z_best'],
+                                           peak_flux))
 
         # Put the flags into the dataset
         dataset.loc[valid_indices, 'size'] = size_list
