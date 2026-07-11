@@ -19,11 +19,12 @@ def ddp_setup():
     """
     Set up Distributed Data Parallel (DDP) for multi-GPU training.
     """
-    local_rank = os.environ[ "LOCAL_RANK" ]
-    rank = os.environ[ "RANK" ]
-    print( f"Local rank/Global rank: {local_rank}/{rank}" )
+    local_rank = os.environ["LOCAL_RANK"]
+    rank = os.environ["RANK"]
+    print(f"Local rank/Global rank: {local_rank}/{rank}")
     torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group(backend="nccl")
+
 
 def ddp_cleanup():
     """
@@ -32,9 +33,7 @@ def ddp_cleanup():
     dist.destroy_process_group()
 
 
-
 if __name__ == "__main__":
-    # Initialise DDP
     try:
         ddp_setup()
     except KeyError as e:
@@ -47,15 +46,11 @@ if __name__ == "__main__":
     # Set model preset:
     # (i.e. name of the json file in the model_configs directory; override with the MODEL_PRESET env var)
     MODEL_PRESET = os.environ.get("MODEL_PRESET", "LOFAR_retrained")
-
-    # Hyperparameters
     conf = ModelConfig.from_preset(MODEL_PRESET)
 
-    # Change the name if you want:
-    # (otherwise default name is used)
+    # Change the name if you want: (otherwise default name is used)
     if "MODEL_NAME" in os.environ:
         setattr(conf, "model_name", os.environ["MODEL_NAME"])
-    # conf.model_name = "Alternative_Name"
 
     # Load dataset:
     if "DATASET_PATH" in os.environ:
@@ -78,10 +73,16 @@ if __name__ == "__main__":
             las_values = f["cat_info"][:]["LAS"]
             dataset.set_las_values(las_values)
 
-    # Initialize trainer
-    trainer = DiffusionTrainer(config=conf, dataset=dataset)
+    # Initialize wandb logging:
+    if "WANDB_API_PATH" in os.environ and os.environ["WANDB_API_PATH"]:
+        wandb_api_path = os.environ["WANDB_API_PATH"]
+        if os.path.isfile(wandb_api_path):
+            with open(wandb_api_path, "r", encoding="utf-8") as f:
+                wandb_api_key = f.read().strip()
+            os.environ["WANDB_API_KEY"] = wandb_api_key
 
-    # Start training
+    # Training
+    trainer = DiffusionTrainer(config=conf, dataset=dataset)
     trainer.training_loop()
 
     # Clean up DDP

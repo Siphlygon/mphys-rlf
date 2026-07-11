@@ -37,17 +37,23 @@ def launch():
         "--nproc_per_node=2",
         "--rdzv_backend=c10d",
         "--rdzv_endpoint=" + host_ip + ":" + master_port,
-        "src/training/sweeps.py"
+        "-m diffracc.training.sweeps"
     ], check=True, env=env)
 
 
 if __name__ == "__main__":
-    # Initialise wandb logging
+    # Initialise wandb logging#
+    if "WANDB_API_PATH" in os.environ and os.environ["WANDB_API_PATH"]:
+        wandb_api_path = os.environ["WANDB_API_PATH"]
+        if os.path.isfile(wandb_api_path):
+            with open(wandb_api_path, "r", encoding="utf-8") as f:
+                wandb_api_key = f.read().strip()
+            os.environ["WANDB_API_KEY"] = wandb_api_key
     wandb.login(key=os.environ.get("WANDB_KEY"))
     PROJECT = "diffusion-radio-galaxies-sweeps"
 
     # Define the sweep configuration
-    PARAMETERS_PATH = "src/training/sweep_params.json"
+    PARAMETERS_PATH = "diffracc/training/sweep_params.json"
     if os.path.exists(PARAMETERS_PATH):
         try:
             with open(PARAMETERS_PATH, 'r', encoding='utf-8') as f:

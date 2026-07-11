@@ -20,7 +20,7 @@ echo "Nodes:"
 echo $SLURM_JOB_NUM_NODES
 export MASTER_PORT=12365
 export HDF5_USE_FILE_LOCKING='FALSE'
-export WANDB_API_KEY="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"
+export WANDB_API_PATH="/share/nas2_3/lgreen/mphys-rlf/.wandb_api_key"
 
 ## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
 nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
