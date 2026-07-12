@@ -15,6 +15,23 @@ from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 
+def read_images(path: Path) -> fits.FITS_rec:
+    """
+    Read images from a FITS file at the given path.
+
+    Parameters
+    ----------
+    path : Path
+        The path to the FITS file.
+
+    Returns
+    -------
+    fits.FITS_rec
+        The data from the FITS file.
+    """
+    return fits.getdata(path, 0)  # type: ignore
+
+
 class SizeBinnedCompleteness(CompletenessEstimator):
     """
     A class to generate completeness curves binned by angular size, to investigate how completeness varies with
@@ -45,7 +62,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
             The file to save the output to. Defaults to None.
         """
         super().__init__(config_str, which_dataset, override_data)
-        self.logger = get_logger("SizeBinnedCompleteness", LoggingLevels.DEBUG.value)
+        self.logger = get_logger("SizeBinnedCompleteness", LoggingLevels.DEBUG.value)  # overwrite logger
 
         # Add functionality to extract angular sizes and model images/fluxes if not using ImageDataArrays
         if override_data:
@@ -53,8 +70,6 @@ class SizeBinnedCompleteness(CompletenessEstimator):
             assert len(paths_to_use) == 3, ("You must provide exactly 3 paths to use if override_data is True:"
                                             " [ang_size_path, model_image_path, model_flux_path]")
             assert output_file is not None, "You must provide an output file if override_data is True"
-
-            rfa = RecursiveFileAnalyzer(paths_to_use[0])
 
             self.data = SubdirData()
             self.orig_data = SubdirData()
@@ -65,28 +80,25 @@ class SizeBinnedCompleteness(CompletenessEstimator):
             indices, sizes = ang_size_finder.estimate_angular_sizes(output_file=output_file)
             self.sizes = sizes
 
-            # Get model images
-            def read_model_images(path: Path):
-                return fits.getdata(path, 0)
-
+            rfa = RecursiveFileAnalyzer(paths_to_use[0])
             self.logger.info("Getting model images...")
-            model_images, mi_indices = rfa.run_pipeline(function=read_model_images,
-                                            return_nums=True,
-                                            root_dir=paths_to_use[1],
-                                            mode="file",
-                                            pattern=r'.*?\D+(\d+)\.fits$',
-                                            show_progress=False)
+            model_images, mi_indices = rfa.run_pipeline(function=read_images,
+                                                        return_nums=True,
+                                                        root_dir=paths_to_use[1],
+                                                        mode="file",
+                                                        pattern=r'.*?\D+(\d+)\.fits$',
+                                                        show_progress=False)
             self.model_images = model_images
             self.model_images *= 1e3 # convert from Jy/beam to mJy/beam
 
             # Get model fluxes
             self.logger.info("Getting model fluxes...")
             model_fluxes, mf_indices = rfa.run_pipeline(function=get_model_flux,
-                                                return_nums=True,
-                                                pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
-                                                root_dir=paths_to_use[2],
-                                                mode="file",
-                                                show_progress=False)
+                                                        return_nums=True,
+                                                        pattern=r'.*?\D+(\d+)\.fits.pybdsf.log$',
+                                                        root_dir=paths_to_use[2],
+                                                        mode="file",
+                                                        show_progress=False)
             self.model_fluxes = model_fluxes
             self.model_fluxes *= 1e3  # convert from Jy/beam to mJy/beam
 

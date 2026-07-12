@@ -149,7 +149,8 @@ class MakeShape():
         return ellist
 
 
-    def _find_furthest_points(self, points: np.ndarray) -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
+    def _find_furthest_points(self, points: np.ndarray) \
+                                -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
         """
         A function to find the pair of points in a given set of points that are furthest apart, and return these points
         as a tuple.
@@ -161,9 +162,11 @@ class MakeShape():
 
         Returns
         -------
-        tuple[tuple[tuple[float, float], tuple[float, float]], float]
+        best_coords : tuple[tuple[float, float], tuple[float, float]]
             A tuple containing the pair of points that are furthest apart, where each point is represented as a tuple of
-            (x, y) coordinates, along with the maximum distance.
+            (x, y) coordinates.
+        mdist2 : float
+            The maximum distance between the pair of points that are furthest apart.
         """
         mdist2 = 0
         best_coords = None
@@ -255,13 +258,9 @@ class AngularSizeFinder:
     """
     A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
     extracted from PyBDSF catalogue FITS files.
-    
-    The class processes the FITS files, filters the components based on total flux, and estimates the angular size of
-    the sources by creating a shape from the components and calculating the maximum distance between points on the
-    convex hull of this shape.
     """
     def __init__(self,
-                 root_dir: Path = paths.STORAGE_PARENT / "diffrac/completeness/retrained_loguniform_catalogs",
+                 root_dir: Path = paths.STORAGE_PARENT / "diffracc/completeness/retrained_loguniform_catalogs",
                  flux_threshold: float = 0.95):
         """
         This class processes PyBDSF catalogue FITS files containing Gaussian component data for radio sources, filters
@@ -272,7 +271,7 @@ class AngularSizeFinder:
         ----------
         root_dir : Path, optional
             The root directory containing the FITS files to be processed, by default
-            paths.STORAGE_PARENT / "diffrac/completeness/retrained_loguniform_catalogs"
+            paths.STORAGE_PARENT / "diffracc/completeness/retrained_loguniform_catalogs"
         flux_threshold : float, optional
             The fraction of total flux to keep when filtering components, by default 0.95. Components contributing to
             the dimmest flux are removed while keeping total flux above this threshold.
@@ -293,11 +292,16 @@ class AngularSizeFinder:
         """
         Process a single FITS file to extract the component data for estimating the angular size of the source.
         
+        A FITS file is expected to contain a PyBDSF catalogue of Gaussian components for a single radio source. The
+        method reads the component data, filters the components based on their contribution to the total flux of the
+        source, and returns a list of tuples containing the relevant component information (total flux, RA, DEC, major
+        axis, minor axis, position angle) for the filtered components.
+        
         Parameters
         ----------
         file_path : Path
-            The path to the FITS file containing the component data for a single source.
-        
+            The path to the FITS file  the component data for a single source.
+        containing
         Returns
         -------
         list[tuple]
@@ -306,7 +310,7 @@ class AngularSizeFinder:
         """
         components = []
         with fits.open(file_path) as hdul:
-            data = hdul[1].data  # type: ignore
+            data = hdul[1].data
             for row in data:
                 components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
 
@@ -334,10 +338,9 @@ class AngularSizeFinder:
         # Sort components by total flux in descending order
         components.sort(key=lambda x: x[0], reverse=True)
 
-        # Calculate the total flux of the source by summing the total flux of all components
         sum_flux = sum(component[0] for component in components)
         if sum_flux == 0:
-            return []
+            raise ValueError("Total flux of the source is zero. Cannot filter components based on flux threshold.")
 
         # Filter components based on their contribution to the total flux, removing the dimmest components while keeping
         # total flux above the specified threshold
@@ -399,10 +402,10 @@ class AngularSizeFinder:
         
         Returns
         -------
-        tuple[np.ndarray, np.ndarray]
-            A tuple containing the indices of the sources and their estimated angular sizes.
-        
-        
+        indices : np.ndarray
+            An array of indices corresponding to the FITS files processed.
+        sizes : np.ndarray
+            An array of estimated angular sizes for the sources, in arcseconds.
         """
         # If the output file already exists, read the sizes from the file and return them along with the corresponding
         # indices
@@ -411,10 +414,10 @@ class AngularSizeFinder:
                 ang_sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
             except Exception as e:
                 raise Exception(f"Failed to read {output_file}. Please check the file and try again: {e}") from e
+
             fits_indices = self.rfa.get_unwrapped_list(path=fits_dir,
                                                        pattern=pattern,
                                                        return_nums=True).numbers
-
             return fits_indices, ang_sizes
 
         # Run the pipeline to extract component data from each FITS file,
