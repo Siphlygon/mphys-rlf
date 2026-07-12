@@ -11,9 +11,9 @@ from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from tqdm import tqdm
 
+from ..rlf.agn_selection import select_rlagn
 from ..utils import data_utils as du
 from ..utils import paths
-from ..utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
@@ -286,79 +286,6 @@ class CutoutPreprocessor:
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
 
-
-    def _select_rlagn(self,
-                     wise_2_mag: np.ndarray,
-                     wise_3_mag: np.ndarray,
-                     wise_3_magerr: np.ndarray,
-                     luminosities: np.ndarray,
-                     redshifts: np.ndarray,
-                     peak_flux: np.ndarray) -> np.ndarray:
-        """
-        Selects RLAGN sources based on the criteria from Hardcastle et al. 2025, using WISE magnitudes, luminosities,
-        and redshifts.
-
-        Parameters
-        ----------
-        wise_2_mag : np.ndarray
-            The WISE W2 magnitudes.
-        wise_3_mag : np.ndarray
-            The WISE W3 magnitudes.
-        wise_3_magerr : np.ndarray
-            The errors in the WISE W3 magnitudes.
-        luminosities : np.ndarray
-            The luminosities of the sources.
-        redshifts : np.ndarray
-            The redshifts of the sources.
-        peak_flux : np.ndarray
-            The peak fluxes of the sources.
-
-        Returns
-        -------
-        np.ndarray
-            A boolean mask indicating which sources are RLAGN. Sources lacking the WISE/luminosity/redshift data
-            needed to classify them as SFG or RQQ are kept by default (self.exclusive=False) or dropped
-            (self.exclusive=True), except for the low peak-flux / low-redshift override, which always applies.
-        """
-        # Extract the WISE magnitudes and frequencies
-        wise_3_flux = mag_to_flux_w3(wise_3_mag)
-        wise_2_flux = mag_to_flux_w2(wise_2_mag)
-        wise_3_freq = 3e8 / 12e-6
-        wise_2_freq = 3e8 / 4.6e-6
-
-        # Calculate the spectral indices for the sources for a k-correction
-        spectral_inds = -np.log(wise_3_flux / wise_2_flux) / np.log(wise_3_freq / wise_2_freq)
-
-        # Calculate the SFG exclusion mask based on Hardcastle et al. 2025
-        wise_3_absmag = wise_3_mag - 5 * (
-            np.log10(self.cosmo.luminosity_distance(redshifts).to(u.parsec).value) - 1) \
-                + k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
-        sfg_mask = (luminosities < 10**(14 - wise_3_absmag / 2.5)) \
-            & (luminosities < 10**(24.8)) & ~np.isnan(wise_3_magerr)
-
-        # Calculate the RQQ exclusion criteria based on Hardcastle et al. 2025
-        rqq_xpt = -27.923076923076923 #mag
-        rqq_ypt = 25.563106796116504 #log10( lum )
-
-        rqq_mask = (luminosities < 10**(-(wise_3_absmag - rqq_xpt) / 3.4844629455909923 + rqq_ypt)) \
-            & (wise_3_absmag < -27) & ~np.isnan(wise_3_magerr)
-        rlagn_mask = ~sfg_mask & ~rqq_mask
-
-        # Sources without enough WISE/luminosity/redshift data to be classified as SFG or RQQ fall through to
-        # ~sfg_mask & ~rqq_mask = True above, i.e. they are kept by default. self.exclusive flips this default: only
-        # sources with the data to positively confirm they're not SFG/RQQ are kept, so undetermined sources are cut.
-        if self.exclusive:
-            insufficient_data = np.isnan(wise_2_mag) | np.isnan(wise_3_mag) | np.isnan(wise_3_magerr) \
-                | np.isnan(luminosities) | np.isnan(redshifts)
-            rlagn_mask = rlagn_mask & ~insufficient_data
-
-        # They also cut out peak fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
-        # regardless of exclusivity, since this override doesn't depend on the WISE-based classification above
-        rlagn_mask = rlagn_mask | (peak_flux <= 1.1) | (redshifts <= 0.01)
-
-        return rlagn_mask
-
-
     def _calculate_snr_single(self,
                              noise_level: float,
                              peak_flux: float) -> float:
@@ -506,7 +433,14 @@ class CutoutPreprocessor:
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
         luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
         redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
-        rlagn_mask = self._select_rlagn(wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, global_max*1000)
+        rlagn_mask = select_rlagn(wise_2_mag,
+                                  wise_3_mag,
+                                  wise_3_magerr,
+                                  luminosities,
+                                  redshifts,
+                                  global_max*1000,
+                                  cosmo=self.cosmo,
+                                  exclusive=self.exclusive)[0]
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
@@ -554,12 +488,14 @@ class CutoutPreprocessor:
 
             edge_max_list.append(self._calculate_edge_max_single(img))
             # _select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
-            rlagn_list.append(self._select_rlagn(source['mag_w2'],
+            rlagn_list.append(select_rlagn(source['mag_w2'],
                                            source['mag_w3'],
                                            source['magerr_w3'],
                                            source['L_144'],
                                            source['z_best'],
-                                           peak_flux))
+                                           peak_flux,
+                                           cosmo=self.cosmo,
+                                           exclusive=self.exclusive)[0])
 
         # Put the flags into the dataset
         dataset.loc[valid_indices, 'size'] = size_list
