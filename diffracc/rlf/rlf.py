@@ -61,11 +61,11 @@ class RLF:
     """
 
     def __init__(self,
-                 fluxes : np.ndarray,
+                 fluxes: np.ndarray,
                  redshifts: np.ndarray,
                  luminosities: np.ndarray,
                  resolved: np.ndarray,
-                 cosmo : astropy.cosmology.Cosmology,
+                 cosmo : astropy.cosmology.FlatLambdaCDM,
                  bias: float = 0,
                  flux_cut_jy: float = 1.1e-3,
                  debug_flux_lum_relation: bool = False,
@@ -87,7 +87,7 @@ class RLF:
             The array of luminosities of the AGN
         resolved : np.ndarray
             The array indicating whether each AGN is resolved
-        cosmo : astropy.cosmology.Cosmology
+        cosmo : astropy.cosmology.FlatLambdaCDM
             The cosmology object for distance calculations
         bias : float, optional
             The bias factor for the RLF calculation, by default 0
@@ -808,7 +808,7 @@ def get_catalog_info( cosmo : astropy.cosmology.Cosmology,
     resolved : np.ndarray
         The resolved status of the sources in the catalog
     """
-    logger = get_logger("RLF Catalog Info", logging.INFO)
+    logger = get_logger("RLF Catalog Info", LoggingLevels.INFO.value)
 
     catalog = HardcastleCatalogue( resolved_only=False )
 

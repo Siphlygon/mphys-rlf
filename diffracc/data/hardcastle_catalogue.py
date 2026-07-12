@@ -25,6 +25,7 @@ class Source(Enum):
     WISE3Mag = "mag_w3" # magnitude in the wise band 3
     WISE3MagErr = "magerr_w3" # magnitude error in the wise band 3, or blank for upper lim
     WISE2Mag = "mag_w2" # magnitude in the wise band 2
+    Resolved = "Resolved" # Whether the source is resolved (True) or not (False)
 
 
 class HardcastleCatalogue:
@@ -61,12 +62,12 @@ class HardcastleCatalogue:
             raise NotImplementedError(
                 f"Catalogue {cat} is not supported. Supported catalogues: {list(CATALOGUES.keys())}")
 
-        self.catalogue_data = self._load_hardcastle_catalogue(cat=cat, file_path=paths.RAW_CATALOGUE_PATH)
+        self.catalogue_data = self._load_hardcastle_catalogue()
 
 
     def _load_hardcastle_catalogue(self,
-                                  cat : str = "hardcastle2023",
-                                  file_path : Path = paths.RAW_CATALOGUE_PATH) -> fits.FITS_rec:
+                                   cat: str = "hardcastle2023",
+                                   file_path: Path = paths.STRIPPED_CATALOGUE_PATH) -> fits.FITS_rec:
         """
         Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
         from the LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the
@@ -77,15 +78,15 @@ class HardcastleCatalogue:
         cat : str, optional
             The catalogue to use, by default "hardcastle2023"
         file_path : Path, optional
-            The path to the FITS file containing the Hardcastle catalogue, by default paths.RAW_CATALOGUE_PATH.
-            
+            The path to the FITS file containing the Hardcastle catalogue, by default paths.STRIPPED_CATALOGUE_PATH.
+
         Returns
         -------
         fits.FITS_rec
             A FITS_rec array containing the data for each resolved item in the Hardcastle catalogue.
         """
         # Download the catalogue if it doesn't exist
-        CatalogueDownloader().download_catalogue(cat, raw_catalogue_path=file_path)
+        CatalogueDownloader().download_catalogue(cat, stripped_catalogue_path=file_path)
 
         self.logger.info(f"Loading Hardcastle catalogue from {file_path}")
         try:
@@ -105,7 +106,7 @@ class HardcastleCatalogue:
         return catalogue_data
 
 
-    def get_value_column(self, value : Source | str) -> np.ndarray:
+    def get_value_column(self, value: Source | str) -> np.ndarray:
         """
         Extracts a specific value column from the items in the loaded Hardcastle catalogue.
 
@@ -123,7 +124,7 @@ class HardcastleCatalogue:
         return self.catalogue_data[key]
 
 
-    def get_multiple_value_columns(self, *args : Source | str) -> np.ndarray:
+    def get_multiple_value_columns(self, *args: Source | str) -> np.ndarray:
         """
         Extracts multiple specified value columns from the items in the loaded Hardcastle catalogue.
 
