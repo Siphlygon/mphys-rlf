@@ -9,23 +9,23 @@ logger = get_logger(__name__)
 
 @torch.no_grad()
 def edm_sampling(
-    model,
-    context_batch=None,
-    label_batch=None,
-    latents=None,
+    model: torch.nn.Module,
+    context_batch: torch.Tensor | None = None,
+    label_batch: torch.Tensor | None = None,
+    latents: torch.Tensor | None = None,
     *,
-    image_size=80,
-    batch_size=16,
-    timesteps=25,
-    guidance_strength=0.1,
-    sigma_min=2e-3,
-    sigma_max=80,
-    rho=7,
-    S_churn=0,
-    S_min=0,
-    S_max=torch.inf,
-    S_noise=1,
-):
+    image_size: int = 80,
+    batch_size: int = 16,
+    timesteps: int = 25,
+    guidance_strength: float = 0.1,
+    sigma_min: float = 2e-3,
+    sigma_max: float = 80,
+    rho: float = 7,
+    S_churn: float = 0,
+    S_min: float = 0,
+    S_max: float = torch.inf,
+    S_noise: float = 1,
+) -> list[torch.Tensor]:
     """
     Perform deterministic or stochastic sampling from EDM paper (arXiv:2206.00364).
     Setting S_churn = 0 results in deterministic sampling.
@@ -66,8 +66,8 @@ def edm_sampling(
     Returns
     -------
     list
-        A list of image batches, where every entry correponds to one time step. Batches have shape (batch_size, 1, image_size, image_size).
-
+        A list of image batches, where every entry correponds to one time step. Batches have shape (batch_size, 1,
+        image_size, image_size).
     """
 
     # Set device
@@ -77,12 +77,10 @@ def edm_sampling(
     # If passed, prepare latents
     if latents is not None:
         assert latents.shape[1] == 1, "Latents must have 1 channel."
-        assert (
-            latents.shape[2] == image_size
-        ), f"Latents must have size {image_size}x{image_size}."
+        assert latents.shape[2] == image_size, f"Latents must have size {image_size}x{image_size}."
         batch_size = latents.shape[0]
         # Make sure it's torch tensor
-        if type(latents) != torch.Tensor:
+        if not isinstance(latents, torch.Tensor):
             latents = torch.tensor(latents, device=device, dtype=torch.float32)
 
     # If not passed, sample latents from normal distribution.
@@ -107,9 +105,7 @@ def edm_sampling(
     sigma_max = min(sigma_max, model_sigma_max)
 
     # Generate time steps (= noise levels).
-    sigma_steps = get_sampling_noise_levels(
-        timesteps, sigma_min=sigma_min, sigma_max=sigma_max, rho=rho
-    )
+    sigma_steps = get_sampling_noise_levels(timesteps, sigma_min=sigma_min, sigma_max=sigma_max, rho=rho)
 
     # If passed, prepare context and labels
     if context_batch is not None:
@@ -117,7 +113,7 @@ def edm_sampling(
             f"Context batch size ({context_batch.shape[0]})"
             f"must match batch size ({batch_size})."
         )
-        if type(context_batch) != torch.Tensor:
+        if not isinstance(context_batch, torch.Tensor):
             context_batch = torch.tensor(context_batch)
 
     if label_batch is not None:
@@ -125,7 +121,7 @@ def edm_sampling(
             f"Label batch size ({label_batch.shape[0]})"
             f"must match batch size ({batch_size})."
         )
-        if type(label_batch) != torch.Tensor:
+        if not isinstance(label_batch, torch.Tensor):
             label_batch = torch.tensor(label_batch)
 
     # Move all tensors to gpu
@@ -141,8 +137,7 @@ def edm_sampling(
     imgs.append(x_next.cpu())
 
     # Sampling loop:
-    for i, (sigma_cur, sigma_next) in tqdm(
-        enumerate(zip(sigma_steps[:-1], sigma_steps[1:])),
+    for i, (sigma_cur, sigma_next) in tqdm(enumerate(zip(sigma_steps[:-1], sigma_steps[1:])),
         desc="Sampling...",
         total=timesteps,
     ):
@@ -151,9 +146,7 @@ def edm_sampling(
 
         # Stochastic sampling: Increase noise temporarily
         if S_churn > 0:
-            sigma_cur, x_cur = stochastic_churn(
-                timesteps, S_churn, S_min, S_max, S_noise, sigma_cur, x_cur
-            )
+            sigma_cur, x_cur = stochastic_churn(timesteps, S_churn, S_min, S_max, S_noise, sigma_cur, x_cur)
 
         # Calculate denoised image with forward model pass
         denoised = denoised_guided(
@@ -196,7 +189,7 @@ def edm_sampling(
     return imgs
 
 
-def get_sampling_noise_levels(timesteps, sigma_min=2e-3, sigma_max=80, rho=7):
+def get_sampling_noise_levels(timesteps: int, sigma_min: float = 2e-3, sigma_max: float = 80, rho: float = 7):
     """
     Generate noise levels for each sampling step, according to the scheme proposed
     in the EDM paper (arXiv:2206.00364).
@@ -235,12 +228,12 @@ def get_sampling_noise_levels(timesteps, sigma_min=2e-3, sigma_max=80, rho=7):
 
 @torch.no_grad()
 def denoised_guided(
-    model,
-    img,
-    sigma,
-    context=None,
-    class_labels=None,
-    guidance_strength=0.1,
+    model: torch.nn.Module,
+    img: torch.Tensor,
+    sigma: torch.Tensor,
+    context: torch.Tensor | None = None,
+    class_labels: torch.Tensor | None = None,
+    guidance_strength: float = 0.1,
 ):
     """
     Calculate the denoised image. Guidance is applied if context or class labels are passed.
@@ -284,14 +277,18 @@ def denoised_guided(
         )
 
         # Apply guidance
-        denoised = (
-            1 + guidance_strength
-        ) * denoised_cond - guidance_strength * denoised
+        denoised = (1 + guidance_strength) * denoised_cond - guidance_strength * denoised
 
     return denoised
 
 
-def stochastic_churn(timesteps, S_churn, S_min, S_max, S_noise, sigma_cur, x_cur):
+def stochastic_churn(timesteps: int,
+                     S_churn: float,
+                     S_min: float,
+                     S_max: float,
+                     S_noise: float,
+                     sigma_cur: torch.Tensor,
+                     x_cur: torch.Tensor):
     """
     Add stochastic churn for stochastic sampling, i.e. temporarily increase noise level.
 
@@ -327,4 +324,8 @@ def stochastic_churn(timesteps, S_churn, S_min, S_max, S_noise, sigma_cur, x_cur
     # Increase noise level (sigma_hat = sigma_cur if gamma = 0).
     sigma_hat = (1 + gamma) * sigma_cur
 
-    return sigma_hat, x_cur
+    # Inject fresh noise so x_cur's actual noise content matches sigma_hat
+    # (x_hat = x_cur if gamma = 0, since sigma_hat = sigma_cur then).
+    x_hat = x_cur + torch.sqrt(sigma_hat**2 - sigma_cur**2) * S_noise * torch.randn_like(x_cur)
+
+    return sigma_hat, x_hat
