@@ -8,6 +8,9 @@
 *.csv
 *.npy
 
+# Build folder
+diffracc.egg-info/
+
 # IDE folders
 .vscode/
 .idea/
@@ -27,14 +30,9 @@ nparrays/
 pybdsf_catalogs*/
 dr2_cutouts*/
 pybdsf*/
-!src/analysis/
-hardcastle_catalogue/*.fits
-hardcastle_catalogue/final_database/
-hardcastle_catalogue/image_downloading/combined-release-v1.2-LM_opt_mass.fits
-hardcastle_catalogue/initial_dataset/combined-release-v1.2-LM_opt_mass.fits
 
 # Local file parameters
-src/utils/parameters_local_override.py
+diffracc/utils/parameters_local_override.py
 
 # Temporary files
 *.log
