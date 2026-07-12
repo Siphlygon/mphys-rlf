@@ -3,7 +3,7 @@
 beam = [0.00166667, 0.00166667, 0.0]  # Beam size in degrees (major, minor, position angle)
 frequency = 144e6  # Frequency in Hz
 mean_map = "zero"  # "default", "zero", "const", "map" - what setting to use for the background mean map
-rms_box = [150, 15]  # Box size for RMS estimation in pixels
+rms_box = [160, 50]  # Box size for RMS estimation in pixels
 rms_map = true  # Whether to compute the RMS as a 2D map
 thresh = "hard"  # "hard" (sigma clipping) or "fdr" (false detection rate) thresholding for source detection
 thresh_isl = 4.0  # Sigma threshold for island boundary detection
