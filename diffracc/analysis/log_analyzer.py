@@ -23,10 +23,10 @@ def get_flux(path: Path)-> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"Flux from sum of \(non-blank\)pixels ..... : (\d+\.\d+)Jy")
+    exp = re.compile(r"Flux from sum of \(non-blank\) pixels ..... : (\d+\.\d+) Jy")
     match : re.Match[str] = exp.search(filedata)
     if match is None:
-        print(str(path ))
+        print(str(path))
     flux = float(match.group(1))
     return flux
 
@@ -47,7 +47,7 @@ def get_model_flux(path: Path)-> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"Total flux density in model ............. : (\d+\.\d+)Jy")
+    exp = re.compile(r"Total flux density in model ............. : (\d+\.\d+) Jy")
     match = exp.search(filedata)
     if match is None:
         flux = 0 # Log won't have this line if no flux is found - so set model flux to 0
@@ -72,7 +72,7 @@ def get_mean(path: Path) -> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"Raw mean \(Stokes I\)=  (\d+\.\d+)mJy")
+    exp = re.compile(r"Raw mean \(Stokes I\) =  (\d+\.\d+) mJy")
     match = exp.search(filedata)
     mean = float(match.group(1))
     return mean
@@ -94,7 +94,7 @@ def get_sigma_clipped_mean(path: Path) -> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"sigma clipped mean \(Stokes I\)=  -?(\d+\.\d+)mJy")
+    exp = re.compile(r"sigma clipped mean \(Stokes I\) =  -?(\d+\.\d+) mJy")
     match = exp.search(filedata)
     if match is None:
         print(str(path))
@@ -118,7 +118,7 @@ def get_rms(path: Path) -> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"raw rms =  (\d+\.\d+)mJy")
+    exp = re.compile(r"raw rms =  (\d+\.\d+) mJy")
     match = exp.search(filedata)
     if match is None:
         print(str(path))
@@ -142,7 +142,7 @@ def get_sigma_clipped_rms(path: Path) -> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"sigma clipped rms =  (\d+\.\d+)mJy")
+    exp = re.compile(r"sigma clipped rms =  (\d+\.\d+) mJy")
     match = exp.search(filedata)
     if match is None:
         print(str(path))
@@ -172,8 +172,8 @@ def get_flux_mean_rms(path: Path)-> tuple[float, float, float]:
         filedata = file.read()
     #include re.DOTALL to make the .*? able to expand over newlines
     exp = re.compile(
-        r"Raw mean \(Stokes I\)=  (\d+\.\d+)mJy and raw rms =  (\d+\.\d+)mJy"
-        r".*?Flux from sum of \(non-blank\)pixels ..... : (\d+\.\d+)Jy",
+        r"Raw mean \(Stokes I\) =  (\d+\.\d+) mJy and raw rms =  (\d+\.\d+) mJy"
+        r".*?Flux from sum of \(non-blank\) pixels ..... : (\d+\.\d+) Jy",
         re.DOTALL,
     )
     match = exp.search(filedata)
