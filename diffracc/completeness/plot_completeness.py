@@ -56,7 +56,7 @@ dejong_data = np.array( [
     [ 300, 0.6 ],
     [ 1000, 0.7 ],
     [ 10000, 0.8 ],
-    [ 20000, 0.8 ] 
+    [ 20000, 0.8 ]
 ]).transpose()
 
 kondapally_data = np.array( [
@@ -99,7 +99,7 @@ def plot_completeness(config_str: str,
         Whether to override existing data, by default True
     """
     # Check if the completeness estimate file exists, and if not, create it
-    if not os.path.exists( 'completeness_estimate.csv' ):
+    if not os.path.exists('completeness_estimate.csv'):
         estimator = CompletenessEstimator(config_str, which_dataset=which_dataset, override_data=override_data)
         root = paths.STORAGE_PARENT / "diffracc/completeness/"
 
