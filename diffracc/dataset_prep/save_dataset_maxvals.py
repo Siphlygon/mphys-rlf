@@ -38,9 +38,9 @@ if __name__ == "__main__":
     config.read( paths.PROGRAM_CONFIG )
     specific_config = config[ args.config ]
 
-    train_data_path = paths.LOFAR_DATA_PATH
-    if specific_config[ 'train_data_path' ] != "None":
-        train_data_path = specific_config[ 'train_data_path' ]
+    # train_data_path = paths.LOFAR_DATA_PATH
+    assert specific_config[ 'train_data_path' ] is not None, "(currently) train_data_path must be specified in the config"
+    train_data_path = specific_config[ 'train_data_path' ]
 
     # if train_data_path is paths.LOFAR_DATA_PATH, we also want to make sure to update the dataset subdir
     write_maxvals_of_h5_to_file( paths.NP_ARRAY_PARENT / 'dataset' / paths.MAXVALS, train_data_path )
