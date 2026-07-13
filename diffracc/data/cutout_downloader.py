@@ -353,7 +353,7 @@ class CutoutDownloader:
         if num_corrupted > 0:
             self.logger.warning(f"Found {num_corrupted} corrupted cutout files. "
                                 "They have been deleted and will be re-downloaded.")
-            corrupted_indices = [idx for idx, val in zip(indices, values) if val is False]
+            corrupted_indices = [idx for idx, val in zip(indices, values) if not val]
             files_to_redownload.extend(corrupted_indices)
 
         # Redownload any files if necessary
