@@ -1,5 +1,6 @@
 import configparser
 from pathlib import Path
+from typing import Callable
 
 import astropy.cosmology
 import astropy.stats
@@ -67,7 +68,7 @@ class RLF:
             Whether to use the PDE method, by default False
         """
         # Start logging
-        self.logger = get_logger("RLF", LoggingLevels.DEBUG.value)
+        self.logger = get_logger("RLF", LoggingLevels.INFO.value)
 
         # init parameters
         self.debug_flux_lum_relation = debug_flux_lum_relation
@@ -98,15 +99,24 @@ class RLF:
         default_config = config['DEFAULT']
 
         # RLF parameters
-        self.dz = float(default_config['dz']) # redshift bin width
-        self.lum_bins_count = int(default_config['LUM_BINS']) # number of luminosity bins between min and max luminosity
-        self.n_interp_pts = int(default_config['N_INTERP_PTS']) # number of points to use in interpolation approximation of
-        self.n_mc_pts = int(default_config['N_MC_PTS']) # number of points to use in the monte-carlo integral for each redshift-luminosity bin
-        self.spectral_index = float(default_config['SPECTRAL_INDEX']) # spectral index to use for the k-correction, typically -0.7 for AGN
-        self.z_max = float(default_config['Z_MAX']) # maximum Z (redshift) to consider in RLF calculation
-        self.z_min = float(default_config['Z_MIN']) # minimum Z (redshift) to consider in RLF calculation
-        self.l_max = float(default_config['L_MAX']) # maximum luminosity to plot, to the power 10 (max lum = 10**L_MAX)
-        self.l_min = float(default_config['L_MIN']) # minimum luminosity to plot, to the power 10 (min lum = 10**L_MIN)
+        # redshift bin width
+        self.dz = float(default_config['dz'])
+        # number of luminosity bins between min and max luminosity
+        self.lum_bins_count = int(default_config['LUM_BINS'])
+        # number of points to use in interpolation approximation of
+        self.n_interp_pts = int(default_config['N_INTERP_PTS'])
+        # number of points to use in the monte-carlo integral for each redshift-luminosity bin
+        self.n_mc_pts = int(default_config['N_MC_PTS'])
+        # spectral index to use for the k-correction, typically -0.7 for AGN
+        self.spectral_index = float(default_config['SPECTRAL_INDEX'])
+        # maximum Z (redshift) to consider in RLF calculation
+        self.z_max = float(default_config['Z_MAX'])
+        # minimum Z (redshift) to consider in RLF calculation
+        self.z_min = float(default_config['Z_MIN'])
+        # maximum luminosity to plot, to the power 10 (max lum = 10**L_MAX)
+        self.l_max = float(default_config['L_MAX'])
+        # minimum luminosity to plot, to the power 10 (min lum = 10**L_MIN)
+        self.l_min = float(default_config['L_MIN'])
 
         # initialize cosmology so we can define interpolation grids
         self.cosmo = cosmo
@@ -139,9 +149,9 @@ class RLF:
 
 
     # ---------- COMPLETENESS ----------
-    def get_completeness(self,
-                         integ_fluxes: np.ndarray,
-                         resolved: np.ndarray) -> np.ndarray:
+    def _get_completeness(self,
+                          integ_fluxes: np.ndarray,
+                          resolved: np.ndarray) -> np.ndarray:
         """
         Returns a value for the completeness correction for use in the RLF integral estimation. Can either return a
         fitted sigmoid completeness read from a file, or a step completeness function (i.e., 1 if above a threshold, 0
@@ -160,13 +170,13 @@ class RLF:
             The completeness correction for each source
         """
         completeness_args = self.completeness_args
-        #self.logger.debug(f'x0: {completeness_args[0]} - S0: {10**completeness_args[0]} - bias: {self.bias}')
+        self.logger.debug(f'x0: {completeness_args[0]} - S0: {10**completeness_args[0]} - bias: {self.bias}')
         completeness_args[0] = np.log10(10**completeness_args[0] + self.bias)
-        #self.logger.debug(f'x\'0: {completeness_args[0]} - S\'0: {10**completeness_args[0]}')
+        self.logger.debug(f'x\'0: {completeness_args[0]} - S\'0: {10**completeness_args[0]}')
 
         sigmoid_completeness = func.sigmoid(np.log10(integ_fluxes * 1000), *completeness_args)
         resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0)
-        
+
         # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
         # function at the flux_cut_jy threshold.
         if self.use_shimwell:
@@ -202,24 +212,23 @@ class RLF:
         np.ndarray
             The completeness correction for each source
         """
-        #logger.debug(f'C[s(v,l)]: v={v.shape if isinstance(v, np.ndarray) else v}, l={l.shape}, s={self.flux_from_coordinate(v, l, cosmo, zvparams)}')
-        return self.get_completeness(self.flux_from_coordinate(v, l), resolved=resolved)
+        return self._get_completeness(self.flux_from_coordinate(v, l), resolved=resolved)
 
 
     def flux_from_coordinate(self,
-                             v: float | np.ndarray,
-                             l: float | np.ndarray,
-                             z: float | np.ndarray | None = None) -> np.ndarray:
+                             vols: float | np.ndarray,
+                             lums: float | np.ndarray,
+                             reds: float | np.ndarray | None = None) -> np.ndarray:
         """
         Generate luminosities + redshifts -> fluxes. Flux values here are in Jy, luminosities in W/Hz
         
         Parameters
         ----------
-        v : float | np.ndarray
+        vols : float | np.ndarray
             The volume(s) to compute the flux for
-        l : float | np.ndarray
+        lums : float | np.ndarray
             The luminosity/luminosities to compute the flux for
-        z : float | np.ndarray | None, optional
+        reds : float | np.ndarray | None, optional
             The redshift(s) to compute the flux for, by default None. If None, the redshift is computed from the volume
             
         Returns
@@ -227,17 +236,16 @@ class RLF:
         np.ndarray
             The fluxes corresponding to the input volumes and luminosities
         """
-        if z is None:
-            z = z_from_v(v, *self.zvparams)
+        if reds is None:
+            reds = z_from_v(vols, *self.zvparams)
 
         # Find the luminosity distance & convert into flux with a k-correction
-        d_l = self.cosmo.luminosity_distance(z).to(u.m).value
-        s = 1e26 * l / (4 * np.pi * d_l**2) * func.k_corr_factor(z, spectral_index = self.spectral_index)
+        d_l = self.cosmo.luminosity_distance(reds).to(u.m).value
+        s = 1e26 * lums / (4 * np.pi * d_l**2) * func.k_corr_factor(reds, spectral_index = self.spectral_index)
         return s
 
 
     # ---------- INTEGRALS ----------
-
     def monte_carlo_integral(self,
                              v_min: float,
                              v_max: float,
@@ -300,7 +308,7 @@ class RLF:
                 lums = lum
             else:
                 raise RuntimeError(f'lum arg of ndims {lum.ndim} invalid, must be at most 2')
-    
+
         # lums now definitely has shape (self.n_mc_pts, n_integrals)
 
         # -- MONTE CARLO METHOD ---
@@ -310,7 +318,9 @@ class RLF:
         # (1, n_integrals)
         # note: resolved has shape (n_integrals) or is a bool
         random_volumes = np.random.uniform(v_min, v_max, mc_pts)[:, np.newaxis]
-        bin_integrals = np.sum(self.get_completeness_from_coord(random_volumes, lums, resolved=resolved), axis=0) / mc_pts
+        bin_integrals = np.sum(self.get_completeness_from_coord(random_volumes,
+                                                                lums,
+                                                                resolved=resolved), axis=0) / mc_pts
 
         # divide by the log luminosity-volume bin area so the result is / MPc^3 / log10(W/Hz)
         if isinstance(l_min, np.ndarray) and isinstance(l_max, np.ndarray):
@@ -325,22 +335,25 @@ class RLF:
         return bin_integrals
 
 
-    # ---------- RADIO LUMINOSITY FUNCTION ----------
-    def calculate_rlf(self, plot_rlf: bool = True):
+    # ---------- UTILITIES ----------
+    def _preprocess_sources(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Calculate the Radio Luminosity Function, either using the Page & Carrera 2000 method or the traditional 1/Vmax
-        method
+        Derive luminosities from flux and redshift (the catalogue's own luminosity column is always recomputed to
+        avoid inconsistencies at the margin), optionally save a debug comparison plot, and drop sources with
+        non-positive flux.
+
+        Returns
+        -------
+        redshifts : np.ndarray
+            The array of redshifts of the AGN
+        luminosities : np.ndarray
+            The array of luminosities of the AGN
+        resolved : np.ndarray
+            The array indicating whether each AGN is resolved
         """
         fluxes = self.fluxes
-        luminosities = self.luminosities
         redshifts = self.redshifts
         resolved = self.resolved
-        vmax_method = self.vmax_method
-        self.logger.info("start " + ('1/Va' if vmax_method else 'P&C2000') + " rlf calculation")
-
-        # reset phi in case it's not our first time calling this
-        self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
-        self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
 
         if redshifts is None:
             # assign each source a comoving volume with a uniform dist s.t. dN/dV = const
@@ -350,180 +363,321 @@ class RLF:
             redshifts = z_from_v(volumes, *self.zvparams)
 
         # use the redshift to calculate luminosity distance and luminosity
-        # because of errors on the margin, disregard passed luminosity
+        # recalculate luminosities from fluxes and redshifts to avoid inconsistencies at the margin
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
         luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
             / func.k_corr_factor(redshifts, spectral_index=self.spectral_index) # W/Hz
 
         if self.debug_flux_lum_relation:
-            #ensure luminosities and redshifts are consistent with total flux
-            # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
-            luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-            flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
-                / func.k_corr_factor(redshifts, spectral_index=self.spectral_index) # W/Hz
-            self.logger.info('saving scatterplot to compare luminosity from flux to luminosity from catalog...')
-            residuals = flux_luminosities / luminosities
-            plt.scatter(flux_luminosities, residuals, s=0.001)
-            #plt.yscale('log')
-            epsilon = 1e-10
-            plt.ylim(1-epsilon, 1+epsilon)
-            plt.xscale('log')
-            plt.title('Luminosity from flux vs catalog')
-            plt.xlabel('luminosity from flux')
-            plt.ylabel('luminosity from catalog / luminosity from flux')
-            plt.grid()
-            plt.savefig('debugdiff.png')
-            plt.figure()
-            self.logger.info('saved debug luminosity diff figure to debugdiff.png')
+            self._plot_flux_luminosity_debug(fluxes, redshifts, luminosities)
 
         # clip flux values to those above 0 for log plotting
-        redshifts = redshifts[fluxes > 0]
-        luminosities = luminosities[fluxes > 0]
-        resolved = resolved[fluxes > 0]
-        fluxes = fluxes[fluxes > 0]
+        mask = fluxes > 0
+        return redshifts[mask], luminosities[mask], resolved[mask]
 
-        if vmax_method:
-            for i_z in range(self.n_z_bins):
-                z_min, z_max = self.z_bins[i_z], self.z_bins[i_z+1]
-                v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to(u.Mpc**3).value
-                redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
-                self.logger.debug(f'{luminosities[redshift_mask].shape[0]} sources in z: {z_min}-{z_max}')
 
-                for i_l in range(self.n_lum_bins):
-                    l_min, l_max = self.l_bins[i_l], self.l_bins[i_l+1]
+    def _plot_flux_luminosity_debug(self, fluxes: np.ndarray, redshifts: np.ndarray, luminosities: np.ndarray) -> None:
+        """
+        Save a scatterplot to debugdiff.png comparing flux-derived luminosities against luminosities from the
+        catalog, to visually confirm luminosities and redshifts are consistent with total flux.
+        
+        Parameters
+        ----------
+        fluxes : np.ndarray
+            The array of integrated fluxes of the AGN in Jy
+        redshifts : np.ndarray
+            The array of redshifts of the AGN
+        luminosities : np.ndarray
+            The array of luminosities of the AGN
+        """
+        #ensure luminosities and redshifts are consistent with total flux
+        # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
+        luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
+        flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
+            / func.k_corr_factor(redshifts, spectral_index=self.spectral_index) # W/Hz
+        self.logger.info('saving scatterplot to compare luminosity from flux to luminosity from catalog...')
+        residuals = flux_luminosities / luminosities
+        plt.scatter(flux_luminosities, residuals, s=0.001)
+        #plt.yscale('log')
+        epsilon = 1e-10
+        plt.ylim(1-epsilon, 1+epsilon)
+        plt.xscale('log')
+        plt.title('Luminosity from flux vs catalog')
+        plt.xlabel('luminosity from flux')
+        plt.ylabel('luminosity from catalog / luminosity from flux')
+        plt.grid()
+        plt.savefig('debugdiff.png')
+        plt.figure()
+        self.logger.info('saved debug luminosity diff figure to debugdiff.png')
 
-                    luminosity_mask = (luminosities >= l_min) & (luminosities < l_max)
 
-                    luminosities_in_bin = luminosities[redshift_mask & luminosity_mask]
-                    resolved_in_bin = resolved[redshift_mask & luminosity_mask]
+    def _warn_on_zero_bin_integrals(self,
+                                    v_min: float,
+                                    v_max: float,
+                                    l_mins: np.ndarray,
+                                    l_maxs: np.ndarray,
+                                    bin_integrals_resolved: np.ndarray,
+                                    bin_integrals_unresolved: np.ndarray,
+                                    n_resolved_in_lum_bins: np.ndarray,
+                                    n_unresolved_in_lum_bins: np.ndarray) -> None:
+        """
+        Log an error for any bin that has sources but a 0 Monte Carlo integral, which indicates n_mc_pts is too
+        low for the number of bins used (or a completeness mismatch).
+        
+        Parameters
+        ----------
+        v_min : float
+            The minimum volume of the redshift bin
+        v_max : float
+            The maximum volume of the redshift bin
+        l_mins : np.ndarray
+            The minimum luminosities of the luminosity bins
+        l_maxs : np.ndarray
+            The maximum luminosities of the luminosity bins
+        bin_integrals_resolved : np.ndarray
+            The Monte Carlo integrals for the resolved sources in each luminosity bin
+        bin_integrals_unresolved : np.ndarray
+            The Monte Carlo integrals for the unresolved sources in each luminosity bin
+        n_resolved_in_lum_bins : np.ndarray
+            The number of resolved sources in each luminosity bin
+        n_unresolved_in_lum_bins : np.ndarray
+            The number of unresolved sources in each luminosity bin
+        """
+        categories = [
+            ('resolved', bin_integrals_resolved, n_resolved_in_lum_bins),
+            ('unresolved', bin_integrals_unresolved, n_unresolved_in_lum_bins),
+        ]
+        problematic = {name: (integrals == 0) & (counts > 0) for name, integrals, counts in categories}
+        if not any(np.any(mask) for mask in problematic.values()):
+            return
 
-                    # for n=0, the RLF should be 0 regardless, and also it breaks the code so just ignore it
-                    if not luminosities_in_bin.size:
-                        self.logger.debug(f'no sources in z: {z_min}-{z_max}, l={l_min}-{l_max}')
-                        continue
-                    self.logger.debug(f'{luminosities_in_bin.shape[0]} sources in z:'
-                                      f' {z_min}-{z_max}, l={l_min}-{l_max}')
+        self.logger.error(f"Monte Carlo failure - {self.n_mc_pts} points insufficient for number of bins")
+        for name, _, counts in categories:
+            mask = problematic[name]
+            if not np.any(mask):
+                continue
+            indices = np.nonzero(mask)[0]
+            if indices.shape[0] == 1:
+                index = indices[0]
+                self.logger.error(f'{name.capitalize()} bin {index} had {counts[index]} sources but a 0 bin integral')
+                max_flux = self.flux_from_coordinate(v_min, l_maxs[0, index])
+                min_flux = self.flux_from_coordinate(v_max, l_mins[0, index])
+                self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {self.flux_cut_jy}')
+            else:
+                self.logger.error(f'{indices.shape[0]} {name} bins had sources but a 0 bin integral, indices {indices}')
 
-                    Vmaxs_resolved = self.monte_carlo_integral(v_min, v_max, l_min, l_max, resolved=True,
-                                                               lum=luminosities_in_bin, vmax_method=True)
-                    Vmaxs_unresolved = self.monte_carlo_integral(v_min, v_max, l_min, l_max, resolved=False,
-                                                                 lum=luminosities_in_bin, vmax_method=True)
-                    Vmaxs = np.where(resolved_in_bin, Vmaxs_resolved, Vmaxs_unresolved)
 
-                    self.phi[i_z, i_l] = np.sum(1.0 / Vmaxs) #log bin size included in Vmaxs from monte_carlo_integral
-                    self.counts[i_z, i_l] = luminosities_in_bin.shape[0]
+    # ---------- RLF ESTIMATION ----------
+    def calculate_rlf(self, plot_rlf: bool = True) -> None:
+        """
+        Calculate the Radio Luminosity Function, either using the Page & Carrera 2000 method or the traditional 1/Vmax
+        method
+        
+        Parameters
+        ----------
+        plot_rlf : bool, optional
+            Whether to plot the resulting RLF, by default True
+        """
+        self.logger.info(f"Starting '{'1/Va' if self.vmax_method else 'P&C2000'}' RLF calculation")
 
-                    # get errors from Page & Carrera 2000
-                    self.phi_err[i_z, i_l] = np.sqrt(np.sum(1.0 / Vmaxs**2))
+        # reset phi in case it's not our first time calling this
+        self.phi = np.zeros((self.n_z_bins, self.n_lum_bins))
+        self.counts = np.zeros((self.n_z_bins, self.n_lum_bins))
 
-                self.logger.info(f'Redshift range {z_min:.2f}-{z_max:.2f} complete')
+        redshifts, luminosities, resolved = self._preprocess_sources()
 
-        # otherwise, do Page & Carrera 2000 method
+        if self.vmax_method:
+            self._calculate_rlf_vmax(redshifts, luminosities, resolved)
         else:
-            for i_z in range(self.n_z_bins):
-                z_min = self.z_bins[i_z]
-                z_max = self.z_bins[i_z+1]
-
-                # find min & max of comoving volume for redshift bin
-                v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to(u.Mpc**3).value
-
-                # get luminosity bins from offset indices
-                # and make them (1,n_lum_bins) arrays for broadcasting with (n_sources,1)
-                # luminosity bins are defined by their minimum value
-                l_mins = self.l_bins[:-1][np.newaxis, :]
-                l_maxs = self.l_bins[1:][np.newaxis, :]
-
-                # now calculate the number of 'real' sources in each bin
-                # masks have shape:
-                #   redshift_mask: (n_sources, 1)
-                #   luminosity_mask: (n_sources, n_lum_bins)
-                redshift_mask = (redshifts[:, np.newaxis] >= z_min) & (redshifts[:, np.newaxis] < z_max)
-                luminosity_mask = (luminosities[:, np.newaxis] >= l_mins) & (luminosities[:, np.newaxis] < l_maxs)
-
-                # shape (n_lum_bins)
-                n_sources_in_lum_bins = np.sum(redshift_mask & luminosity_mask, axis=0)
-                n_resolved_in_lum_bins = np.sum(redshift_mask & luminosity_mask & resolved[:, np.newaxis], axis=0)
-                n_unresolved_in_lum_bins = np.sum(redshift_mask & luminosity_mask & ~resolved[:, np.newaxis], axis=0)
-                self.logger.debug(f"n_sources_in_lum_bins: {n_sources_in_lum_bins}")
-                self.logger.debug(f"n_resolved_in_lum_bins: {n_resolved_in_lum_bins}")
-                self.logger.debug(f"n_unresolved_in_lum_bins: {n_unresolved_in_lum_bins}")
-
-
-                bin_integrals_resolved = self.monte_carlo_integral(v_min, v_max, l_mins, l_maxs, resolved=True)
-                bin_integrals_unresolved = self.monte_carlo_integral(v_min, v_max, l_mins, l_maxs, resolved=False)
-                #bin_integrals = self.simpson_integral(v_min, v_max, l_mins, l_maxs)
-
-                self.logger.debug(f"bin integrals resolved: {bin_integrals_resolved}")
-                self.logger.debug(f"bin integrals unresolved: {bin_integrals_unresolved}")
-
-                # if we have a 0 bin integral but N > 0 it must be a monte carlo failure or completeness mismatch
-                problematic_bins_resolved = (bin_integrals_resolved == 0) & (n_resolved_in_lum_bins > 0)
-                problematic_bins_unresolved = (bin_integrals_unresolved == 0) & (n_unresolved_in_lum_bins > 0)
-                if np.any(problematic_bins_resolved | problematic_bins_unresolved):
-                    self.logger.error(f"Monte Carlo failure - {self.n_mc_pts} points insufficient for number of bins")
-                    if np.any(problematic_bins_resolved):
-                        pbr_indices = np.nonzero(problematic_bins_resolved)[0]
-                        if pbr_indices.shape[0] == 1:
-                            index = pbr_indices[0]
-                            self.logger.error(f'Resolved bin {index} had {n_resolved_in_lum_bins[index]} sources but a 0 bin integral')
-                            max_flux = self.flux_from_coordinate(v_min, l_maxs[0, index])
-                            min_flux = self.flux_from_coordinate(v_max, l_mins[0, index])
-                            self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {self.flux_cut_jy}')
-                        else:
-                            self.logger.error(f'{pbr_indices.shape[0]} resolved bins had sources but a 0 bin integral, indices {pbr_indices}')
-                    if np.any(problematic_bins_unresolved):
-                        pbu_indices = np.nonzero(problematic_bins_unresolved)[0]
-                        if pbu_indices.shape[0] == 1:
-                            index = pbu_indices[0]
-                            self.logger.error(f'Unresolved bin {index} had {n_unresolved_in_lum_bins[index]} sources but a 0 bin integral')
-                            max_flux = self.flux_from_coordinate(v_min, l_maxs[0, index])
-                            min_flux = self.flux_from_coordinate(v_max, l_mins[0, index])
-                            self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {self.flux_cut_jy}')
-                        else:
-                            self.logger.error(f'{pbu_indices.shape[0]} resolved bins had sources but a 0 bin integral, indices {pbu_indices}')
-
-
-                bin_integrals_unresolved[n_unresolved_in_lum_bins == 0] = 1
-                bin_integrals_resolved[n_resolved_in_lum_bins == 0] = 1
-
-                # now we have phi_est as given by Page & Carrera 2000
-                self.phi[i_z] = n_unresolved_in_lum_bins / bin_integrals_unresolved + n_resolved_in_lum_bins / bin_integrals_resolved
-                self.counts[i_z] = n_sources_in_lum_bins
-
-                # get errors from poisson statistics
-                phi_err_range_resolved = astropy.stats.poisson_conf_interval(n_resolved_in_lum_bins) / bin_integrals_resolved
-                phi_err_range_unresolved = astropy.stats.poisson_conf_interval(n_unresolved_in_lum_bins) / bin_integrals_unresolved
-                phi_err_resolved = np.abs(phi_err_range_resolved[1] - phi_err_range_resolved[0]) / 2
-                phi_err_unresolved = np.abs(phi_err_range_unresolved[1] - phi_err_range_unresolved[0]) / 2
-               
-                phi_err_resolved[n_resolved_in_lum_bins == 0] = 0
-                phi_err_unresolved[n_unresolved_in_lum_bins == 0] = 0
-
-                self.logger.debug(f"phi err resolved: {phi_err_resolved}")
-                self.logger.debug(f"phi err unresolved: {phi_err_unresolved}")
-                self.phi_err[i_z] = np.sqrt(phi_err_resolved**2 + phi_err_unresolved**2 + (0.05*self.phi[i_z])**2)
-
-                self.logger.info(f'Redshift range {z_min:.2f}-{z_max:.2f} complete')
+            self._calculate_rlf_page_carrera(redshifts, luminosities, resolved)
 
         # sky coverage completeness factor
-        self.phi /= 5700 / 41253 # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
+        # 5700 lotss dr2 area from hardcastle et al. 2023, 41253 deg^2 is solid angle of a sphere
+        self.phi /= 5700 / 41253
         self.phi_err /= 5700 / 41253
-
 
         # fit parameters to the RLFs
         self.fit_rlf_individually()
 
         if plot_rlf:
             # plot the resulting graph
-            title = ''
-            output = ''
-            if vmax_method:
+            if self.vmax_method:
                 title = f'1/Va RLF - {self.n_mc_pts // 10} pts per source'
                 output = 'rlf_vmax.png'
             else:
                 title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf(title, colors, output=output)
+
+
+    def _calculate_rlf_vmax(self, redshifts: np.ndarray, luminosities: np.ndarray, resolved: np.ndarray) -> None:
+        """
+        Populate self.phi, self.counts and self.phi_err using the traditional 1/Vmax method: bin sources by
+        redshift and luminosity, and sum 1/Vmax within each bin.
+        
+        Parameters
+        ----------
+        redshifts : np.ndarray
+            The array of redshifts of the AGN
+        luminosities : np.ndarray
+            The array of luminosities of the AGN
+        resolved : np.ndarray
+            The array indicating whether each AGN is resolved
+        """
+        for i_z in range(self.n_z_bins):
+            z_min, z_max = self.z_bins[i_z], self.z_bins[i_z+1]
+            v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to(u.Mpc**3).value
+            redshift_mask = (redshifts >= z_min) & (redshifts < z_max)
+            self.logger.debug(f'{luminosities[redshift_mask].shape[0]} sources in z: {z_min}-{z_max}')
+
+            for i_l in range(self.n_lum_bins):
+                l_min, l_max = self.l_bins[i_l], self.l_bins[i_l+1]
+
+                luminosity_mask = (luminosities >= l_min) & (luminosities < l_max)
+
+                luminosities_in_bin = luminosities[redshift_mask & luminosity_mask]
+                resolved_in_bin = resolved[redshift_mask & luminosity_mask]
+
+                # for n=0, the RLF should be 0 regardless, and also it breaks the code so just ignore it
+                if not luminosities_in_bin.size:
+                    self.logger.debug(f'no sources in z: {z_min}-{z_max}, l={l_min}-{l_max}')
+                    continue
+                self.logger.debug(f'{luminosities_in_bin.shape[0]} sources in z:'
+                                  f' {z_min}-{z_max}, l={l_min}-{l_max}')
+
+                Vmaxs_resolved = self.monte_carlo_integral(v_min, v_max, l_min, l_max, resolved=True,
+                                                           lum=luminosities_in_bin, vmax_method=True)
+                Vmaxs_unresolved = self.monte_carlo_integral(v_min, v_max, l_min, l_max, resolved=False,
+                                                             lum=luminosities_in_bin, vmax_method=True)
+                Vmaxs = np.where(resolved_in_bin, Vmaxs_resolved, Vmaxs_unresolved)
+
+                self.phi[i_z, i_l] = np.sum(1.0 / Vmaxs) #log bin size included in Vmaxs from monte_carlo_integral
+                self.counts[i_z, i_l] = luminosities_in_bin.shape[0]
+
+                # get errors from Page & Carrera 2000
+                self.phi_err[i_z, i_l] = np.sqrt(np.sum(1.0 / Vmaxs**2))
+
+            self.logger.info(f'Redshift range {z_min:.2f}-{z_max:.2f} complete')
+
+
+    def _calculate_rlf_page_carrera(self, redshifts: np.ndarray, luminosities: np.ndarray, resolved: np.ndarray) -> None:
+        """
+        Populate self.phi, self.counts and self.phi_err using the Page & Carrera (2000) method: estimate phi per
+        bin from source counts divided by completeness-weighted volume-luminosity Monte Carlo integrals.
+        
+        Parameters
+        ----------
+        redshifts : np.ndarray
+            The array of redshifts of the AGN
+        luminosities : np.ndarray
+            The array of luminosities of the AGN
+        resolved : np.ndarray
+            The array indicating whether each AGN is resolved
+        """
+        for i_z in range(self.n_z_bins):
+            z_min = self.z_bins[i_z]
+            z_max = self.z_bins[i_z+1]
+
+            # find min & max of comoving volume for redshift bin
+            v_min, v_max = self.cosmo.comoving_volume([z_min, z_max]).to(u.Mpc**3).value
+
+            # get luminosity bins from offset indices
+            # and make them (1,n_lum_bins) arrays for broadcasting with (n_sources,1)
+            # luminosity bins are defined by their minimum value
+            l_mins = self.l_bins[:-1][np.newaxis, :]
+            l_maxs = self.l_bins[1:][np.newaxis, :]
+
+            # now calculate the number of 'real' sources in each bin
+            # masks have shape:
+            #   redshift_mask: (n_sources, 1)
+            #   luminosity_mask: (n_sources, n_lum_bins)
+            redshift_mask = (redshifts[:, np.newaxis] >= z_min) & (redshifts[:, np.newaxis] < z_max)
+            luminosity_mask = (luminosities[:, np.newaxis] >= l_mins) & (luminosities[:, np.newaxis] < l_maxs)
+
+            # shape (n_lum_bins)
+            n_sources_in_lum_bins = np.sum(redshift_mask & luminosity_mask, axis=0)
+            n_resolved_in_lum_bins = np.sum(redshift_mask & luminosity_mask & resolved[:, np.newaxis], axis=0)
+            n_unresolved_in_lum_bins = np.sum(redshift_mask & luminosity_mask & ~resolved[:, np.newaxis], axis=0)
+            self.logger.debug(f"n_sources_in_lum_bins: {n_sources_in_lum_bins}")
+            self.logger.debug(f"n_resolved_in_lum_bins: {n_resolved_in_lum_bins}")
+            self.logger.debug(f"n_unresolved_in_lum_bins: {n_unresolved_in_lum_bins}")
+
+            bin_integrals_resolved = self.monte_carlo_integral(v_min, v_max, l_mins, l_maxs, resolved=True)
+            bin_integrals_unresolved = self.monte_carlo_integral(v_min, v_max, l_mins, l_maxs, resolved=False)
+
+            self.logger.debug(f"bin integrals resolved: {bin_integrals_resolved}")
+            self.logger.debug(f"bin integrals unresolved: {bin_integrals_unresolved}")
+
+            self._warn_on_zero_bin_integrals(v_min, v_max, l_mins, l_maxs,
+                                             bin_integrals_resolved, bin_integrals_unresolved,
+                                             n_resolved_in_lum_bins, n_unresolved_in_lum_bins)
+
+            bin_integrals_unresolved[n_unresolved_in_lum_bins == 0] = 1
+            bin_integrals_resolved[n_resolved_in_lum_bins == 0] = 1
+
+            # now we have phi_est as given by Page & Carrera 2000
+            self.phi[i_z] = n_unresolved_in_lum_bins / bin_integrals_unresolved + n_resolved_in_lum_bins / bin_integrals_resolved
+            self.counts[i_z] = n_sources_in_lum_bins
+
+            # get errors from poisson statistics
+            phi_err_range_resolved = astropy.stats.poisson_conf_interval(n_resolved_in_lum_bins) / bin_integrals_resolved
+            phi_err_range_unresolved = astropy.stats.poisson_conf_interval(n_unresolved_in_lum_bins) / bin_integrals_unresolved
+            phi_err_resolved = np.abs(phi_err_range_resolved[1] - phi_err_range_resolved[0]) / 2
+            phi_err_unresolved = np.abs(phi_err_range_unresolved[1] - phi_err_range_unresolved[0]) / 2
+
+            phi_err_resolved[n_resolved_in_lum_bins == 0] = 0
+            phi_err_unresolved[n_unresolved_in_lum_bins == 0] = 0
+
+            self.logger.debug(f"phi err resolved: {phi_err_resolved}")
+            self.logger.debug(f"phi err unresolved: {phi_err_unresolved}")
+            self.phi_err[i_z] = np.sqrt(phi_err_resolved**2 + phi_err_unresolved**2 + (0.05*self.phi[i_z])**2)
+
+            self.logger.info(f'Redshift range {z_min:.2f}-{z_max:.2f} complete')
+
+
+    # ---------- FITTING & PLOTTING ----------
+    def _fit_and_log_params(self,
+                            model_func: Callable,
+                            xdata: np.ndarray,
+                            ydata: np.ndarray,
+                            yerr: np.ndarray,
+                            p0: list,
+                            bounds: tuple,
+                            param_names: list) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Run scipy's curve_fit with this project's standard fit settings (absolute_sigma, high maxfev) and log each
+        fitted parameter with its uncertainty.
+        
+        Parameters
+        ----------
+        model_func : Callable
+            The model function to fit to the data
+        xdata : np.ndarray
+            The x data to fit the model to
+        ydata : np.ndarray
+            The y data to fit the model to
+        yerr : np.ndarray
+            The uncertainties in the y data
+        p0 : list
+            The initial guess for the parameters
+        bounds : tuple
+            The bounds for the parameters, as a tuple of (lower_bounds, upper_bounds)
+        param_names : list
+            The names of the parameters, for logging purposes
+
+        Returns
+        -------
+        tuple
+            (popt, perr) - the fitted parameter values and their 1-sigma uncertainties.
+        """
+        popt, pcov = curve_fit(model_func, xdata, ydata,
+                               p0=p0, bounds=bounds,
+                               absolute_sigma=True, sigma=yerr,
+                               maxfev=1000000)
+        perr = np.sqrt(np.diag(pcov))
+        for param_name, value, err in zip(param_names, popt, perr):
+            self.logger.info(f'    {param_name}={value:.3f} +/- {err:.3f}')
+        return popt, perr
 
 
     def fit_rlf_individually(self):
@@ -536,10 +690,11 @@ class RLF:
 
         # fit a dual power law to each redshift RLF
         bin_centres = (self.l_bins[:-1] + self.l_bins[1:]) / 2
+        param_names = ['alpha', 'beta', 'Log10C', 'Log10Lstar']
 
         # (4,2) being 4 parameters, with [:, 0] being values and [:, 1] being errors
-        self.rlf_fit_params = np.zeros((self.n_z_bins, 4, 2)) 
-        self.chi_sqr = np.zeros((self.n_z_bins)) 
+        self.rlf_fit_params = np.zeros((self.n_z_bins, 4, 2))
+        self.chi_sqr = np.zeros((self.n_z_bins))
 
         for i_z in range(self.n_z_bins):
             fit_bin_centres = bin_centres[self.phi[i_z] > 0]
@@ -549,21 +704,13 @@ class RLF:
                 fit_bin_centres = fit_bin_centres[1:]
                 fit_phi = fit_phi[1:]
                 fit_phi_err = fit_phi_err[1:]
-            popt, pcov = curve_fit(func.rlf_power_law,
-                                    fit_bin_centres,
-                                    fit_phi,
-                                    p0=[0.5, 1.5, -5.5, 26],
-                                    bounds=([0, 1, -10, 20], [1, 4, -1, 30]),
-                                    absolute_sigma=True,
-                                    sigma=fit_phi_err,
-                                    maxfev=1000000)
-            perr = np.sqrt(np.diag(pcov))
-            self.rlf_fit_params[i_z] = np.array([popt, perr]).T
+
             self.logger.info(f'z={self.z_bins[i_z]}-{self.z_bins[i_z+1]}: ')
-            self.logger.info(f'    alpha={popt[0]:.3f} +/- {perr[0]:.3f}')
-            self.logger.info(f'    beta={popt[1]:.3f} +/- {perr[1]:.3f}')
-            self.logger.info(f'    Log10C={popt[2]:.3f} +/- {perr[2]:.3f}')
-            self.logger.info(f'    Log10Lstar={popt[3]:.3f} +/- {perr[3]:.3f}')
+            popt, perr = self._fit_and_log_params(func.rlf_power_law, fit_bin_centres, fit_phi, fit_phi_err,
+                                                   p0=[0.5, 1.5, -5.5, 26],
+                                                   bounds=([0, 1, -10, 20], [1, 4, -1, 30]),
+                                                   param_names=param_names)
+            self.rlf_fit_params[i_z] = np.array([popt, perr]).T
 
             model_values = func.rlf_power_law(bin_centres[self.phi[i_z] > 0], *popt)
             residuals = self.phi[i_z][self.phi[i_z] > 0] - model_values
@@ -591,62 +738,48 @@ class RLF:
         L = L.ravel()[ydata > 0]
         Z = Z.ravel()[ydata > 0]
         xdata = np.vstack((L, Z))
-        yerr = self.phi_err.ravel()
-
-        yerr = yerr[ydata > 0]
+        yerr = self.phi_err.ravel()[ydata > 0]
         ydata = ydata[ydata > 0]
 
-        # (4,2) being 4 parameters, with [:, 0] being values and [:, 1] being errors
-
-        p0_yuan=[0.5, 1.5, -5.5, 24.59, 1, 1, 1, 1]
-        bounds_yuan=([0, 1, -10, 20, -5, -5, 0.01, 0], [1, 2.5, -1, 30, 5, 5, 1, 5])
-        p0_yuan2018=      [ 0.31, -5.92, 0.86, -4.85, 24.68, 0.44, 0.31, 4.73]
-        bounds_yuan2018=([-30,    -10,   0,    -10,   20,    0,    0,   -10], 
-                          [10,     10,   5,    -1,    28,    10,   6,    10])
-
-        #p0_powerlaw = [0.5, 1.5, -5.5, 26, 0]
         p0_powerlaw = [0.5, 1.5, -5.5, 26, 0, 0]
-        #bounds_powerlaw = ([0, 1, -10, 20, -100], [1, 4, -1, 30, 100])
         bounds_powerlaw = ([0, 1, -10, 20, -100, -100], [1, 4, -1, 30, 100, 100])
-        
+        param_names_powerlaw = ['alpha', 'beta', 'Log10C', 'Log10Lstar', 'alphaD', 'alphaL']
 
-        #fn_powerlaw = functions.rlf_pde if self.use_pde else functions.rlf_ple
-        fn_powerlaw = func.rlf_power_law_evolution
-
-        self.rlf_fit_params = np.zeros((len(p0_powerlaw), 2)) 
-
-        popt, pcov = curve_fit(fn_powerlaw,
-                                xdata,
-                                ydata,
-                                p0=p0_powerlaw,
-                                bounds=bounds_powerlaw,
-                                absolute_sigma=True,
-                                sigma=yerr,
-                                maxfev=1000000)
-        perr = np.sqrt(np.diag(pcov))
+        # (n_params,2) being fitted values, [:, 0], and errors, [:, 1]
+        popt, perr = self._fit_and_log_params(func.rlf_power_law_evolution, xdata, ydata, yerr,
+                                               p0=p0_powerlaw, bounds=bounds_powerlaw,
+                                               param_names=param_names_powerlaw)
         self.rlf_fit_params = np.array([popt, perr]).T
 
-        param_names_yuan2018 = ['p1', 'p2', 'zc', 'Log10Phi', 'Log10Lstar', 'beta', 'gamma', 'k1']
-        param_names_yuan = ['alpha', 'beta', 'Log10C', 'Log10Lstar', 'm', 'z0', 'zsigma', 'k1']
-        param_names_powerlaw = ['alpha', 'beta', 'Log10C', 'Log10Lstar', 'alphaD', 'alphaL']
-        #if self.use_pde:
-        #    param_names_powerlaw.append('alphaD')
-        #else:
-        #    param_names_powerlaw.append('alphaL')
 
+    def plot_rlf(self,
+                 title: str,
+                 colors: list,
+                 ax = None,
+                 ylim: tuple | None = (1e-9, 3e-4),
+                 xlim: tuple | None = (1e21, 1e29),
+                 output: str = 'rlf.png',
+                 draw_ylabel: bool = True):
+        """
+        Plot the Radio Luminosity Function (RLF) for each redshift bin, along with the fitted dual power law model.
 
-        for param_name, popt_i, perr_i in zip(param_names_powerlaw, popt, perr):
-            self.logger.info(f'{param_name}={popt_i:.3f} +/- {perr_i:.3f}')
-
-
-    def plot_rlf(self, 
-                  title: str,
-                  colors: list,
-                  ax = None,
-                  ylim: tuple | None = [1e-9, 3e-4],
-                  xlim: tuple | None = [1e21, 1e29],
-                  output: str = 'rlf.png',
-                  draw_ylabel: bool = True):
+        Parameters
+        ----------
+        title : str
+            The title of the plot
+        colors : list
+            The colors to use for plotting
+        ax : _type_, optional
+            The axes object to plot on, by default None
+        ylim : tuple | None, optional
+            The y-axis limits, by default (1e-9, 3e-4)
+        xlim : tuple | None, optional
+            The x-axis limits, by default (1e21, 1e29)
+        output : str, optional
+            The output file name, by default 'rlf.png'
+        draw_ylabel : bool, optional
+            Whether to draw the y-axis label, by default True
+        """
         self_contained = ax is None
         if self_contained:
             self.logger.info("plotting self contained rlf")
@@ -695,4 +828,3 @@ class RLF:
         if self_contained:
             plt.savefig(output)
             self.logger.info(f"saved figure to {output}")
-
