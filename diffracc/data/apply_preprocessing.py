@@ -200,10 +200,10 @@ class CutoutPreprocessor:
 
         # Initialise all other columns to default right now
         catalogue_data = [{**item,
-                           'size': 0,
-                           'S/N': 0,
-                           'edge_max': 0,
-                           'peak_flux': 0,
+                           'size': 0.0,
+                           'S/N': 0.0,
+                           'edge_max': 0.0,
+                           'peak_flux': 0.0,
                            'rlagn': False} for item in catalogue_data]
 
         # Set up DataFrame columns
