@@ -144,3 +144,51 @@ def completeness_estimator_factory(monkeypatch, completeness_config_path, fake_r
         return ce_module.CompletenessEstimator(config_str, **kwargs)
 
     return _make
+
+
+@pytest.fixture
+def cutout_preprocessor_config_path(tmp_path):
+    """Write a minimal config.ini [DEFAULT] section with only the cosmology keys CutoutPreprocessor.__init__ reads."""
+    config_path = tmp_path / "cutout_preprocessor_config.ini"
+    config_path.write_text(
+        "[DEFAULT]\n"
+        "h = 0.70\n"
+        "Tcmb0 = 2.275\n"
+        "Om0 = 0.3\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+@pytest.fixture
+def cutout_preprocessor_factory(monkeypatch, cutout_preprocessor_config_path):
+    """Returns a factory function that builds a CutoutPreprocessor against the temp cosmology-only config."""
+    from diffracc.data.apply_preprocessing import CutoutPreprocessor
+
+    monkeypatch.setattr(paths, "PROGRAM_CONFIG", cutout_preprocessor_config_path)
+
+    def _make(**kwargs) -> CutoutPreprocessor:
+        return CutoutPreprocessor(**kwargs)
+
+    return _make
+
+
+@pytest.fixture
+def cutout_downloader_config_path(tmp_path):
+    """Write a minimal config.ini [DEFAULT] section with only the FOLDER_SIZE key CutoutDownloader.__init__ reads."""
+    config_path = tmp_path / "cutout_downloader_config.ini"
+    config_path.write_text("[DEFAULT]\nFOLDER_SIZE = 100\n", encoding="utf-8")
+    return config_path
+
+
+@pytest.fixture
+def cutout_downloader_factory(monkeypatch, cutout_downloader_config_path):
+    """Returns a factory function that builds a CutoutDownloader against the temp FOLDER_SIZE-only config."""
+    from diffracc.data.cutout_downloader import CutoutDownloader
+
+    monkeypatch.setattr(paths, "PROGRAM_CONFIG", cutout_downloader_config_path)
+
+    def _make() -> CutoutDownloader:
+        return CutoutDownloader()
+
+    return _make
