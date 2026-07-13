@@ -52,7 +52,7 @@ class CompletenessEstimator:
         # Read parameters from the config.ini file
         _config = configparser.ConfigParser()
         _config.read(paths.PROGRAM_CONFIG)
-        self.config = dict(_config[config_str])
+        self.config = _config[config_str]
         self.sigma_threshold = int(self.config['DETECTION_SIGMA_THRESHOLD'])
         self.num_flux_bins = int(self.config['COMPLETENESS_FLUX_BINS'])
         self.min_log_flux = float(self.config['COMPLETENESS_MIN_LOG_FLUX'])
