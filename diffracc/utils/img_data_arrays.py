@@ -1,6 +1,6 @@
 import argparse
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from typing import Any, Literal, NamedTuple
 
@@ -16,21 +16,25 @@ from .power_transform import PeakFluxPowerTransformer
 from .recursive_file_analyzer import RecursiveFileAnalyzer, get_fits_primaryhdu_data, get_fits_primaryhdu_header
 
 
+def _empty_array() -> np.ndarray:
+    return np.array([])
+
+
 @dataclass
 class SubdirData:
     """
     A class to hold the numpy arrays for a specific subdirectory. Each attribute corresponds to a specific array name
     extracted from the subdirectory.
     """
-    images : np.ndarray = np.array([])
-    residual_images : np.ndarray = np.array([])
-    model_images : np.ndarray = np.array([])
-    model_fluxes : np.ndarray = np.array([])
-    peak_fluxes : np.ndarray = np.array([])
-    sigma_clipped_means : np.ndarray = np.array([])
-    sigma_clipped_rmsds : np.ndarray = np.array([])
-    image_scale_factors : np.ndarray = np.array([])
-    las_values : np.ndarray = np.array([])
+    images: np.ndarray = field(default_factory=_empty_array)
+    residual_images: np.ndarray = field(default_factory=_empty_array)
+    model_images: np.ndarray = field(default_factory=_empty_array)
+    model_fluxes: np.ndarray = field(default_factory=_empty_array)
+    peak_fluxes: np.ndarray = field(default_factory=_empty_array)
+    sigma_clipped_means: np.ndarray = field(default_factory=_empty_array)
+    sigma_clipped_rmsds: np.ndarray = field(default_factory=_empty_array)
+    image_scale_factors: np.ndarray = field(default_factory=_empty_array)
+    las_values: np.ndarray = field(default_factory=_empty_array)
 
 
     def get_array_names(self) -> list[str]:
