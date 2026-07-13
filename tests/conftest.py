@@ -14,6 +14,21 @@ import pytest
 from diffracc.utils import paths
 
 
+@pytest.fixture(autouse=True)
+def _reset_numpy_error_state():
+    """
+    numpy.seterr is global, process-wide, mutable state - some third-party import or call somewhere in the dependency
+    chain (astropy/scipy internals are common offenders) can leave divide/invalid set to 'raise' instead of numpy's
+    default 'warn', which then makes an unrelated test's ordinary `x / 0` raise FloatingPointError instead of just
+    warning. This can happen as early as module collection (e.g. an `import astropy.stats` that runs once before any
+    test), so snapshotting "current" state and restoring it isn't enough - that just preserves whatever bad state was
+    already ambient. Force numpy's real default explicitly before and after every test instead.
+    """
+    np.seterr(all="warn")
+    yield
+    np.seterr(all="warn")
+
+
 @pytest.fixture
 def flat_lcdm_cosmo() -> astropy.cosmology.FlatLambdaCDM:
     """A small, fixed FlatLambdaCDM cosmology (matches diffracc/config.ini's h/Tcmb0/Om0) for reuse across tests."""
