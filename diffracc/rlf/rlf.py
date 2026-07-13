@@ -376,41 +376,6 @@ class RLF:
         return redshifts[mask], luminosities[mask], resolved[mask]
 
 
-    def _plot_flux_luminosity_debug(self, fluxes: np.ndarray, redshifts: np.ndarray, luminosities: np.ndarray) -> None:
-        """
-        Save a scatterplot to debugdiff.png comparing flux-derived luminosities against luminosities from the
-        catalog, to visually confirm luminosities and redshifts are consistent with total flux.
-        
-        Parameters
-        ----------
-        fluxes : np.ndarray
-            The array of integrated fluxes of the AGN in Jy
-        redshifts : np.ndarray
-            The array of redshifts of the AGN
-        luminosities : np.ndarray
-            The array of luminosities of the AGN
-        """
-        #ensure luminosities and redshifts are consistent with total flux
-        # it's a lot easier to tell by visual inspection so save a scatterplot to debugdiff.png
-        luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
-        flux_luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
-            / func.k_corr_factor(redshifts, spectral_index=self.spectral_index) # W/Hz
-        self.logger.info('saving scatterplot to compare luminosity from flux to luminosity from catalog...')
-        residuals = flux_luminosities / luminosities
-        plt.scatter(flux_luminosities, residuals, s=0.001)
-        #plt.yscale('log')
-        epsilon = 1e-10
-        plt.ylim(1-epsilon, 1+epsilon)
-        plt.xscale('log')
-        plt.title('Luminosity from flux vs catalog')
-        plt.xlabel('luminosity from flux')
-        plt.ylabel('luminosity from catalog / luminosity from flux')
-        plt.grid()
-        plt.savefig('debugdiff.png')
-        plt.figure()
-        self.logger.info('saved debug luminosity diff figure to debugdiff.png')
-
-
     def _warn_on_zero_bin_integrals(self,
                                     v_min: float,
                                     v_max: float,
