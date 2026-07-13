@@ -109,7 +109,6 @@ def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
     plt.show()
 
 
-
 def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                        flux_cut_jy: float,
                        plot_rlagn_selection_contour: bool = False) \
@@ -143,7 +142,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
 
     logger.info("Getting redshifts, fluxes, magnitudes, and luminosities from the catalogue...")
     redshifts = catalogue.get_value_column(Source.Redshift)  # z, unitless
-    fluxes = catalogue.get_value_column(Source.TotalFlux)  # in mJy
+    fluxes = catalogue.get_value_column(Source.TotalFlux) / 1000  # catalogue stores mJy; RLF expects Jy throughout
     luminosities = catalogue.get_value_column(Source.Luminosity)  # in W/Hz
     wise3_mag = catalogue.get_value_column(Source.WISE3Mag)  # in mag
     wise3_magerr = catalogue.get_value_column(Source.WISE3MagErr)  # in mag
