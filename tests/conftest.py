@@ -1,10 +1,10 @@
 """
 Shared pytest fixtures for the diffracc test suite.
 
-Several classes in diffracc (notably RLF) read a live config.ini and other on-disk files at construction time. Rather
-than depend on the real diffracc/config.ini (which is tuned for full-scale runs - e.g. N_MC_PTS = 100000 - and would
-make unit tests slow), these fixtures write small temp files and monkeypatch diffracc.utils.paths so the code under
-test believes it's reading the real thing.
+Several classes in diffracc read a live config.ini and other on-disk files at construction time. Rather than depend on
+the real diffracc/config.ini (which is tuned for full-scale runs - e.g. N_MC_PTS = 100000 - and would make unit tests
+slow), these fixtures write small temp files and monkeypatch diffracc.utils.paths so the code under test believes it's
+reading the real thing.
 """
 import astropy.cosmology
 import astropy.units as u
@@ -78,3 +78,10 @@ def rlf_factory(monkeypatch, rlf_config_path, completeness_args_path, flat_lcdm_
         return RLF(fluxes, redshifts, luminosities, resolved, **kwargs)
 
     return _make_rlf
+
+
+@pytest.fixture
+def np_array_parent(tmp_path, monkeypatch):
+    """Fixture to set the NP_ARRAY_PARENT path to a temporary directory."""
+    monkeypatch.setattr(paths, "NP_ARRAY_PARENT", tmp_path)
+    return tmp_path
