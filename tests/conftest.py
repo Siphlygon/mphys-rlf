@@ -85,3 +85,62 @@ def np_array_parent(tmp_path, monkeypatch):
     """Fixture to set the NP_ARRAY_PARENT path to a temporary directory."""
     monkeypatch.setattr(paths, "NP_ARRAY_PARENT", tmp_path)
     return tmp_path
+
+
+@pytest.fixture
+def completeness_config_path(tmp_path):
+    """
+    Write a minimal config.ini [DEFAULT] section containing only the keys CompletenessEstimator.__init__ reads
+    directly, and return its path. RMS_PERCENTAGE_THRESHOLD (read by RMSDistribution) is deliberately omitted -
+    RMSDistribution itself is monkeypatched out by fake_rms_distribution, so CompletenessEstimator never needs it.
+    """
+    config_path = tmp_path / "completeness_config.ini"
+    config_path.write_text(
+        "[DEFAULT]\n"
+        "DETECTION_SIGMA_THRESHOLD = 5\n"
+        "COMPLETENESS_FLUX_BINS = 6\n"
+        "COMPLETENESS_MIN_LOG_FLUX = -1\n"
+        "COMPLETENESS_MAX_LOG_FLUX = 1\n"
+        "N_NOISE_PATCHES = 3\n",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+class _FakeRMSDistribution:
+    """
+    Stand-in for diffracc.data.catalogue_distributions.RMSDistribution that skips loading the real Hardcastle
+    catalogue entirely - CompletenessEstimator only ever calls .sample(), so that's all this needs to provide.
+    """
+    def __init__(self, rms: float = 95e-3):
+        self.rms = rms
+
+    def sample(self, size: int = 1) -> float:
+        return self.rms
+
+
+@pytest.fixture
+def fake_rms_distribution(monkeypatch):
+    """Returns a factory to monkeypatch RMSDistribution in a given module with a fixed-RMS fake."""
+    def _patch(module, rms: float = 95e-3):
+        monkeypatch.setattr(module, "RMSDistribution", lambda *args, **kwargs: _FakeRMSDistribution(rms))
+    return _patch
+
+
+@pytest.fixture
+def completeness_estimator_factory(monkeypatch, completeness_config_path, fake_rms_distribution):
+    """
+    Returns a factory function that builds a CompletenessEstimator with override_data=True (skipping
+    ImageDataArrays entirely) against the temp config and a fake RMSDistribution, so tests never touch the real
+    dataset or catalogue.
+    """
+    from diffracc.completeness import completeness_estimator as ce_module
+
+    monkeypatch.setattr(paths, "PROGRAM_CONFIG", completeness_config_path)
+    fake_rms_distribution(ce_module)
+
+    def _make(config_str: str = "DEFAULT", **kwargs) -> "ce_module.CompletenessEstimator":
+        kwargs.setdefault("override_data", True)
+        return ce_module.CompletenessEstimator(config_str, **kwargs)
+
+    return _make
