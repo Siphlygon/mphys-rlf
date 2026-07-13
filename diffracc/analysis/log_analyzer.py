@@ -94,7 +94,7 @@ def get_sigma_clipped_mean(path: Path) -> float:
     """
     with open(str(path), encoding='utf-8')as file:
         filedata = file.read()
-    exp = re.compile(r"sigma clipped mean \(Stokes I\) =  -?(\d+\.\d+) mJy")
+    exp = re.compile(r"sigma clipped mean \(Stokes I\) =  (-?\d+\.\d+) mJy")
     match = exp.search(filedata)
     if match is None:
         print(str(path))
