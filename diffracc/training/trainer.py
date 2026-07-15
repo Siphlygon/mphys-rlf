@@ -329,7 +329,7 @@ class DiffusionTrainer:
         self.train_set = self.dataset
         # Data-loading worker processes (0 = load on the main process, which starves the GPU). Overridable via env;
         # default kept modest so train+val workers across both ranks don't oversubscribe the 16 CPUs/task.
-        num_workers = int(os.environ.get("DATALOADER_WORKERS", 4))
+        num_workers = int(os.environ.get("DATALOADER_WORKERS", 1))
         if split:
             # B/c of downgraded pytorch we need to set sizes manually
             proportions = [.9, .1]
@@ -342,7 +342,7 @@ class DiffusionTrainer:
 
             assert len(self.val_set) >= self.config.batch_size, (
                 f"Batch size {self.config.batch_size} larger than validation set.")
-            val_workers = min(num_workers, 2)
+            val_workers = min(num_workers, 1)
             self.val_loader = DataLoader(
                 self.val_set,
                 batch_size=self.config.batch_size,
