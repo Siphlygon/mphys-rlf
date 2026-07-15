@@ -22,4 +22,4 @@ echo $SLURM_ARRAY_TASK_COUNT
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 export HDF5_USE_FILE_LOCKING='FALSE'
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/plotting/plot_histograms.py --config snr15_loguniform
+python -m diffracc.plotting.plot_histograms --config snr15_loguniform

@@ -22,5 +22,5 @@ echo "Array Count:"
 echo $SLURM_ARRAY_TASK_COUNT
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/analysis/run_analysis.py --input-dir /share/nas2_3/lgreen/mphys-rlf/fits_images/dr2_cutouts_download
+python -m diffracc.analysis.run_analysis --input-dir /share/nas2_3/lgreen/mphys-rlf/fits_images/dr2_cutouts_download
 

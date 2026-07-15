@@ -19,7 +19,5 @@ echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 
 # Only requirement is create_folders.py is before the rest
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/program_prep/create_folders.py
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/program_prep/download_dataset.py
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/program_prep/download_models.py
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/program_prep/copy_configs.py
+python -m diffracc.program_prep.create_folders
+python -m diffracc.program_prep.copy_configs

@@ -18,4 +18,4 @@ echo ">>>activating venv"
 source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
-python /share/nas2_3/lgreen/mphys-rlf/diffracc/sampling/generate_fits_files.py --config loguniform_distribution
+python -m diffracc.sampling.generate_fits_files --config loguniform_distribution
