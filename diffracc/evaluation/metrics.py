@@ -119,8 +119,11 @@ def frechet_distance(x: np.ndarray, y: np.ndarray, eps: float = 1e-6) -> float:
     sx = np.atleast_2d(sx)
     sy = np.atleast_2d(sy)
 
-    # Product of covariances may be numerically non-PSD; regularise before the matrix sqrt.
-    covmean, _ = linalg.sqrtm(sx @ sy, disp=False)
+    # Product of covariances may be numerically non-PSD; regularise before the matrix sqrt. We don't use the
+    # errest that disp=False would add, and scipy>=1.16 deprecates disp (dropping it entirely in 1.18) while
+    # also special-casing 1x1 inputs to ignore disp's tuple contract anyway - so leave disp at its default
+    # (True), which returns a plain array on every scipy version, old and new.
+    covmean = linalg.sqrtm(sx @ sy)
     if not np.isfinite(covmean).all():
         offset = np.eye(sx.shape[0]) * eps
         covmean = linalg.sqrtm((sx + offset) @ (sy + offset))
