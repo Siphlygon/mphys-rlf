@@ -13,6 +13,7 @@ import multiprocessing.pool
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
+from typing import Any, Mapping
 
 import bdsf
 import bdsf.image
@@ -114,13 +115,46 @@ class ProcessArgs:
         if not toml_path.exists():
             raise FileNotFoundError(f"TOML file {toml_path} does not exist")
 
-        with open(toml_path, 'r', encoding='utf-8') as f:
+        with open(toml_path, 'rb', encoding='utf-8') as f:
             config = tomlib.load(f)
 
-        return cls(**config.get("default", {}),
-                   **config.get("adaptivebox", {}),
-                   **config.get("advanced", {}),
-                   **config.get("atrous", {}))
+        return cls.from_dict(config)
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any] | None = None) -> "ProcessArgs":
+        """
+        Create a ProcessArgs object from a dictionary.
+
+        Parameters
+        ----------
+        raw : Mapping[str, Any] | None, optional
+            The dictionary representation of the configuration, by default None
+
+        Returns
+        -------
+        ProcessArgs
+            The initialized ProcessArgs instance
+
+        Raises
+        ------
+        ValueError
+            If there are unknown sections in the provided dictionary that do not correspond to any of the expected
+            configuration sections.
+        """
+        raw = raw or {}
+
+        valid_sections = {"default", "adaptivebox", "advanced", "atrous"}
+        unknown_sections = set(raw) - valid_sections
+
+        if unknown_sections:
+            raise ValueError(f"Unknown config sections: {sorted(unknown_sections)}")
+
+        return cls(
+            **raw.get("default", {}),
+            **raw.get("adaptivebox", {}),
+            **raw.get("advanced", {}),
+            **raw.get("atrous", {})
+        )
 
 
     def to_dict(self) -> dict:
