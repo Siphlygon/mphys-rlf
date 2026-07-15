@@ -7,13 +7,16 @@ through other files. This application can be distributed across multiple nodes.
 import argparse
 import configparser
 import dataclasses
+import json
 import math
 from pathlib import Path, PurePath
 from typing import Callable
 
+import h5py
 import numpy as np
 import scipy.stats
 import torch
+from sklearn.preprocessing import PowerTransformer
 
 from ..analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
 from ..model import sampler
@@ -50,10 +53,14 @@ class SampleArgs:
     lower_bound: float
     distribution: str
     las_conditioning_enabled: bool
+    # Path to the training h5, used to fit the LAS standardisation transform the model was trained with. Required
+    # when las_conditioning_enabled is set.
+    train_data_path: str | None = None
 
     _INT_FIELDS = ('batch_size', 'n_samples', 'folder_size', 'timesteps')
     _FLOAT_FIELDS = ('upper_bound', 'lower_bound')
     _BOOL_FIELDS = ('use_cpu', 'preserve_values', 'las_conditioning_enabled')
+    _OPTIONAL_STR_FIELDS = ('train_data_path',)
     _VALID_DISTRIBUTIONS = ('dataset', 'uniform', 'loguniform')
 
     def __post_init__(self) -> None:
@@ -89,7 +96,8 @@ class SampleArgs:
         field_names = {f.name for f in dataclasses.fields(cls)}
         raw = {k: v for k, v in config.items(section) if k in field_names}
 
-        missing = field_names - raw.keys()
+        required = {f.name for f in dataclasses.fields(cls) if f.default is dataclasses.MISSING}
+        missing = required - raw.keys()
         if missing:
             raise ValueError(f"Missing required config keys in section {section!r}: {sorted(missing)}")
 
@@ -99,6 +107,9 @@ class SampleArgs:
             raw[field] = float(raw[field])
         for field in cls._BOOL_FIELDS:
             raw[field] = raw[field] == 'True'
+        for field in cls._OPTIONAL_STR_FIELDS:
+            if raw.get(field) == 'None':
+                raw[field] = None
 
         return cls(**raw)  # __post_init__ validates 'distribution'
 
@@ -195,6 +206,64 @@ def _get_fpeak_dist(args: SampleArgs,
     return fpeak_model_dist
 
 
+def _get_las_transformer(train_data_path: str) -> PowerTransformer:
+    """
+    Fit the LAS standardisation transform the model was trained with, so physical LAS prompts (arcsec) can be mapped
+    into the standardised (~N(0,1)) space the model expects as context.
+
+    Mirrors ``TrainDatasetNoScale.transform_las_vals``: fit on the training set's ``cat_info['LAS']`` column with
+    Box-Cox (Yeo-Johnson fallback for non-positive values). Fitting on the same values training used makes the fit
+    deterministic, so the resulting transform is identical to the training-time one.
+
+    Parameters
+    ----------
+    train_data_path : str
+        Path to the training h5 file containing ``cat_info['LAS']``
+
+    Returns
+    -------
+    PowerTransformer
+        The fitted transformer; use ``.transform`` to map physical LAS values into the model's context space
+    """
+    with h5py.File(train_data_path, "r") as f:
+        # float32 first to match the values training saw (set_las_values), then float64 so sklearn fits at the
+        # same precision it uses for training's torch-tensor input - this makes the fitted lambdas identical
+        las_values = np.ascontiguousarray(f["cat_info"][:]["LAS"], dtype=np.float32).astype(np.float64)
+    method = "yeo-johnson" if (las_values <= 0).any() else "box-cox"
+    pt = PowerTransformer(method=method)
+    pt.fit(las_values.reshape(-1, 1))
+    return pt
+
+
+def _get_model_flux_transform(model_name: str) -> dict | None:
+    """
+    Read the global flux transform recorded in a trained model's saved config, if any. The trainer records the
+    transform that was applied to the training pixels, and the Sampler inverts it to map generated images back to
+    physical Jy/beam.
+
+    Parameters
+    ----------
+    model_name : str
+        The model name, as stored in model_results/<NAME>/config_<NAME>.json
+
+    Returns
+    -------
+    dict | None
+        The flux transform parameter dict, or None if the config records no transform (raw-pixel models)
+    """
+    logger = get_logger(__name__)
+    config_file = paths.MODEL_PARENT / model_name / f"config_{model_name}.json"
+    if not config_file.exists():
+        logger.warning('No saved model config found at %s; assuming no flux transform to invert.', config_file)
+        return None
+    with open(config_file, "r", encoding="utf-8") as f:
+        flux_transform = json.load(f).get("flux_transform")
+    if flux_transform is None:
+        logger.warning("No flux transform recorded in %s; samples will be saved in the model's raw output space.",
+                       config_file)
+    return flux_transform
+
+
 def _normalise_image(image: np.ndarray) -> np.ndarray:
     """
     Rescale image to [0, 1], clipping negative values to 0 first. Returns the image unchanged if it's constant,
@@ -222,7 +291,7 @@ def _normalise_image(image: np.ndarray) -> np.ndarray:
 def _save_generated_image(image_analyzer: ImageAnalyzer,
                           sample_index: int,
                           image: np.ndarray,
-                          context_row: np.ndarray,
+                          header_row: np.ndarray,
                           args: SampleArgs) -> int:
     """
     Normalise (if requested) and save a single generated image to the next free FITS path at or after sample_index.
@@ -235,8 +304,9 @@ def _save_generated_image(image_analyzer: ImageAnalyzer,
         The index of the image to save
     image : np.ndarray
         The image to save
-    context_row : np.ndarray
-        The context values for the image, used to set FITS headers
+    header_row : np.ndarray
+        The prompt values for the image, used to set FITS headers: FXSCLD is the peak flux in the transformed
+        (power-transform) space, LASIZE the physical LAS in arcsec
     args : SampleArgs
         The arguments controlling sampling, used to determine the subdirectory and bin size for saving
 
@@ -248,9 +318,9 @@ def _save_generated_image(image_analyzer: ImageAnalyzer,
     if not args.preserve_values:
         image = _normalise_image(image)
 
-    extra_headers = {'FXSCLD': context_row[0]}
+    extra_headers = {'FXSCLD': header_row[0]}
     if args.las_conditioning_enabled:
-        extra_headers['LASIZE'] = context_row[1]
+        extra_headers['LASIZE'] = header_row[1]
 
     full_image_path, postfix = get_path_from_index(sample_index, args.generated_subdir, args.folder_size)
     # Resuming a bin picks up where a previous run left off; safe because each SLURM task/node owns a
@@ -275,7 +345,9 @@ def sample(args: SampleArgs):
     logger = get_logger(__name__, LoggingLevels.DEBUG.value)
 
     #Do a sampling loop of batch_size samples and save them to the disk as they're generated, until we reach n_samples
-    model_sampler = sampler.Sampler(n_samples=args.batch_size, timesteps=args.timesteps)
+    #The flux transform recorded at training time (if any) is inverted by the Sampler, so images land in Jy/beam
+    model_sampler = sampler.Sampler(n_samples=args.batch_size, timesteps=args.timesteps,
+                                    flux_transform=_get_model_flux_transform(args.model_name))
 
     # SLURM distribution w/ batching
     du = DistributedUtils()
@@ -299,6 +371,13 @@ def sample(args: SampleArgs):
     pt = PeakFluxPowerTransformer(args.generated_subdir)
     fpeak_model_dist = _get_fpeak_dist(args, model_sampler, pt)
 
+    # LAS prompts must be standardised with the same power transform used at training time - the model was trained on
+    # las_values_tr ~ N(0,1), so feeding raw arcsec (~6-120) would be far outside the trained context distribution
+    if args.las_conditioning_enabled:
+        assert args.train_data_path is not None, \
+            "las_conditioning_enabled requires train_data_path, to fit the LAS standardisation transform"
+        las_transformer = _get_las_transformer(args.train_data_path)
+
     # Generate/Sample the samples
     sample_generated_count = 0
     sample_index = bin_start
@@ -307,10 +386,16 @@ def sample(args: SampleArgs):
         # to not double-generate at the borders
         batch_size = min(args.batch_size, n_samples_to_generate - sample_generated_count)
         context = fpeak_model_dist(batch_size)[:, np.newaxis]
-        # if las conditioning is enabled, add it to context
+        # header_context keeps the values stored in the FITS headers: FXSCLD stays in the transformed peak-flux
+        # space (downstream code inverts it), LASIZE stays in physical arcsec
+        header_context = context
+        # if las conditioning is enabled, add it to context (standardised for the model, physical for the header)
         if args.las_conditioning_enabled:
-            las_values = scipy.stats.uniform.rvs(_LAS_LOWER_BOUND, _LAS_UPPER_BOUND, size=batch_size)
-            context = np.concatenate((context, las_values[:, np.newaxis]), axis=1)
+            las_physical = scipy.stats.uniform.rvs(
+                _LAS_LOWER_BOUND, _LAS_UPPER_BOUND - _LAS_LOWER_BOUND, size=batch_size)
+            las_standardised = las_transformer.transform(las_physical.reshape(-1, 1))
+            context = np.concatenate((context, las_standardised), axis=1)
+            header_context = np.concatenate((header_context, las_physical[:, np.newaxis]), axis=1)
 
         samples = model_sampler.quick_sample(f"{args.model_name}",
                                              context=torch.from_numpy(context),
@@ -320,7 +405,7 @@ def sample(args: SampleArgs):
 
         for i in range(samples.shape[0]):
             sample_index = _save_generated_image(
-                image_analyzer, sample_index, samples[i, -1, 0, :, :], context[i], args)
+                image_analyzer, sample_index, samples[i, -1, 0, :, :], header_context[i], args)
 
             if sample_index > bin_end:
                 logger.error('Sample index %i has gone outside allowed value %i', sample_index, bin_end)
