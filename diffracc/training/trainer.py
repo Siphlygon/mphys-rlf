@@ -169,6 +169,16 @@ class DiffusionTrainer:
             self.logger.info( "Single-Node" )
         self.logger.info(f"Working on: {self.device}")
 
+        # Performance backends. All safe on torch 1.13! 
+        #  - cudnn.benchmark autotunes conv kernels for our fixed (batch, 1, 80, 80) shape. It can use a little
+        #    extra workspace VRAM, so it is env-toggleable (set CUDNN_BENCHMARK=false) in case it tips a near-full
+        #    card into OOM at startup.
+        #  - TF32 accelerates the fp32 matmuls that run outside autocast; negligible accuracy impact here and no
+        #    memory cost. (matmul TF32 defaults to False on torch 1.13, so this is a real enable.)
+        torch.backends.cudnn.benchmark = os.environ.get("CUDNN_BENCHMARK", "true").lower() == "true"
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
         # Restrict outputs to primary node
         if self.primary:
             self.OM.set_writing_status(True)
