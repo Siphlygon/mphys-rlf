@@ -177,9 +177,11 @@ def save_to_fits(cat_info: fits.FITS_rec,
     hdu_list.append(fits.BinTableHDU(data=cat_info, name="CATALOGUE_INFO"))
 
     # Create BinTableHDU with the indices linking the pixel values to the original catalogue information, to ensure
-    # we can link back to the catalogue information for each image
+    # we can link back to the catalogue information for each image. BinTableHDU requires a structured/record array,
+    # not a plain array, so the indices must be wrapped in a Column first.
     logger.info("Creating BinTableHDU for indices linking pixel values to catalogue information...")
-    hdu_list.append(fits.BinTableHDU(data=np.array(indices), name="CATALOGUE_INDEX"))
+    index_column = fits.Column(name="INDEX", format="K", array=np.array(indices))
+    hdu_list.append(fits.BinTableHDU.from_columns([index_column], name="CATALOGUE_INDEX"))
 
     # Create extension HDUs as ImageHDUs for each cutout image
     logger.info("Creating ImageHDUs for each cutout image...")
