@@ -45,7 +45,7 @@ if __name__ == "__main__":
 
     # Set model preset:
     # (i.e. name of the json file in the model_configs directory; override with the MODEL_PRESET env var)
-    MODEL_PRESET = os.environ.get("MODEL_PRESET", "LOFAR_retrained")
+    MODEL_PRESET = os.environ.get("MODEL_PRESET")
     conf = ModelConfig.from_preset(MODEL_PRESET)
 
     # Change the name if you want: (otherwise default name is used)

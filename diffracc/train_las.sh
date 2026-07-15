@@ -34,6 +34,7 @@ export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
 
 # Training params
+export MODEL_PRESET="LOFAR_asinh"
 export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
 export MODEL_NAME="snr15_inclusive_las"
 export USE_TRANSFORMS='TRUE'

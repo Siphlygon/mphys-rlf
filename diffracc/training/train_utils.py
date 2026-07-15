@@ -201,7 +201,7 @@ def get_power_ema_avg_fn(gamma: float):
 def load_data(dataset: torch.utils.data.Dataset,
               batch_size: int,
               shuffle: bool = True,
-              num_workers: int = 4,
+              num_workers: int = 1,
               sampler: torch.utils.data.Sampler | None = None):
     """
     Convenience function to continuously load data from a dataset. Will not stop until manually interrupted. A
@@ -219,7 +219,7 @@ def load_data(dataset: torch.utils.data.Dataset,
         Whether to shuffle the data, by default True. Ignored when a sampler is given (mutually exclusive in
         DataLoader).
     num_workers : int, optional
-        Number of worker processes for data loading, by default 4. With num_workers > 0 the workers prefetch and
+        Number of worker processes for data loading, by default 1. With num_workers > 0 the workers prefetch and
         augment the next batch while the GPU computes the current one, which the previous num_workers=0 could not
         do (it loaded on the main process and starved the GPU).
     sampler : torch.utils.data.Sampler, optional
