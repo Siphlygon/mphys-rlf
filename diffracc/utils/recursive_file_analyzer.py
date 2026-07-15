@@ -301,7 +301,7 @@ class RecursiveFileAnalyzer:
                     numeric_range: tuple[int, int] | None = None,
                     *,
                     return_nums: bool) -> Generator[Path | tuple[Path, int], None, None]: ...
-    def _quick_scan( self,
+    def _quick_scan(self,
                     path: Path | str | None = None,
                     pattern: str | None = None,
                     numeric_range: tuple[int, int] | None = None,
@@ -496,7 +496,7 @@ class RecursiveFileAnalyzer:
                 self.logger.info("Processing %d files with %d workers", len(file_paths), num_workers)
                 iterator = executor.map(self._process_file, file_paths, repeat(func_with_args))
                 if progress_bar_desc is not None:
-                    iterator = tqdm(iterator, total=len(file_paths), min_interval=1.0,desc=progress_bar_desc)
+                    iterator = tqdm(iterator, total=len(file_paths), mininterval=1.0, desc=progress_bar_desc)
 
                 for result in iterator:
                     if out_handle:
@@ -786,9 +786,9 @@ class RecursiveFileAnalyzer:
         # Numbers are not used in the return of this function, but return_nums is accepted here so callers can
         # benchmark the performance of the number-extraction code path too.
         file_paths = self.get_unwrapped_list(path=root_dir,
-                                            pattern=pattern,
-                                            return_nums=return_nums,
-                                            numeric_range=numeric_range).paths
+                                             pattern=pattern,
+                                             return_nums=return_nums,
+                                             numeric_range=numeric_range).paths
 
         # Limit files to a subset for benchmarking if specified
         if sample_size is not None:
