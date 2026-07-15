@@ -19,7 +19,11 @@ source /share/nas2_3/lgreen/mphys-rlf/.venv/bin/activate
 echo ">>>starting program"
 export N_CPUS=$SLURM_CPUS_PER_TASK
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 python -m diffracc.sampling.generate_fits_files --config snr15_loguniform
+=======
+python /share/nas2_3/lgreen/mphys-rlf/diffracc/sampling/generate_fits_files.py --config snr15_inclusive_las_loguniform
+>>>>>>> Stashed changes
 =======
 python /share/nas2_3/lgreen/mphys-rlf/diffracc/sampling/generate_fits_files.py --config snr15_inclusive_las_loguniform
 >>>>>>> Stashed changes
