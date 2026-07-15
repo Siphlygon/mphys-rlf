@@ -234,6 +234,19 @@ class DiffusionTrainer:
         if getattr(self.dataset, "flux_transform", None) is not None:
             self.config.flux_transform = self.dataset.flux_transform.to_dict()
             self.logger.info(f"Recording flux transform in config: {self.config.flux_transform}")
+
+        # EDM preconditioning assumes sigma_data ~ std of the training pixels; a large mismatch (e.g. a flux transform
+        # that was expected but never applied) trains a model whose samples are pure noise. Checked independently of the
+        # block above so it fires precisely in the dangerous case: no transform applied.
+        if (sigma_data := getattr(self.config, "sigma_data", None)) is not None:
+            data_std = float(self.dataset.data.std())
+            if not 1 / 5 <= data_std / float(sigma_data) <= 5:
+                self.logger.warning(
+                    f"Training data pixel std ({data_std:.3g}) is more than 5x away from config sigma_data "
+                    f"({float(sigma_data):.3g}). EDM preconditioning assumes sigma_data ~ data std - if a flux "
+                    "transform was intended, it has not been applied to this dataset."
+                )
+
         if hasattr(self.config, "context"):
             self.logger.info(f"Working with context: {self.config.context}.")
             if "max_values_tr" in self.config.context:
