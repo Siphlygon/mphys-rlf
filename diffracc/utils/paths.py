@@ -33,16 +33,13 @@ config.read( PROGRAM_CONFIG )
 PYBDSF_CONFIG = BASE_PARENT / "diffracc/analysis/pybdsf_config.toml"
 
 # Model Names of models to download and copy
-MODEL_NAMES = [ "LOFAR_model", "FIRST_model" ]
+MODEL_NAMES = ["LOFAR_model", "FIRST_model"]
 
 # Folders for different kinds of fits image data
-SUBDIRS = [ config[ 'DEFAULT' ][ 'dataset_subdir' ], 
-            config[ 'dataset_distribution' ][ 'generated_subdir'],
-            config[ 'loguniform_distribution' ][ 'generated_subdir' ],
-            config[ 'retrained_model_loguniform' ][ 'generated_subdir' ],
-            config[ 'snr15_loguniform' ][ 'generated_subdir' ],
-            'dr2_cutouts_download' ]
-COLOURS = [ 'b', 'g', 'm', 'k', 'y', 'c' ]
+SUBDIRS = [config['DEFAULT']['dataset_subdir']]
+SUBDIRS.extend(config[section_name]['generated_subdir'] for section_name in config.sections())
+SUBDIRS.append('dr2_cutouts_download')
+COLOURS = ['b', 'g', 'm', 'k', 'y', 'c']
 PYBDSF_EXPORT_IMAGE_PARENT = PYBDSF_PARENT / "images"
 PYBDSF_LOG_PARENT = PYBDSF_PARENT / "logs"
 PYBDSF_CATALOG_PARENT = PYBDSF_PARENT / "catalogs"
