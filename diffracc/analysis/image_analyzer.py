@@ -20,9 +20,9 @@ import bdsf.image
 import numpy as np
 
 try:
-    import tomlib
+    import tomllib
 except ModuleNotFoundError:  # for Python <3.11
-    import tomli as tomlib
+    import tomli as tomllib
 from astropy.io import fits
 
 from ..utils import paths
@@ -116,7 +116,7 @@ class ProcessArgs:
             raise FileNotFoundError(f"TOML file {toml_path} does not exist")
 
         with open(toml_path, 'rb') as f:
-            config = tomlib.load(f)
+            config = tomllib.load(f)
 
         return cls.from_dict(config)
 
