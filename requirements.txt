@@ -17,4 +17,4 @@ wandb
 nvidia_smi
 indexed
 tenacity
-toml
+tomli

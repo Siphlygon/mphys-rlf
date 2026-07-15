@@ -17,7 +17,11 @@ from pathlib import Path, PurePath
 import bdsf
 import bdsf.image
 import numpy as np
-import toml
+
+try:
+    import tomlib
+except ModuleNotFoundError:  # for Python <3.11
+    import tomli as tomlib
 from astropy.io import fits
 
 from ..utils import paths
@@ -111,7 +115,7 @@ class ProcessArgs:
             raise FileNotFoundError(f"TOML file {toml_path} does not exist")
 
         with open(toml_path, 'r', encoding='utf-8') as f:
-            config = toml.load(f)
+            config = tomlib.load(f)
 
         return cls(**config.get("default", {}),
                    **config.get("adaptivebox", {}),
