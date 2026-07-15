@@ -657,11 +657,20 @@ class DiffusionTrainer:
         # loss-scale for every micro-batch within a step (the scale only changes on `scaler.update()`), so the
         # accumulation is internally consistent.
         loss = 0.0
-        for _ in range(accumulation_steps):
+        for micro_step in range(accumulation_steps):
             batch, context, labels = self.unpack_batch(next(self.train_data))
-            with autocast():
-                micro_loss = self.batch_loss(batch, context=context, labels=labels) / accumulation_steps
-            scaler.scale(micro_loss).backward()
+            # Under DDP every .backward() triggers a gradient all-reduce across GPUs. During accumulation only the
+            # final micro-batch actually needs to sync; no_sync() skips the redundant all-reduces on the
+            # intermediate ones, which is the bulk of the accumulation-vs-non-accumulation slowdown. No effect when
+            # not distributed, or when accumulation_steps == 1 (the sole micro-batch is always the last).
+            is_last = micro_step == accumulation_steps - 1
+            sync_context = (
+                self.model.no_sync() if (self.distributed and not is_last) else contextlib.nullcontext()
+            )
+            with sync_context:
+                with autocast():
+                    micro_loss = self.batch_loss(batch, context=context, labels=labels) / accumulation_steps
+                scaler.scale(micro_loss).backward()
             loss = loss + micro_loss.detach()
 
         # Backward pass & optimizer step (a single step per accumulated batch).
