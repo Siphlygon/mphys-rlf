@@ -22,10 +22,13 @@ def main(args):
         lass.append(las)
         lass_from_img.append(las_from_img)
 
+    if not lass:
+        raise RuntimeError(f"No FITS files found in {img_directory}")
+
     plt.scatter(lass, lass_from_img, s=0.01)
 
-    minval = min(np.min(lass), np.min(lass_from_img)) if len(lass) > 0 else np.min(lass)
-    maxval = max(np.max(lass), np.max(lass_from_img)) if len(lass) > 0 else np.max(lass)
+    minval = min(np.min(lass), np.min(lass_from_img))
+    maxval = max(np.max(lass), np.max(lass_from_img))
 
     x = np.geomspace(minval, maxval)
     plt.plot(x, x, color='r')
