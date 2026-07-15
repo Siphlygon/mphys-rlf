@@ -389,7 +389,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         '--download_cutouts',
         action='store_true',
-        help='Download cutouts from the LOFAR cutout server.'
+        help='Download cutouts from the LOFAR cutout server.',
+        default=True
     )
     parser.add_argument(
         '--verify',
