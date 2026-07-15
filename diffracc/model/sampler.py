@@ -1,5 +1,6 @@
 import inspect
 from pathlib import Path
+from typing import Callable
 
 import h5py
 import numpy as np
@@ -374,7 +375,9 @@ class Sampler:
 
         return imgs
 
-    def get_fpeak_model_dist(self, train_set_path: str | None, max_vals: np.ndarray | None = None ):
+    def get_fpeak_model_dist(self,
+                             train_set_path: str | None,
+                             max_vals: np.ndarray | Path | None = None) -> Callable[[int], np.ndarray]:
         """
         Generate the model distribution of peak flux values from a training set.
 
@@ -388,7 +391,7 @@ class Sampler:
 
         Returns
         -------
-        function
+        Callable[[int], np.ndarray]
             A function that takes a number of samples as input and returns
             random samples from the model peak flux distribution.
 
