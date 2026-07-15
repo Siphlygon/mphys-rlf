@@ -7,10 +7,23 @@ https://huggingface.co/blog/annotated-diffusion
 from inspect import signature
 from typing import Any
 
-import torch.nn as nn
+import torch
+from torch import nn
 
 from .config import ModelConfig
-from .layers import *
+from .layers import (
+    AdditiveContextEmbedding,
+    DownsampleBlock,
+    LinearFeatureEmbedding,
+    ResidualBlock,
+    ResidualBlockAttention,
+    ResidualLinearAttention,
+    SinusoidalEmbedding,
+    TimestepEmbedSequential,
+    UpsampleBlock,
+    WeightStandardizedConv2d,
+    zero_module,
+)
 
 
 class configModuleBase(nn.Module):
@@ -318,7 +331,7 @@ class Unet(configModuleBase):
             context = context.to(x.dtype)
 
             if isinstance(self.context_emb, AdditiveContextEmbedding):
-                # Multiple conditions: embed each feature separately and drop them *independently*, so the model sees
+                # Multiple conditions: embed each feature separately and drop them independently, so the model sees
                 # every subset of conditions during training and learns each one's marginal effect -- required for
                 # disentangled, independently-promptable control.
                 per_feature = self.context_emb.embed_each(context)  # (batch, context_dim, emb_dim)

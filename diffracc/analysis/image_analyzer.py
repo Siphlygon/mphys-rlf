@@ -115,7 +115,7 @@ class ProcessArgs:
         if not toml_path.exists():
             raise FileNotFoundError(f"TOML file {toml_path} does not exist")
 
-        with open(toml_path, 'rb', encoding='utf-8') as f:
+        with open(toml_path, 'rb') as f:
             config = tomlib.load(f)
 
         return cls.from_dict(config)
