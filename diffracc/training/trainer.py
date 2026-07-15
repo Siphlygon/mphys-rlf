@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from datetime import datetime
@@ -8,7 +9,7 @@ import torch
 from torch import Tensor, optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, DistributedSampler, random_split
 
 import wandb
 
@@ -18,8 +19,8 @@ from ..model.config import ModelConfig
 from ..model.model_utils import load_parameters
 from ..utils.device_utils import visible_gpus_by_space
 from ..utils.paths import MODEL_PARENT
-from . import train_utils
 from .output_manager import OutputManager
+from .train_utils import UseEMA, edm_loss, get_power_ema_avg_fn, load_data
 
 
 class DiffusionTrainer:
@@ -155,6 +156,8 @@ class DiffusionTrainer:
             self.device = torch.device( "cuda", self.local_rank )
             self.distributed = True
             self.primary = self.global_rank == 0
+            # One process per GPU under DDP, so the world size is the GPU count.
+            self.n_gpus = int(os.environ.get("WORLD_SIZE", 1))
             self.logger.info( "Distributed" )
         except KeyError as e:
             self.logger.info(f"Falling back to single-node: {e}")
@@ -162,6 +165,7 @@ class DiffusionTrainer:
             self.device = device or torch.device("cuda", device_ids_by_space[0])
             self.distributed = False
             self.primary = True
+            self.n_gpus = 1
             self.logger.info( "Single-Node" )
         self.logger.info(f"Working on: {self.device}")
 
@@ -209,7 +213,7 @@ class DiffusionTrainer:
         if self.power_ema:
             self.power_ema_gammas = [16.97, 6.94]
             self.power_ema_models = [
-                torch.optim.swa_utils.AveragedModel(self.inner_model, avg_fn=train_utils.get_power_ema_avg_fn(gamma))
+                torch.optim.swa_utils.AveragedModel(self.inner_model, avg_fn=get_power_ema_avg_fn(gamma))
                 for gamma in self.power_ema_gammas
             ]
 
@@ -228,6 +232,14 @@ class DiffusionTrainer:
                 self.dataset.transform_las_vals()
             self.dataset.set_context(*self.config.context)
         self.config.batch_size = int(self.config.batch_size)
+        # Record the effective (global) batch size - the optimization-relevant quantity - so it is logged once and
+        # saved to the run config, rather than left implicit in the product of three separate fields.
+        self.config.effective_batch_size = self.compute_effective_batch_size()
+        self.logger.info(
+            f"Effective batch size: {self.config.effective_batch_size} "
+            f"(= per-GPU batch {self.config.batch_size} x {self.n_gpus} GPU(s) x "
+            f"{int(getattr(self.config, 'accumulation_steps', 1))} accumulation step(s))."
+        )
         self.val_every = (self.config.val_every
                           if hasattr(self.config, "val_every")
                           else self.config.log_interval
@@ -292,6 +304,9 @@ class DiffusionTrainer:
             split with 90/10 ratio. If False, the entire dataset will be used for training. Default is True.
         """
         self.train_set = self.dataset
+        # Data-loading worker processes (0 = load on the main process, which starves the GPU). Overridable via env;
+        # default kept modest so train+val workers across both ranks don't oversubscribe the 16 CPUs/task.
+        num_workers = int(os.environ.get("DATALOADER_WORKERS", 4))
         if split:
             # B/c of downgraded pytorch we need to set sizes manually
             proportions = [.9, .1]
@@ -304,17 +319,56 @@ class DiffusionTrainer:
 
             assert len(self.val_set) >= self.config.batch_size, (
                 f"Batch size {self.config.batch_size} larger than validation set.")
+            val_workers = min(num_workers, 2)
             self.val_loader = DataLoader(
                 self.val_set,
                 batch_size=self.config.batch_size,
                 shuffle=False,
-                num_workers=0,
+                num_workers=val_workers,
                 drop_last=True,
+                pin_memory=True,
+                persistent_workers=val_workers > 0,
             )
 
         assert len(self.train_set) >= self.config.batch_size, (
             f"Batch size {self.config.batch_size} larger than training set.")
-        self.train_data = train_utils.load_data(self.train_set, self.config.batch_size)
+        # Under DDP, shard the training set across ranks so each GPU sees a distinct slice per epoch. Previously
+        # every rank drew independently from the full set (the second GPU's samples were largely redundant); a
+        # DistributedSampler gives a true global batch of distinct samples. set_epoch is called each epoch inside
+        # load_data so the shuffle differs between epochs and across ranks.
+        train_sampler = None
+        if self.distributed:
+            train_sampler = DistributedSampler(
+                self.train_set,
+                num_replicas=int(os.environ.get("WORLD_SIZE", 1)),
+                rank=self.global_rank,
+                shuffle=True,
+                drop_last=True,
+            )
+        self.train_data = load_data(
+            self.train_set,
+            self.config.batch_size,
+            num_workers=num_workers,
+            sampler=train_sampler,
+        )
+
+
+    def compute_effective_batch_size(self) -> int:
+        """
+        Compute the effective (global) batch size seen per optimizer step.
+
+        This is the optimization-relevant batch size: the per-GPU micro-batch (``config.batch_size``) multiplied by
+        the number of GPUs (gradients are averaged across DDP ranks) and by ``config.accumulation_steps`` (gradients
+        are summed across accumulation micro-batches before each step). It is the number that should be reported as
+        "the batch size"; the per-GPU micro-batch is only an implementation detail of fitting the step into VRAM.
+
+        Returns
+        -------
+        int
+            The effective batch size, ``batch_size * n_gpus * accumulation_steps``.
+        """
+        accumulation_steps = int(getattr(self.config, "accumulation_steps", 1))
+        return int(self.config.batch_size) * self.n_gpus * accumulation_steps
 
 
     def init_optimizer(self):
@@ -658,10 +712,8 @@ class DiffusionTrainer:
 
         # Calculate loss
         with torch.no_grad():
+            # Normal-weights pass over the whole validation set.
             losses = []
-            ema_losses = []
-
-            # Loop through all batches in validation set
             for batch in self.val_loader:
                 # Get batch
                 batch, context, labels = self.unpack_batch(batch)
@@ -671,7 +723,7 @@ class DiffusionTrainer:
 
                 # Calculate EMA loss
                 if validate_ema:
-                    with train_utils.UseEMA(self.inner_model, self.ema_model):
+                    with UseEMA(self.inner_model, self.ema_model):
                         ema_losses.append(self.batch_loss(batch, context=context, labels=labels).item())
 
         # Return mean loss
@@ -715,7 +767,7 @@ class DiffusionTrainer:
 
         # Calculate loss
         with autocast():
-            loss = train_utils.edm_loss(
+            loss = edm_loss(
                 self.model,
                 imgs,
                 context=context,
