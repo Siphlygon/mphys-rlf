@@ -14,7 +14,7 @@ scikit-learn
 einops
 inputimeout
 wandb
-nvidia-smi
+nvidia-ml-py3
 indexed
 tenacity
 tomli
