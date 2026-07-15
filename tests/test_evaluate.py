@@ -6,16 +6,27 @@ from diffracc.evaluation import evaluate
 from diffracc.evaluation.source_properties import PROPERTY_KEYS
 
 
-def _make_batch(peaks, size=20, noise_scale=0.01):
+def _make_batch(peaks, size=30, noise_scale=0.01, seed_offset=0):
     """
-    Build a batch of synthetic images, each with a single bright pixel of the given peak value, well above a small
-    independent noise floor, so the source finder reliably recovers peak == the requested value exactly.
+    Build a batch of synthetic images with the given peak flux values, well above a small independent noise floor
+    so the source finder reliably recovers peak == the requested value exactly (every blob pixel is set to the
+    same peak value, so the max - and hence the recovered peak - is unaffected by blob shape).
+
+    Source morphology (blob count and size) is varied across the batch, not just peak flux. A single fixed-shape
+    source at a fixed location leaves n_components/source_area/extent/concentration exactly constant across the
+    whole batch, which makes the feature covariance matrix singular regardless of sample count - that's numerically
+    borderline for frechet_distance's scipy.linalg.sqrtm (succeeds on some BLAS/LAPACK builds, raises SqrtmError on
+    others), not something more samples alone fixes.
     """
     imgs = []
     for i, peak in enumerate(peaks):
-        rng = np.random.default_rng(i)
+        rng = np.random.default_rng(seed_offset + i)
         img = rng.normal(loc=0.0, scale=noise_scale, size=(size, size)).astype(np.float32)
-        img[size // 2, size // 2] = peak
+        n_blobs = 1 + (i % 3)
+        blob_size = 1 + (i % 2)
+        for j in range(n_blobs):
+            r = c = 5 + 8 * j
+            img[r:r + blob_size, c:c + blob_size] = peak
         imgs.append(img)
     return np.stack(imgs)
 
@@ -43,8 +54,6 @@ class TestPhysicalDistributionReport:
         Test that each property in the report includes the expected fields, such as KS statistic and p-value, and the
         median values for generated and real images.
         """
-        # Default feature_keys has 7 features; frechet_distance's covariance sqrtm needs more samples than features
-        # to stay non-singular, so use a batch well above that rather than the minimal 2 used in shape-only tests.
         rng = np.random.default_rng(0)
         peaks = 10 ** rng.uniform(-0.5, 0.5, 15)
         generated = _make_batch(peaks)
