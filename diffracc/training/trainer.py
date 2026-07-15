@@ -725,19 +725,22 @@ class DiffusionTrainer:
             # Normal-weights pass over the whole validation set.
             losses = []
             for batch in self.val_loader:
-                # Get batch
-                batch, context, labels = self.unpack_batch(batch)
+                img, context, labels = self.unpack_batch(batch)
+                losses.append(self.batch_loss(img, context=context, labels=labels).item())
 
-                # Calculate loss and append to list
-                losses.append(self.batch_loss(batch, context=context, labels=labels).item())
+            # EMA pass: swap the EMA weights in ONCE around the whole loop. The previous code entered UseEMA per
+            # batch, which deep-copied the entire model state dict and reloaded it on every validation batch -
+            # pure overhead that scaled with the validation set size.
+            ema_losses = []
+            if validate_ema:
+                with UseEMA(self.inner_model, self.ema_model):
+                    for batch in self.val_loader:
+                        img, context, labels = self.unpack_batch(batch)
+                        ema_losses.append(self.batch_loss(img, context=context, labels=labels).item())
 
-                # Calculate EMA loss
-                if validate_ema:
-                    with UseEMA(self.inner_model, self.ema_model):
-                        ema_losses.append(self.batch_loss(batch, context=context, labels=labels).item())
+        # Return mean loss (nan for the EMA slot when EMA validation is disabled, preserving the 2-element contract).
+        output = [torch.tensor(l).mean().item() if len(l) else float("nan") for l in [losses, ema_losses]]
 
-        # Return mean loss
-        output = [torch.Tensor(l).mean().item() for l in [losses, ema_losses]]
 
         # Set model back to training mode
         self.model.train()
