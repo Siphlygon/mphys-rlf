@@ -18,8 +18,7 @@ def make_folders():
               paths.NP_ARRAY_PARENT,
               paths.DATASET_PARENT,]:
         # Make folder if it doesn't exist
-        if not p.exists():
-            p.mkdir()
+        p.mkdir(exist_ok=True)
 
         # Create symlink if necessary
         if paths.STORAGE_PARENT != paths.BASE_PARENT:
@@ -34,18 +33,15 @@ def make_folders():
     # per-model folders
     for name in paths.MODEL_NAMES:
         for f in [paths.IMG_DATA_PARENT]:
-            if not (f/name).exists():
-                (f/name).mkdir()
+            (f/name).mkdir(exist_ok=True)
 
         # for model parent, the sub-folder needs to be f"{NAME}_model"
         for f in [paths.MODEL_PARENT]:
-            if not (f/f"{name}_model").exists():
-                (f/f"{name}_model").mkdir()
+            (f/f"{name}_model").mkdir(exist_ok=True)
 
     # create the folders for the pretrained models and the mosaic/cutouts folders
     for f in [paths.PRETRAINED_PARENT]:
-        if not f.exists():
-            f.mkdir()
+        f.mkdir(exist_ok=True)
 
     # create the subfolders for the fits images, pybdsf outputs, and nparrays
     for f in [paths.FITS_PARENT,
@@ -53,16 +49,13 @@ def make_folders():
               paths.PYBDSF_EXPORT_IMAGE_PARENT,
               paths.PYBDSF_LOG_PARENT,
               paths.NP_ARRAY_PARENT]:
-        if not f.exists():
-            f.mkdir()
+        f.mkdir(exist_ok=True)
         for g in paths.SUBDIRS:
-            if not (f/g).exists():
-                (f/g).mkdir()
+            (f/g).mkdir(exist_ok=True)
 
     # create the subfolders for the dataset preparation
     for f in [paths.CUTOUTS_PATH, paths.PREPROCESSING_PARENT]:
-        if not f.exists():
-            f.mkdir()
+        f.mkdir(exist_ok=True)
 
 
 if __name__ == '__main__':
