@@ -62,10 +62,21 @@ if __name__ == "__main__":
     # `python -m diffracc.dataset_prep.fit_flux_transform`. Required to train the LOFAR_asinh config, which assumes the
     # data has been brought to sigma_data ~ 0.5; without it the raw Jy data (std ~1e-2) is mismatched to sigma_data.
     flux_transform = os.environ.get("FLUX_TRANSFORM")
-    if "USE_TRANSFORMS" in os.environ and os.environ["USE_TRANSFORMS"].lower() == "true":
-        dataset = datasets.TrainDatasetScaled(dataset_path)
+    use_transforms = os.environ.get("USE_TRANSFORMS", "").lower() == "true"
+    if use_transforms:
+        if not flux_transform:
+            raise ValueError(
+                "USE_TRANSFORMS=true requires FLUX_TRANSFORM to point to a flux_transform.json; "
+                "training would otherwise silently run on raw Jy/beam pixels, mismatched to the config's sigma_data."
+            )
+        dataset = datasets.TrainDatasetScaled(dataset_path, flux_transform=flux_transform)
     else:
-        dataset = datasets.TrainDatasetNoScale(dataset_path, flux_transform=flux_transform)
+        if flux_transform:
+            raise ValueError(
+                "FLUX_TRANSFORM is set but USE_TRANSFORMS is not 'true'. Set USE_TRANSFORMS=true to apply it; "
+                "refusing to silently ignore the transform."
+            )
+        dataset = datasets.TrainDatasetNoScale(dataset_path)
 
     # Get LAS values for the dataset context
     if "USE_LAS_VALUES" in os.environ and os.environ["USE_LAS_VALUES"].lower() == "true":
