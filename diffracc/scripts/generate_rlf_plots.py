@@ -42,9 +42,6 @@ def main(args):
                                                                    flux_cut_jy,
                                                                    args.plot_rlagn_selection_contour)
 
-    all_unresolved = np.zeros(resolved.shape[0], dtype=bool)
-    resolved = all_unresolved
-
     rlf0 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=flux_cut_jy)
     rlf1 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=flux_cut_jy, vmax_method=True)
     rlfs = [rlf0, rlf1]
