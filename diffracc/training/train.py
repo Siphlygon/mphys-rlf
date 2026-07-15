@@ -61,19 +61,19 @@ if __name__ == "__main__":
     # Optional global flux transform: path to a flux_transform.json (or the directory containing it), as produced by
     # `python -m diffracc.dataset_prep.fit_flux_transform`. Required to train the LOFAR_asinh config, which assumes the
     # data has been brought to sigma_data ~ 0.5; without it the raw Jy data (std ~1e-2) is mismatched to sigma_data.
-    flux_transform = os.environ.get("FLUX_TRANSFORM")
+    flux_transform_path = os.environ.get("FLUX_TRANSFORM_PATH", None)
     use_transforms = os.environ.get("USE_TRANSFORMS", "").lower() == "true"
     if use_transforms:
-        if not flux_transform:
+        if not flux_transform_path:
             raise ValueError(
-                "USE_TRANSFORMS=true requires FLUX_TRANSFORM to point to a flux_transform.json; "
+                "USE_TRANSFORMS=true requires FLUX_TRANSFORM_PATH to point to a flux_transform.json; "
                 "training would otherwise silently run on raw Jy/beam pixels, mismatched to the config's sigma_data."
             )
-        dataset = datasets.TrainDatasetScaled(dataset_path, flux_transform=flux_transform)
+        dataset = datasets.TrainDatasetScaled(dataset_path, flux_transform=flux_transform_path)
     else:
-        if flux_transform:
+        if flux_transform_path:
             raise ValueError(
-                "FLUX_TRANSFORM is set but USE_TRANSFORMS is not 'true'. Set USE_TRANSFORMS=true to apply it; "
+                "FLUX_TRANSFORM_PATH is set but USE_TRANSFORMS is not 'true'. Set USE_TRANSFORMS=true to apply it; "
                 "refusing to silently ignore the transform."
             )
         dataset = datasets.TrainDatasetNoScale(dataset_path)

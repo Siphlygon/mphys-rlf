@@ -156,7 +156,7 @@ def fit_and_report(
     if roundtrip_err > 1e-3 * (np.abs(finite).max() + 1e-30): 
         logger.warning("Round-trip error is larger than expected; check the transform / dtype.")
 
-    out_path = output if output is not None else dataset_path.parent
+    out_path = output if output is not None else dataset_path.parent / f"{dataset_path.stem}_flux_transform.json"
     saved = transform.save(out_path)
     logger.info(f"Saved transform to: {saved}")
     return transform

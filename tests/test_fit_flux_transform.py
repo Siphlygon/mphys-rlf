@@ -90,7 +90,7 @@ class TestFitAndReport:
         transform = fit_and_report(dataset_path, kind="asinh", sigma_data=0.5, sample_images=0)
 
         assert isinstance(transform, ft.GlobalAsinhScale)
-        assert (dataset_path.parent / ft.FLUX_TRANSFORM_FILE).exists()
+        assert (dataset_path.parent / (dataset_path.stem + "_flux_transform.json")).exists()
 
     def test_fits_linear_transform(self, dataset_path):
         """Test that fit_and_report() fits a linear transform when requested."""
@@ -110,7 +110,7 @@ class TestFitAndReport:
         fit_and_report(dataset_path, kind="asinh", sample_images=0, output=out_dir)
 
         assert (out_dir / ft.FLUX_TRANSFORM_FILE).exists()
-        assert not (dataset_path.parent / ft.FLUX_TRANSFORM_FILE).exists()
+        assert not (dataset_path.parent / (dataset_path.stem + "_flux_transform.json")).exists()
 
     def test_explicit_beta_is_respected_over_computed_noise(self, dataset_path):
         """Test that fit_and_report() respects an explicitly provided beta value over the computed noise."""
@@ -120,7 +120,7 @@ class TestFitAndReport:
     def test_saved_transform_round_trips_via_load(self, dataset_path):
         """Test that the transform saved by fit_and_report() can be loaded back and is of the correct type."""
         fit_and_report(dataset_path, kind="linear", sigma_data=0.5, sample_images=0)
-        loaded = ft.load(dataset_path.parent)
+        loaded = ft.load(dataset_path.parent / (dataset_path.stem + "_flux_transform.json"))
         assert isinstance(loaded, ft.GlobalLinearScale)
 
 
