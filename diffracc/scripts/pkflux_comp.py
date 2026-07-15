@@ -32,14 +32,13 @@ def main(args):
         peak_fluxes_from_imgs.append(peak_flux_from_img)
         peak_fluxes_conditioned.append(peak_flux_conditioned)
 
+    if not peak_fluxes_from_imgs:
+        raise RuntimeError(f"No FITS files found in {img_directory}")
+
     plt.scatter(peak_fluxes_conditioned, peak_fluxes_from_imgs, s=0.01)
 
-    if len(peak_fluxes_from_imgs) > 0:
-        min_peakflux = min(np.min(peak_fluxes_conditioned), np.min(peak_fluxes_from_imgs))
-        max_peakflux = max(np.max(peak_fluxes_conditioned), np.max(peak_fluxes_from_imgs))
-    else:
-        min_peakflux = np.min(peak_fluxes_conditioned)
-        max_peakflux = np.max(peak_fluxes_conditioned)
+    min_peakflux = min(np.min(peak_fluxes_conditioned), np.min(peak_fluxes_from_imgs))
+    max_peakflux = max(np.max(peak_fluxes_conditioned), np.max(peak_fluxes_from_imgs))
 
     x = np.geomspace(min_peakflux, max_peakflux)
     plt.plot(x, x, color='r')

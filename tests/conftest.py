@@ -8,10 +8,31 @@ reading the real thing.
 """
 import astropy.cosmology
 import astropy.units as u
+import matplotlib
 import numpy as np
 import pytest
 
+# Force a non-interactive backend before any test creates a figure. matplotlib's default backend resolution picks
+# TkAgg whenever tkinter is importable, without verifying its Tcl/Tk data files actually work - on a broken Tcl/Tk
+# install (as on this machine) that resolves "successfully" at import time but hard-crashes with TclError the
+# moment a figure is actually created, rather than falling back gracefully.
+matplotlib.use("Agg")
+
 from diffracc.utils import paths
+
+
+@pytest.fixture(autouse=True)
+def _close_matplotlib_figures():
+    """
+    Some plotting functions (e.g. diffracc.plotting.model_vs_peak) call plt.scatter()/plt.plot() directly rather
+    than creating their own Figure, so they draw onto whatever pyplot considers the "current" figure - which, left
+    unclosed, persists across tests via matplotlib's global figure stack. Force a clean canvas before and after
+    every test so one test's plotted data can never leak into another's.
+    """
+    import matplotlib.pyplot as plt
+    plt.close("all")
+    yield
+    plt.close("all")
 
 
 @pytest.fixture(autouse=True)

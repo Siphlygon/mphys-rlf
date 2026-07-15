@@ -22,9 +22,10 @@ dependencies = [
     "einops",
     "inputimeout",
     "wandb",
-    "nvidia_smi",
+    "nvidia-ml-py3",
     "indexed",
-    "tenacity"
+    "tenacity",
+    "tomli"
 ]
 authors = [
   {name = "Ashley Parr", email = "ashley.parr@protonmail.com"},

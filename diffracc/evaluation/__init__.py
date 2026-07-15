@@ -17,7 +17,7 @@ from . import evaluate, metrics, source_properties
 from .evaluate import (
     calibration_report,
     full_report,
-    memorization_report,
+    memorisation_report,
     physical_distribution_report,
 )
 from .source_properties import SourceProperties, extract_batch, extract_properties
@@ -31,6 +31,6 @@ __all__ = [
     "extract_batch",
     "physical_distribution_report",
     "calibration_report",
-    "memorization_report",
+    "memorisation_report",
     "full_report",
 ]

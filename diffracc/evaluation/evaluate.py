@@ -7,7 +7,7 @@ Three headline checks:
   set (per-quantity W1/KS + a multivariate physical FID/KID)?
 * :func:`calibration_report` -- does the peak-flux conditioning do what it claims (recovered vs prompted), and over what
   range is it reliable?
-* :func:`memorization_report` -- is the model generating, or reproducing training images?
+* :func:`memorisation_report` -- is the model generating, or reproducing training images?
 
 :func:`full_report` runs all three. All functions take image stacks in **physical Jy/beam** (invert any global flux
 transform before calling; see :mod:`diffracc.data.flux_transforms`).
@@ -217,7 +217,7 @@ def _memorisation_vectors(images, downsample: int) -> np.ndarray:
     return stack.reshape(stack.shape[0], -1)
 
 
-def memorization_report(
+def memorisation_report(
     generated,
     train,
     val = None,
@@ -283,8 +283,8 @@ def full_report(
     nsigma: float = 5.0,
 ) -> dict:
     """
-    Run the full evaluation suite. ``prompted_peak`` enables the calibration report; ``train`` enables
-    the memorisation report (with optional ``val`` baseline).
+    Run the full evaluation suite. ``prompted_peak`` enables the calibration report; ``train`` enables the memorisation
+    report (with optional ``val`` baseline).
     
     Parameters
     ----------
@@ -313,7 +313,7 @@ def full_report(
     if prompted_peak is not None:
         report["calibration"] = calibration_report(generated, prompted_peak, nsigma=nsigma)
     if train is not None:
-        report["memorization"] = memorization_report(generated, train, val=val)
+        report["memorisation"] = memorisation_report(generated, train, val=val)
     logger.info("Completed Tier-1 evaluation report.")
     return report
 
@@ -346,7 +346,7 @@ def summarise(report: dict) -> str:
         lines.append(f"Calibration (recovered vs prompted peak, N={cal['n_used']})")
         lines.append(f"  slope={cal['slope']:.3f}  intercept={cal['intercept']:.3f}  R^2={cal['r2']:.4f}"
                      f"  bias={cal['bias']:.3f}x  scatter={cal['scatter_dex']:.3f} dex")
-    mem = report.get("memorization")
+    mem = report.get("memorisation")
     if mem:
         lines.append("Memorisation (nearest training image, peak-normalised)")
         line = f"  gen NN median = {mem['gen_nn_median']:.4f}"
