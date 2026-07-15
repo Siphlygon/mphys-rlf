@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 from datetime import datetime
@@ -8,7 +9,7 @@ import torch
 from torch import Tensor, optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, DistributedSampler, random_split
 
 import wandb
 
@@ -18,8 +19,8 @@ from ..model.config import ModelConfig
 from ..model.model_utils import load_parameters
 from ..utils.device_utils import visible_gpus_by_space
 from ..utils.paths import MODEL_PARENT
-from . import train_utils
 from .output_manager import OutputManager
+from .train_utils import UseEMA, edm_loss, get_power_ema_avg_fn, load_data
 
 
 class DiffusionTrainer:
@@ -155,6 +156,8 @@ class DiffusionTrainer:
             self.device = torch.device( "cuda", self.local_rank )
             self.distributed = True
             self.primary = self.global_rank == 0
+            # One process per GPU under DDP, so the world size is the GPU count.
+            self.n_gpus = int(os.environ.get("WORLD_SIZE", 1))
             self.logger.info( "Distributed" )
         except KeyError as e:
             self.logger.info(f"Falling back to single-node: {e}")
@@ -162,8 +165,19 @@ class DiffusionTrainer:
             self.device = device or torch.device("cuda", device_ids_by_space[0])
             self.distributed = False
             self.primary = True
+            self.n_gpus = 1
             self.logger.info( "Single-Node" )
         self.logger.info(f"Working on: {self.device}")
+
+        # Performance backends. All safe on torch 1.13! 
+        #  - cudnn.benchmark autotunes conv kernels for our fixed (batch, 1, 80, 80) shape. It can use a little
+        #    extra workspace VRAM, so it is env-toggleable (set CUDNN_BENCHMARK=false) in case it tips a near-full
+        #    card into OOM at startup.
+        #  - TF32 accelerates the fp32 matmuls that run outside autocast; negligible accuracy impact here and no
+        #    memory cost. (matmul TF32 defaults to False on torch 1.13, so this is a real enable.)
+        torch.backends.cudnn.benchmark = os.environ.get("CUDNN_BENCHMARK", "true").lower() == "true"
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
         # Restrict outputs to primary node
         if self.primary:
@@ -209,7 +223,7 @@ class DiffusionTrainer:
         if self.power_ema:
             self.power_ema_gammas = [16.97, 6.94]
             self.power_ema_models = [
-                torch.optim.swa_utils.AveragedModel(self.inner_model, avg_fn=train_utils.get_power_ema_avg_fn(gamma))
+                torch.optim.swa_utils.AveragedModel(self.inner_model, avg_fn=get_power_ema_avg_fn(gamma))
                 for gamma in self.power_ema_gammas
             ]
 
@@ -220,6 +234,19 @@ class DiffusionTrainer:
         if getattr(self.dataset, "flux_transform", None) is not None:
             self.config.flux_transform = self.dataset.flux_transform.to_dict()
             self.logger.info(f"Recording flux transform in config: {self.config.flux_transform}")
+
+        # EDM preconditioning assumes sigma_data ~ std of the training pixels; a large mismatch (e.g. a flux transform
+        # that was expected but never applied) trains a model whose samples are pure noise. Checked independently of the
+        # block above so it fires precisely in the dangerous case: no transform applied.
+        if (sigma_data := getattr(self.config, "sigma_data", None)) is not None:
+            data_std = float(self.dataset.data.std())
+            if not 1 / 5 <= data_std / float(sigma_data) <= 5:
+                self.logger.warning(
+                    f"Training data pixel std ({data_std:.3g}) is more than 5x away from config sigma_data "
+                    f"({float(sigma_data):.3g}). EDM preconditioning assumes sigma_data ~ data std - if a flux "
+                    "transform was intended, it has not been applied to this dataset."
+                )
+
         if hasattr(self.config, "context"):
             self.logger.info(f"Working with context: {self.config.context}.")
             if "max_values_tr" in self.config.context:
@@ -228,6 +255,14 @@ class DiffusionTrainer:
                 self.dataset.transform_las_vals()
             self.dataset.set_context(*self.config.context)
         self.config.batch_size = int(self.config.batch_size)
+        # Record the effective (global) batch size - the optimization-relevant quantity - so it is logged once and
+        # saved to the run config, rather than left implicit in the product of three separate fields.
+        self.config.effective_batch_size = self.compute_effective_batch_size()
+        self.logger.info(
+            f"Effective batch size: {self.config.effective_batch_size} "
+            f"(= per-GPU batch {self.config.batch_size} x {self.n_gpus} GPU(s) x "
+            f"{int(getattr(self.config, 'accumulation_steps', 1))} accumulation step(s))."
+        )
         self.val_every = (self.config.val_every
                           if hasattr(self.config, "val_every")
                           else self.config.log_interval
@@ -292,6 +327,9 @@ class DiffusionTrainer:
             split with 90/10 ratio. If False, the entire dataset will be used for training. Default is True.
         """
         self.train_set = self.dataset
+        # Data-loading worker processes (0 = load on the main process, which starves the GPU). Overridable via env;
+        # default kept modest so train+val workers across both ranks don't oversubscribe the 16 CPUs/task.
+        num_workers = int(os.environ.get("DATALOADER_WORKERS", 4))
         if split:
             # B/c of downgraded pytorch we need to set sizes manually
             proportions = [.9, .1]
@@ -304,17 +342,56 @@ class DiffusionTrainer:
 
             assert len(self.val_set) >= self.config.batch_size, (
                 f"Batch size {self.config.batch_size} larger than validation set.")
+            val_workers = min(num_workers, 2)
             self.val_loader = DataLoader(
                 self.val_set,
                 batch_size=self.config.batch_size,
                 shuffle=False,
-                num_workers=0,
+                num_workers=val_workers,
                 drop_last=True,
+                pin_memory=True,
+                persistent_workers=val_workers > 0,
             )
 
         assert len(self.train_set) >= self.config.batch_size, (
             f"Batch size {self.config.batch_size} larger than training set.")
-        self.train_data = train_utils.load_data(self.train_set, self.config.batch_size)
+        # Under DDP, shard the training set across ranks so each GPU sees a distinct slice per epoch. Previously
+        # every rank drew independently from the full set (the second GPU's samples were largely redundant); a
+        # DistributedSampler gives a true global batch of distinct samples. set_epoch is called each epoch inside
+        # load_data so the shuffle differs between epochs and across ranks.
+        train_sampler = None
+        if self.distributed:
+            train_sampler = DistributedSampler(
+                self.train_set,
+                num_replicas=int(os.environ.get("WORLD_SIZE", 1)),
+                rank=self.global_rank,
+                shuffle=True,
+                drop_last=True,
+            )
+        self.train_data = load_data(
+            self.train_set,
+            self.config.batch_size,
+            num_workers=num_workers,
+            sampler=train_sampler,
+        )
+
+
+    def compute_effective_batch_size(self) -> int:
+        """
+        Compute the effective (global) batch size seen per optimizer step.
+
+        This is the optimization-relevant batch size: the per-GPU micro-batch (``config.batch_size``) multiplied by
+        the number of GPUs (gradients are averaged across DDP ranks) and by ``config.accumulation_steps`` (gradients
+        are summed across accumulation micro-batches before each step). It is the number that should be reported as
+        "the batch size"; the per-GPU micro-batch is only an implementation detail of fitting the step into VRAM.
+
+        Returns
+        -------
+        int
+            The effective batch size, ``batch_size * n_gpus * accumulation_steps``.
+        """
+        accumulation_steps = int(getattr(self.config, "accumulation_steps", 1))
+        return int(self.config.batch_size) * self.n_gpus * accumulation_steps
 
 
     def init_optimizer(self):
@@ -593,11 +670,20 @@ class DiffusionTrainer:
         # loss-scale for every micro-batch within a step (the scale only changes on `scaler.update()`), so the
         # accumulation is internally consistent.
         loss = 0.0
-        for _ in range(accumulation_steps):
+        for micro_step in range(accumulation_steps):
             batch, context, labels = self.unpack_batch(next(self.train_data))
-            with autocast():
-                micro_loss = self.batch_loss(batch, context=context, labels=labels) / accumulation_steps
-            scaler.scale(micro_loss).backward()
+            # Under DDP every .backward() triggers a gradient all-reduce across GPUs. During accumulation only the
+            # final micro-batch actually needs to sync; no_sync() skips the redundant all-reduces on the
+            # intermediate ones, which is the bulk of the accumulation-vs-non-accumulation slowdown. No effect when
+            # not distributed, or when accumulation_steps == 1 (the sole micro-batch is always the last).
+            is_last = micro_step == accumulation_steps - 1
+            sync_context = (
+                self.model.no_sync() if (self.distributed and not is_last) else contextlib.nullcontext()
+            )
+            with sync_context:
+                with autocast():
+                    micro_loss = self.batch_loss(batch, context=context, labels=labels) / accumulation_steps
+                scaler.scale(micro_loss).backward()
             loss = loss + micro_loss.detach()
 
         # Backward pass & optimizer step (a single step per accumulated batch).
@@ -658,24 +744,25 @@ class DiffusionTrainer:
 
         # Calculate loss
         with torch.no_grad():
+            # Normal-weights pass over the whole validation set.
             losses = []
-            ema_losses = []
-
-            # Loop through all batches in validation set
             for batch in self.val_loader:
-                # Get batch
-                batch, context, labels = self.unpack_batch(batch)
+                img, context, labels = self.unpack_batch(batch)
+                losses.append(self.batch_loss(img, context=context, labels=labels).item())
 
-                # Calculate loss and append to list
-                losses.append(self.batch_loss(batch, context=context, labels=labels).item())
+            # EMA pass: swap the EMA weights in ONCE around the whole loop. The previous code entered UseEMA per
+            # batch, which deep-copied the entire model state dict and reloaded it on every validation batch -
+            # pure overhead that scaled with the validation set size.
+            ema_losses = []
+            if validate_ema:
+                with UseEMA(self.inner_model, self.ema_model):
+                    for batch in self.val_loader:
+                        img, context, labels = self.unpack_batch(batch)
+                        ema_losses.append(self.batch_loss(img, context=context, labels=labels).item())
 
-                # Calculate EMA loss
-                if validate_ema:
-                    with train_utils.UseEMA(self.inner_model, self.ema_model):
-                        ema_losses.append(self.batch_loss(batch, context=context, labels=labels).item())
+        # Return mean loss (nan for the EMA slot when EMA validation is disabled, preserving the 2-element contract).
+        output = [torch.tensor(l).mean().item() if len(l) else float("nan") for l in [losses, ema_losses]]
 
-        # Return mean loss
-        output = [torch.Tensor(l).mean().item() for l in [losses, ema_losses]]
 
         # Set model back to training mode
         self.model.train()
@@ -715,7 +802,7 @@ class DiffusionTrainer:
 
         # Calculate loss
         with autocast():
-            loss = train_utils.edm_loss(
+            loss = edm_loss(
                 self.model,
                 imgs,
                 context=context,

@@ -23,7 +23,7 @@ export HDF5_USE_FILE_LOCKING='FALSE'
 export WANDB_API_PATH="/share/nas2_3/lgreen/mphys-rlf/.wandb_api_key"
 
 ## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
-nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
+nodes=($(scontrol show hostnames $SLURM_JOB_NODELIST))
 nodes_array=($nodes)
 head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
@@ -32,6 +32,13 @@ echo Node IP: $head_node_ip
 export LOGLEVEL=INFO
 export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
+
+# Training params
+export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
+export MODEL_NAME="snr15_inclusive_las"
+export USE_TRANSFORMS='TRUE'
+export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
+export USE_LAS_VALUES='TRUE'
 
 echo ">>>starting program via torchrun"
 srun torchrun \

@@ -11,6 +11,7 @@ scaling, LAS conditioning, index-collision avoidance) are under test.
 """
 from pathlib import PurePath
 
+import h5py
 import numpy as np
 import pytest
 import torch
@@ -45,8 +46,9 @@ class _FakeSampler:
     """Stand-in for diffracc.model.sampler.Sampler - no real model loading or diffusion sampling."""
     instances = []
 
-    def __init__(self, n_samples, timesteps):
+    def __init__(self, n_samples, timesteps, flux_transform=None):
         self.init_args = (n_samples, timesteps)
+        self.flux_transform = flux_transform
         self.get_fpeak_calls = []
         self.quick_sample_calls = []
         _FakeSampler.instances.append(self)
@@ -110,10 +112,21 @@ def _base_args(**overrides) -> gff.SampleArgs:
     defaults = dict(
         batch_size=4, timesteps=10, use_cpu=True, n_samples=3, generated_subdir="generated",
         distribution="dataset", lower_bound=0.0, upper_bound=1.0, las_conditioning_enabled=False,
-        preserve_values=True, model_name="LOFAR_model", folder_size=100,
+        preserve_values=True, model_name="LOFAR_model", folder_size=100, train_data_path=None,
     )
     defaults.update(overrides)
     return gff.SampleArgs(**defaults)
+
+
+@pytest.fixture
+def las_train_h5(tmp_path):
+    """A minimal training h5 with a cat_info['LAS'] column, for fitting the LAS standardisation transform."""
+    path = tmp_path / "train_set.h5"
+    records = np.zeros(50, dtype=[("LAS", "<f4")])
+    records["LAS"] = np.random.default_rng(1).uniform(6, 120, 50).astype(np.float32)
+    with h5py.File(path, "w") as f:
+        f.create_dataset("cat_info", data=records)
+    return path
 
 
 class TestSample:
@@ -125,8 +138,10 @@ class TestSample:
         assert _FakeSampler.instances[0].quick_sample_calls == []
 
     def test_unknown_distribution_raises_value_error(self):
-        """Test that constructing SampleArgs with an unknown distribution raises ValueError - sample() itself
-        trusts args.distribution is already valid and no longer re-checks it."""
+        """
+        Test that constructing SampleArgs with an unknown distribution raises ValueError - sample() itself
+        trusts args.distribution is already valid and no longer re-checks it.
+        """
         with pytest.raises(ValueError):
             _base_args(distribution="not_a_real_distribution")
 
@@ -157,12 +172,58 @@ class TestSample:
         assert arr.min() == pytest.approx(0.0)
         assert arr.max() == pytest.approx(1.0)
 
-    def test_las_conditioning_adds_lasize_kwarg(self, patched_sample_deps):
+    def test_las_conditioning_adds_lasize_kwarg(self, patched_sample_deps, las_train_h5):
         """Test that sample() adds the LASIZE keyword argument when las_conditioning_enabled is True."""
-        gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=True))
+        gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=True,
+                              train_data_path=str(las_train_h5)))
         image, postfix, kwargs = _FakeImageAnalyzer.instances[0].save_calls[0]
         assert "LASIZE" in kwargs
         assert "FXSCLD" in kwargs
+
+    def test_las_header_is_physical_but_context_is_standardised(self, patched_sample_deps, las_train_h5):
+        """
+        Test that the LASIZE header stays in physical arcsec while the model context gets the standardised
+        (power-transformed, ~N(0,1)) LAS value - the space the model was trained on.
+        """
+        gff.sample(_base_args(n_samples=8, batch_size=8, las_conditioning_enabled=True,
+                              train_data_path=str(las_train_h5)))
+
+        header_las = np.array([kwargs["LASIZE"] for _, _, kwargs in _FakeImageAnalyzer.instances[0].save_calls])
+        assert ((header_las >= 6) & (header_las <= 120)).all()
+
+        _, context, _, _ = _FakeSampler.instances[0].quick_sample_calls[0]
+        context_las = context.numpy()[:, 1]
+        # standardised values live on a ~N(0,1) scale, nothing like raw arcsec
+        assert np.abs(context_las).max() < 6
+        assert not np.allclose(context_las, header_las)
+
+    def test_las_conditioning_without_train_data_path_raises(self, patched_sample_deps):
+        """Test that sample() refuses LAS conditioning when no train_data_path is given to fit the LAS transform."""
+        with pytest.raises(AssertionError, match="train_data_path"):
+            gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=True, train_data_path=None))
+
+    def test_flux_transform_from_model_config_reaches_sampler(self, patched_sample_deps, monkeypatch, tmp_path):
+        """
+        Test that a flux transform recorded in the trained model's saved config is passed to the Sampler, so
+        samples are inverted back to physical Jy/beam.
+        """
+        transform_dict = {"name": "GlobalAsinhScale", "beta": 3.36e-4, "k": 0.658}
+        model_dir = tmp_path / "model_results" / "LOFAR_model"
+        model_dir.mkdir(parents=True)
+        (model_dir / "config_LOFAR_model.json").write_text(
+            '{"model_name": "LOFAR_model", "flux_transform": '
+            '{"name": "GlobalAsinhScale", "beta": 3.36e-4, "k": 0.658}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(paths, "MODEL_PARENT", tmp_path / "model_results")
+
+        gff.sample(_base_args(n_samples=1, batch_size=1))
+        assert _FakeSampler.instances[0].flux_transform == transform_dict
+
+    def test_no_model_config_means_no_flux_transform(self, patched_sample_deps):
+        """Test that a missing saved model config falls back to no flux transform instead of erroring."""
+        gff.sample(_base_args(n_samples=1, batch_size=1))
+        assert _FakeSampler.instances[0].flux_transform is None
 
     def test_no_las_conditioning_omits_lasize_kwarg(self, patched_sample_deps):
         """Test that sample() omits the LASIZE keyword argument when las_conditioning_enabled is False."""

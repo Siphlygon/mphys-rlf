@@ -198,11 +198,14 @@ def get_power_ema_avg_fn(gamma: float):
     return ema_update
 
 
-def load_data(dataset: torch.utils.data.Dataset, batch_size: int, shuffle: bool = True):
+def load_data(dataset: torch.utils.data.Dataset,
+              batch_size: int,
+              shuffle: bool = True,
+              num_workers: int = 4,
+              sampler: torch.utils.data.Sampler | None = None):
     """
-    Convenience function to continuously load data from a dataset. Will not stop
-    until manually interrupted. A dataloader is created with the given dataset
-    and batch size, and data is yielded from it. Basically, this returns an
+    Convenience function to continuously load data from a dataset. Will not stop until manually interrupted. A
+    dataloader is created with the given dataset and batch size, and data is yielded from it. Basically, this returns an
     infinite DataLoader.
 
     Parameters
@@ -213,7 +216,15 @@ def load_data(dataset: torch.utils.data.Dataset, batch_size: int, shuffle: bool 
     batch_size : int
         The batch size to use for loading data
     shuffle : bool, optional
-        Whether to shuffle the data, by default True
+        Whether to shuffle the data, by default True. Ignored when a sampler is given (mutually exclusive in
+        DataLoader).
+    num_workers : int, optional
+        Number of worker processes for data loading, by default 4. With num_workers > 0 the workers prefetch and
+        augment the next batch while the GPU computes the current one, which the previous num_workers=0 could not
+        do (it loaded on the main process and starved the GPU).
+    sampler : torch.utils.data.Sampler, optional
+        Sampler controlling the iteration order, by default None. A DistributedSampler is passed here for DDP so
+        each rank gets a distinct shard; its set_epoch is called every epoch below so shuffling varies per epoch.
 
     Yields
     ------
@@ -223,10 +234,17 @@ def load_data(dataset: torch.utils.data.Dataset, batch_size: int, shuffle: bool 
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=0,
+        shuffle=shuffle and sampler is None,
+        sampler=sampler,
+        num_workers=num_workers,
         drop_last=True,
         pin_memory=True,
+        persistent_workers=num_workers > 0,
     )
+    epoch = 0
     while True:
+        # DistributedSampler needs set_epoch each epoch, else every epoch reuses the same order across ranks.
+        if sampler is not None and hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
         yield from loader
+        epoch += 1
