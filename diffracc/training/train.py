@@ -52,6 +52,21 @@ if __name__ == "__main__":
     if "MODEL_NAME" in os.environ:
         setattr(conf, "model_name", os.environ["MODEL_NAME"])
 
+    # Whether to resume ("pick up") a crashed/interrupted run instead of starting fresh, continuing from
+    # model_results/<MODEL_NAME>/parameters_<MODEL_NAME>.pt (the rolling main checkpoint, not a specific snapshot).
+    #
+    # `conf` is deliberately still loaded from the static MODEL_PRESET file above rather than the run's own saved
+    # config_<MODEL_NAME>.json: OutputManager overwrites that file's "iterations" field with the *elapsed* iteration
+    # count on every log interval, so loading it as the main config here would silently replace the true target
+    # iteration count with wherever training had gotten to - making the training loop's range empty and exiting
+    # immediately as if already done. The static preset's "iterations" is never touched, so it stays a reliable
+    # target; per-run state (elapsed iterations, model/EMA/optimizer weights) is restored separately by pickup=True.
+    #
+    # If this model's results directory was ever renamed/moved, run
+    #     python -m diffracc.scripts.rename_model --old-name <old> --new-name <MODEL_NAME>
+    # first, so the checkpoint/config filenames inside match MODEL_NAME - otherwise pickup will not find them.
+    pickup = os.environ.get("RESUME", "").lower() == "true"
+
     # Load dataset:
     if "DATASET_PATH" in os.environ:
         dataset_path = os.environ["DATASET_PATH"]
@@ -93,7 +108,7 @@ if __name__ == "__main__":
             os.environ["WANDB_API_KEY"] = wandb_api_key
 
     # Training
-    trainer = DiffusionTrainer(config=conf, dataset=dataset)
+    trainer = DiffusionTrainer(config=conf, dataset=dataset, pickup=pickup)
     trainer.training_loop()
 
     # Clean up DDP
