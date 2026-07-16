@@ -480,6 +480,67 @@ class DiffusionTrainer:
         return self.primary
 
 
+    def _wandb_run_id_file(self) -> Path:
+        """
+        Path to the marker file recording this model's wandb run id.
+
+        Deliberately a fixed filename rather than one templated on the model name (contrast
+        config_<name>.json / parameters_<name>.pt): this way, renaming the model's results directory - the exact
+        scenario diffracc.scripts.rename_model exists to fix - never orphans it.
+
+        Returns
+        -------
+        Path
+            The wandb_run_id.txt path inside this model's results folder.
+        """
+        return self.OM.results_folder / "wandb_run_id.txt"
+
+
+    def _wandb_job_metadata(self) -> dict:
+        """
+        Collect metadata about the run environment to attach to the wandb config, so it is queryable via the wandb
+        API alongside the model hyperparameters (e.g. to find which SLURM node a given run trained on).
+
+        Returns
+        -------
+        dict
+            SLURM job/node identifiers (None if not running under SLURM) and this model's config/results paths
+            (None if output writing is not set up).
+        """
+        return {
+            "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+            "slurm_node": os.environ.get("SLURMD_NODENAME"),
+            "slurm_nodelist": os.environ.get("SLURM_JOB_NODELIST"),
+            "config_file": str(self.OM.config_file) if self.OM.ready_to_write else None,
+            "results_folder": str(self.OM.results_folder) if self.OM.ready_to_write else None,
+        }
+
+
+    def _resolve_wandb_resume(self, write_output: bool) -> tuple[str | None, str | None]:
+        """
+        Decide whether to resume a previously-recorded wandb run or start a fresh one.
+
+        Parameters
+        ----------
+        write_output : bool
+            Whether this training_loop() call is writing output files (mirrors the local variable of the same name
+            in training_loop) - reattaching requires reading the saved run id from disk, which only exists when
+            output writing is enabled.
+
+        Returns
+        -------
+        tuple[str | None, str | None]
+            (run_id, resume_mode): (None, None) to let wandb start a fresh run (also used when this is a pickup but
+            no saved run id exists yet, e.g. a model trained before this feature existed), or (id, "allow") to
+            reattach to a previously-recorded run.
+        """
+        if write_output and self.OM.pickup and self.OM.ready_to_write:
+            run_id_file = self._wandb_run_id_file()
+            if run_id_file.exists():
+                return run_id_file.read_text(encoding="utf-8").strip(), "allow"
+        return None, None
+
+
     def training_loop(self,
                       iterations: int | None = None,
                       write_output: bool | None = None,
@@ -538,11 +599,31 @@ class DiffusionTrainer:
                     "Neither WANDB_KEY nor WANDB_API_KEY is set. Set one before starting training."
                 )
             wandb.login(key=wandb_key)
+
+            # Resume into the SAME wandb run across a pickup, so a crash-and-restart keeps one continuous loss
+            # curve instead of starting a disjoint new run each time. run_id is None for a fresh run (wandb assigns
+            # one) or when no saved id is found (e.g. a model trained before this existed).
+            run_id, resume_mode = self._resolve_wandb_resume(write_output)
+            if run_id:
+                self.logger.info(f"Resuming wandb run {run_id}.")
+
             wandb.init(
                 entity=getattr(self.config, "wandb_entity", None),
                 project=getattr(self.config, "wandb_project", "diffusion-radio-galaxies"),
-                config=self.config
+                id=run_id,
+                resume=resume_mode,
+                # A plain dict (not the ModelConfig object) so every key round-trips through wandb's config exactly
+                # as written - both the model hyperparameters and job metadata (SLURM job/node, file locations) end
+                # up queryable via the wandb API (e.g. api.run(path).config["slurm_job_id"]).
+                config={**self.config.param_dict, **self._wandb_job_metadata()},
             )
+
+            if write_output and self.OM.ready_to_write and run_id is None:
+                # First time this model has initialised wandb - persist the new run id so a future pickup can
+                # reattach to it. Written eagerly (not gated on log_interval, unlike the config JSON), so it's
+                # available even if training crashes shortly after starting.
+                self._wandb_run_id_file().write_text(wandb.run.id, encoding="utf-8")
+
             self.logger.info("Initialised Weights & Biases logging.")
 
         for i in range(self.iter_start, iterations):
