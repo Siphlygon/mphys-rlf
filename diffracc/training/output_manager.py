@@ -485,6 +485,34 @@ class OutputManager:
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(param_dict, f, indent=4)
 
+    def expected_config_file(self) -> Path:
+        """
+        The path this model's config JSON would be saved at, computed purely from model_name/parent_dir.
+
+        Unlike ``self.config_file`` (only set once ``_setup_files()`` has run, which requires ``write_output=True``
+        - restricted to the primary rank under DDP, see ``DiffusionTrainer.__init__``), this is available on every
+        rank regardless of ``write_output``, so a non-primary rank can still read (not write) this model's saved
+        state during pickup.
+
+        Returns
+        -------
+        Path
+            The expected config_<model_name>.json path.
+        """
+        return self.parent_dir.joinpath(self.model_name, f"config_{self.model_name}.json")
+
+    def expected_parameters_file(self) -> Path:
+        """
+        The path this model's main checkpoint would be saved at, computed purely from model_name/parent_dir. See
+        :meth:`expected_config_file` for why this differs from ``self.parameters_file``.
+
+        Returns
+        -------
+        Path
+            The expected parameters_<model_name>.pt path.
+        """
+        return self.parent_dir.joinpath(self.model_name, f"parameters_{self.model_name}.pt")
+
     def read_iter_count(self):
         """
         Read the iteration count from the configuration file.
@@ -494,7 +522,7 @@ class OutputManager:
         int
             The number of iterations to run the training loop for.
         """
-        with open(self.config_file, "r", encoding="utf-8") as f:
+        with open(self.expected_config_file(), "r", encoding="utf-8") as f:
             config = json.load(f)
         return config["iterations"]
 

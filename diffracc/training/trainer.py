@@ -454,10 +454,16 @@ class DiffusionTrainer:
     def load_state(self):
         """
         Load the model, EMA model, optimizer and PowerEMA models (if used) from the output directory.
+
+        Uses ``self.OM.expected_parameters_file()`` rather than ``self.OM.parameters_file``: the latter is only set
+        once ``_setup_files()`` has run, which requires ``write_output=True`` - restricted to the primary rank under
+        DDP (see ``__init__``'s ``set_writing_status(True)`` call). Every rank calls ``load_state()`` on pickup and
+        needs the identical checkpoint; since it lives on shared storage, each rank reading it independently is safe
+        and needs no explicit broadcast.
         """
         # Read the checkpoint once and reuse it for every key, instead of re-deserializing the
         # whole file from disk for each of model / ema_model / optimizer / power-EMA models.
-        checkpoint = torch.load(self.OM.parameters_file, map_location="cpu", weights_only=True)
+        checkpoint = torch.load(self.OM.expected_parameters_file(), map_location="cpu", weights_only=True)
 
         self.inner_model.load_state_dict(checkpoint["model"])
         self.ema_model.load_state_dict(checkpoint["ema_model"])
