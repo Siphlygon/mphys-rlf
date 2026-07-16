@@ -41,6 +41,11 @@ export USE_TRANSFORMS='TRUE'
 export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
 export USE_LAS_VALUES='FALSE'
 
+# To resume a crashed/interrupted run instead of starting fresh, uncomment the next line. Picks up from
+# model_results/$MODEL_NAME/parameters_$MODEL_NAME.pt - if that directory was ever renamed/moved, run
+# `python -m diffracc.scripts.rename_model --old-name <old> --new-name $MODEL_NAME` first.
+# export RESUME='TRUE'
+
 echo ">>>starting program via torchrun"
 srun torchrun \
     --nnodes 1 \
