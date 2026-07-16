@@ -434,8 +434,13 @@ class DiffusionTrainer:
             The value associated with the given key in the parameters file.
         """
         path = path or self.OM.parameters_file
-        # weights_only=True avoids executing arbitrary pickled code embedded in the checkpoint.
-        return torch.load(path, map_location="cpu", weights_only=True)[key]
+        # weights_only=False: this checkpoint is self-produced by this codebase's own OutputManager.save_params on
+        # trusted cluster storage, not an untrusted external file - the arbitrary-code-execution risk weights_only=True
+        # guards against doesn't apply. It also carries optimizer/EMA-bookkeeping objects beyond plain tensors, which
+        # torch 1.13's weights_only unpickler (a much smaller safe-globals allowlist than later torch releases) can
+        # reject with an opaque "Unsupported operand" error - matches model_utils.load_parameters and
+        # sample_snapshot_grid._load_model, which load these same checkpoints with weights_only=False.
+        return torch.load(path, map_location="cpu", weights_only=False)[key]
 
 
     def load_optimizer(self, path: str | Path | None = None):
@@ -463,7 +468,8 @@ class DiffusionTrainer:
         """
         # Read the checkpoint once and reuse it for every key, instead of re-deserializing the
         # whole file from disk for each of model / ema_model / optimizer / power-EMA models.
-        checkpoint = torch.load(self.OM.expected_parameters_file(), map_location="cpu", weights_only=True)
+        # weights_only=False: see the identical rationale in read_parameters() above.
+        checkpoint = torch.load(self.OM.expected_parameters_file(), map_location="cpu", weights_only=False)
 
         self.inner_model.load_state_dict(checkpoint["model"])
         self.ema_model.load_state_dict(checkpoint["ema_model"])
