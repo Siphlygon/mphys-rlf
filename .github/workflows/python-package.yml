@@ -4,11 +4,12 @@ name: CI tests
 on:
   workflow_dispatch:
   push:
-    branches: 
-      - '*' # run on all
+    branches:
+      - '**' # run on all, including branches with a '/' in the name (e.g. fix/rlf-profiling) -- '*' alone does not
+             # match '/', so it silently skipped every push to those branches
   pull_request:
-    branches: 
-      - '*'
+    branches:
+      - '**'
 
 jobs:
   build:
