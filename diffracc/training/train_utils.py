@@ -99,7 +99,7 @@ def edm_loss(
         assert sigmas is not None, "If noise is provided, sigmas must be provided."
         n = noise
     else:
-        sigmas = sigmas or sample_sigmas(img_batch, p_mean, p_std)
+        sigmas = sigmas if sigmas is not None else sample_sigmas(img_batch, p_mean, p_std)
         n = torch.randn_like(img_batch) * sigmas
 
     # Weight coefficient for loss, as introduced in EDM paper.
