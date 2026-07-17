@@ -193,7 +193,7 @@ class DiffusionTrainer:
         self.model = unet.EDMPrecond.from_config(self.config)
         # Load state dict of pretrained model if specified
         if self.config.pretrained_model:
-            load_parameters(self.model, self.config.pretrained_model, use_ema=True)
+            load_parameters(self.model, self.config.pretrained_model)  # key defaults to "ema_model"
             self.logger.info(f"Loaded pretrained ema model from: \n\t{self.config.pretrained_model}")
         self.inner_model = self.model
         self.model.to(self.device)

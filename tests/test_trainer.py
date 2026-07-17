@@ -16,6 +16,13 @@ from diffracc.model.config import ModelConfig
 from diffracc.training.trainer import DiffusionTrainer, get_ema_avg_fn
 
 
+def _fake_om(**attrs):
+    """A stand-in for OutputManager exposing just the attributes the wandb-resume helpers read."""
+    defaults = dict(pickup=False, ready_to_write=True)
+    defaults.update(attrs)
+    return types.SimpleNamespace(**defaults)
+
+
 def _bare_trainer(**attrs) -> DiffusionTrainer:
     """Create a DiffusionTrainer without running __init__, then set the attributes a given method needs."""
     trainer = DiffusionTrainer.__new__(DiffusionTrainer)
@@ -115,3 +122,132 @@ class TestGetEmaAvgFn:
             get_ema_avg_fn(1.5)
         with pytest.raises(ValueError):
             get_ema_avg_fn(-0.1)
+
+
+class TestWandbRunIdFile:
+    """Tests for _wandb_run_id_file()'s path, which deliberately does not embed the model name."""
+
+    def test_path_is_fixed_name_inside_results_folder(self, tmp_path):
+        """Testing the marker file lives at <results_folder>/wandb_run_id.txt, not templated on the model name."""
+        trainer = _bare_trainer(OM=_fake_om(results_folder=tmp_path))
+        assert trainer._wandb_run_id_file() == tmp_path / "wandb_run_id.txt"
+
+
+class TestWandbJobMetadata:
+    """Tests for _wandb_job_metadata()'s SLURM/file-path collection."""
+
+    def test_collects_slurm_env_vars(self, monkeypatch, tmp_path):
+        """Testing SLURM_JOB_ID/SLURMD_NODENAME/SLURM_JOB_NODELIST are read straight from the environment."""
+        monkeypatch.setenv("SLURM_JOB_ID", "12345")
+        monkeypatch.setenv("SLURMD_NODENAME", "compute-0-9")
+        monkeypatch.setenv("SLURM_JOB_NODELIST", "compute-0-9")
+        trainer = _bare_trainer(OM=_fake_om(results_folder=tmp_path, config_file=tmp_path / "config_x.json"))
+
+        metadata = trainer._wandb_job_metadata()
+
+        assert metadata["slurm_job_id"] == "12345"
+        assert metadata["slurm_node"] == "compute-0-9"
+        assert metadata["slurm_nodelist"] == "compute-0-9"
+
+    def test_missing_slurm_env_vars_are_none(self, monkeypatch, tmp_path):
+        """Testing that outside SLURM (e.g. local runs), the SLURM fields are None rather than raising."""
+        monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+        monkeypatch.delenv("SLURMD_NODENAME", raising=False)
+        monkeypatch.delenv("SLURM_JOB_NODELIST", raising=False)
+        trainer = _bare_trainer(OM=_fake_om(results_folder=tmp_path, config_file=tmp_path / "config_x.json"))
+
+        metadata = trainer._wandb_job_metadata()
+
+        assert metadata["slurm_job_id"] is None
+        assert metadata["slurm_node"] is None
+        assert metadata["slurm_nodelist"] is None
+
+    def test_includes_paths_when_ready_to_write(self, tmp_path):
+        """Testing config_file/results_folder are included (as strings) when output writing is set up."""
+        config_file = tmp_path / "config_x.json"
+        trainer = _bare_trainer(OM=_fake_om(ready_to_write=True, results_folder=tmp_path, config_file=config_file))
+
+        metadata = trainer._wandb_job_metadata()
+
+        assert metadata["config_file"] == str(config_file)
+        assert metadata["results_folder"] == str(tmp_path)
+
+    def test_paths_are_none_when_not_ready_to_write(self, tmp_path):
+        """Testing config_file/results_folder are None when output writing was never set up (e.g. non-primary rank)."""
+        trainer = _bare_trainer(
+            OM=_fake_om(ready_to_write=False, results_folder=tmp_path, config_file=tmp_path / "config_x.json"))
+
+        metadata = trainer._wandb_job_metadata()
+
+        assert metadata["config_file"] is None
+        assert metadata["results_folder"] is None
+
+
+class TestResolveWandbResume:
+    """Tests for _resolve_wandb_resume()'s decision between a fresh wandb run and reattaching to a saved one."""
+
+    def test_fresh_run_when_not_pickup(self, tmp_path):
+        """Testing a non-pickup run always starts fresh, even if a stale run-id file happens to exist."""
+        (tmp_path / "wandb_run_id.txt").write_text("stale-id", encoding="utf-8")
+        trainer = _bare_trainer(OM=_fake_om(pickup=False, ready_to_write=True, results_folder=tmp_path))
+        assert trainer._resolve_wandb_resume(write_output=True) == (None, None)
+
+    def test_fresh_run_when_write_output_false(self, tmp_path):
+        """Testing that without output writing, there's nowhere to read a saved id from, so it's always fresh."""
+        (tmp_path / "wandb_run_id.txt").write_text("some-id", encoding="utf-8")
+        trainer = _bare_trainer(OM=_fake_om(pickup=True, ready_to_write=True, results_folder=tmp_path))
+        assert trainer._resolve_wandb_resume(write_output=False) == (None, None)
+
+    def test_fresh_run_when_pickup_but_no_saved_id_yet(self, tmp_path):
+        """Testing a pickup of a model trained before this feature existed (no run-id file) starts fresh, not error."""
+        trainer = _bare_trainer(OM=_fake_om(pickup=True, ready_to_write=True, results_folder=tmp_path))
+        assert trainer._resolve_wandb_resume(write_output=True) == (None, None)
+
+    def test_resumes_saved_run_id_on_pickup(self, tmp_path):
+        """Testing a pickup with a saved run-id file reattaches to that exact run with resume='allow'."""
+        (tmp_path / "wandb_run_id.txt").write_text("saved-run-id\n", encoding="utf-8")
+        trainer = _bare_trainer(OM=_fake_om(pickup=True, ready_to_write=True, results_folder=tmp_path))
+        assert trainer._resolve_wandb_resume(write_output=True) == ("saved-run-id", "allow")
+
+
+class TestLoadState:
+    """
+    Tests for load_state(), which reads model/EMA/optimizer weights back from a checkpoint on pickup.
+    """
+
+    def test_loads_model_ema_and_optimizer_from_checkpoint(self, tmp_path):
+        """
+        Testing load_state() restores model/ema_model/optimizer state from the checkpoint expected_parameters_file
+        points at, without ever touching self.OM.parameters_file.
+        """
+        model = torch.nn.Linear(2, 2)
+        ema_model = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        with torch.no_grad():
+            ema_model.weight.fill_(9.0)  # distinct from model's random init, so we can confirm the right dict loaded
+
+        # Populate optimizer.state (step counters, running moment estimates) - an unstepped optimizer's state dict
+        # is just empty tensors/lists, which doesn't exercise the same checkpoint shape a real crash left behind.
+        loss = model(torch.randn(1, 2)).sum()
+        loss.backward()
+        optimizer.step()
+
+        checkpoint_path = tmp_path / "parameters_mymodel.pt"
+        torch.save(
+            {"model": model.state_dict(), "ema_model": ema_model.state_dict(), "optimizer": optimizer.state_dict()},
+            checkpoint_path,
+        )
+
+        fresh_model = torch.nn.Linear(2, 2)
+        fresh_ema = torch.nn.Linear(2, 2)
+        fresh_optimizer = torch.optim.Adam(fresh_model.parameters(), lr=1e-3)
+        trainer = _bare_trainer(
+            OM=types.SimpleNamespace(expected_parameters_file=lambda: checkpoint_path),
+            inner_model=fresh_model, ema_model=fresh_ema, optimizer=fresh_optimizer, power_ema=False,
+        )
+
+        trainer.load_state()
+
+        assert torch.allclose(fresh_model.weight, model.weight)
+        assert torch.allclose(fresh_ema.weight, torch.full_like(fresh_ema.weight, 9.0))
+        assert fresh_optimizer.state_dict()["state"].keys() == optimizer.state_dict()["state"].keys()

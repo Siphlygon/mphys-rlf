@@ -98,7 +98,7 @@ def load_model(
 
         # Load snapshot, if specified
         if snapshot_iter is not None:
-            snapshot_file = model_dir / f"snapshots/snapshot_iter_{iter:08d}.pt"
+            snapshot_file = model_dir / f"snapshots/snapshot_iter_{snapshot_iter:08d}.pt"
             if not snapshot_file.exists():
                 raise FileNotFoundError(f"Snapshot file {snapshot_file} not found.")
             logger.info(f"Loading snapshot from {snapshot_file}")
@@ -140,12 +140,14 @@ def load_parameters(
     # Import model weights from file
     state_dict = torch.load(path, map_location="cpu")[key]
 
-    # If necessary, remove 'module.' from keys (e.g. for ema model)
+    # If necessary, remove 'module.' from keys (e.g. for ema model). State dicts saved from a DataParallel/DDP-
+    # wrapped model have every key prefixed with 'module.'; state dicts saved unwrapped (the common case for an
+    # EMA model kept as a separate, portable copy) don't. Strip the prefix only where present, rather than
+    # filtering to just the prefixed keys - the latter would silently drop every key of an unwrapped state dict.
     if key != "model":
         state_dict = {
-            k.replace("module.", ""): v
+            (k[len("module."):] if k.startswith("module.") else k): v
             for k, v in state_dict.items()
-            if k.startswith("module.")
         }
 
     # Load weights into model

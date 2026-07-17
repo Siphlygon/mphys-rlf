@@ -228,3 +228,42 @@ def cutout_downloader_factory(monkeypatch, cutout_downloader_config_path):
         return CutoutDownloader()
 
     return _make
+
+
+@pytest.fixture
+def make_tiny_model_dir(tmp_path):
+    """
+    Returns a factory that builds a real (but tiny) model directory on disk: config_<name>.json plus a real
+    EDMPrecond+Unet instance ready to be saved as a snapshot checkpoint. init_channels=32/channel_mults=[1] is
+    the smallest configuration that satisfies ResidualLinearAttention's hardcoded GroupNorm(32, ...) in the U-Net's
+    (always-present) middle block, keeping a full forward pass fast enough for real end-to-end tests (~0.1-0.5s for
+    a handful of images/timesteps) without needing to fake diffusion.edm_sampling or the network itself.
+    """
+    import json
+
+    from diffracc.model.config import ModelConfig
+    from diffracc.model.unet import EDMPrecond
+
+    def _make(model_name="tinymodel", context=None, flux_transform=None, **extra_config):
+        model_dir = tmp_path / model_name
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        config_dict = {
+            "init_channels": 32, "channel_mults": [1], "image_channels": 1,
+            "num_res_blocks": 1, "attention_levels": 1, "norm_groups": 1,
+        }
+        if context is not None:
+            config_dict["context"] = context
+        if flux_transform is not None:
+            config_dict["flux_transform"] = flux_transform
+        config_dict.update(extra_config)
+
+        (model_dir / f"config_{model_name}.json").write_text(json.dumps(config_dict), encoding="utf-8")
+
+        config = ModelConfig(**config_dict)
+        model = EDMPrecond.from_config(config).eval()
+        return model_dir, model
+
+    return _make
+
+    return _make

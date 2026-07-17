@@ -11,7 +11,7 @@ import json
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from diffracc.training.output_manager import OutputManager
 
@@ -76,6 +76,44 @@ class TestConfigRoundTrip:
         assert saved["effective_batch_size"] == 256
 
 
+class TestExpectedFilePaths:
+    """
+    Tests for expected_config_file()/expected_parameters_file() and read_iter_count()'s use of them.
+
+    Note: under DDP, only the primary rank calls set_writing_status(True) (which runs _setup_files() and sets
+    self.config_file/self.parameters_file). Every rank calls read_iter_count() / load_state() during pickup though, so a
+    non-primary rank hit AttributeError: 'OutputManager' object has no attribute 'config_file'. These methods must work
+    purely from model_name/parent_dir, with no dependency on _setup_files() having run.
+    """
+
+    def test_expected_config_file_available_without_setup_files(self, tmp_path):
+        """Testing expected_config_file() works even when _setup_files() was never called (write_output=False)."""
+        om = OutputManager("mymodel", parent_dir=tmp_path, write_output=False)
+        assert om.expected_config_file() == tmp_path / "mymodel" / "config_mymodel.json"
+
+    def test_expected_parameters_file_available_without_setup_files(self, tmp_path):
+        """Testing expected_parameters_file() works even when _setup_files() was never called."""
+        om = OutputManager("mymodel", parent_dir=tmp_path, write_output=False)
+        assert om.expected_parameters_file() == tmp_path / "mymodel" / "parameters_mymodel.pt"
+
+    def test_read_iter_count_works_without_setup_files(self, tmp_path):
+        """Testing read_iter_count() succeeds on an OutputManager that never ran _setup_files() - the exact
+        situation a non-primary DDP rank is in during pickup."""
+        model_dir = tmp_path / "mymodel"
+        model_dir.mkdir()
+        (model_dir / "config_mymodel.json").write_text(json.dumps({"iterations": 34000}), encoding="utf-8")
+
+        om = OutputManager("mymodel", parent_dir=tmp_path, write_output=False)
+        assert om.read_iter_count() == 34000
+
+    def test_expected_paths_match_the_real_setup_files_paths(self, tmp_path):
+        """Testing expected_config_file()/expected_parameters_file() agree with the paths _setup_files() actually
+        uses, so primary and non-primary ranks resolve to the identical files."""
+        om = _om(tmp_path, name="mymodel")  # write_output=True -> _setup_files() runs
+        assert om.expected_config_file() == om.config_file
+        assert om.expected_parameters_file() == om.parameters_file
+
+
 class TestLossFiles:
     """Tests for loss-CSV initialisation and appending."""
 
@@ -120,7 +158,9 @@ class TestSaveParams:
     """Tests for save_params()'s checkpoint contents."""
 
     def test_saves_model_ema_optimizer_keys(self, tmp_path):
-        """Testing the checkpoint holds state dicts under model/ema_model/optimizer, with None passed through as None."""
+        """
+        Testing the checkpoint holds state dicts under model/ema_model/optimizer, with None passed through as None.
+        """
         om = _om(tmp_path)
         model = nn.Linear(2, 2)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)

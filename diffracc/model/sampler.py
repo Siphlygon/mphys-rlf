@@ -27,20 +27,9 @@ class Sampler:
         Settings for the sampler
     settings_not_save : list
         Settings that should not be saved to the output file
-
-    Methods
-    -------
-    sample(model_name, model=None, context=None, context_fn=None, labels=None, latents=None, distribute_model=True, device_ids=None, file_name=None, model_kwargs={}, **settings_kwargs)
-        Sample images from a model and save them to an h5 file.
-    quick_sample(model_name, model=None, context=None, context_fn=None, labels=None, latents=None, distribute_model=True, device_ids=None, model_kwargs={}, **settings_kwargs)
-        Sample images from a model and return them as a numpy array.
-    get_fpeak_model_dist(train_set_path)
-        Get a function that samples from a distribution of maximum pixel values in training data.
-    get_labels(n_labels=4, samples_per_label=None)
-        Get labels for class-conditioned sampling of images.
     """
 
-    def __init__(self, out_root=paths.ANALYSIS_PARENT, **settings) -> None:
+    def __init__(self, out_root: Path = paths.ANALYSIS_PARENT, **settings) -> None:
         """
         Initialize the Sampler class.
 
@@ -91,31 +80,34 @@ class Sampler:
 
     def sample(
         self,
-        model_name,
-        model=None,
-        context=None,
-        context_fn=None,
-        labels=None,
-        latents=None,
-        distribute_model=True,
-        device_ids=None,
-        file_name=None,
-        model_kwargs={},
+        model_name: str,
+        model: torch.nn.Module | None = None,
+        context: np.ndarray | None = None,
+        context_fn: Callable | None = None,
+        labels: np.ndarray | None = None,
+        latents: np.ndarray | None = None,
+        distribute_model: bool = True,
+        device_ids: list | None = None,
+        file_name: str | None = None,
+        model_kwargs: dict = {},
         **settings_kwargs,
-    ):
+    ) -> np.ndarray:
         """
         Sample images from a model and save them to an h5 file.
 
         Parameters
         ----------
-        model_name : nn.Module
+        model_name : str
             The name of the model to sample from
         model : nn.Module, optional
-            The pre-trained model to use for sampling. If not provided, the model will be loaded using `model_utils.load_model`.
+            The pre-trained model to use for sampling. If not provided, the model will be loaded using
+            `model_utils.load_model`.
         context : array_like, optional
-            The context tensor for conditioning the sampling. If provided, it should have shape (n_samples, context_dim).
+            The context tensor for conditioning the sampling. If provided, it should have shape (n_samples,
+            context_dim).
         context_fn : callable, optional
-            A function that generates the context tensor. If provided, it should take the number of samples as input and return a tensor of shape (n_samples, context_dim).
+            A function that generates the context tensor. If provided, it should take the number of samples as input and
+            return a tensor of shape (n_samples, context_dim).
         labels : array_like, optional
             The labels tensor for class-conditioned sampling. If provided, it should have shape (n_samples, label_dim).
         latents : array_like, optional
@@ -202,17 +194,17 @@ class Sampler:
 
     def quick_sample(
         self,
-        model_name,
-        model=None,
-        context=None,
-        context_fn=None,
-        labels=None,
-        latents=None,
-        distribute_model=True,
-        device_ids=None,
-        model_kwargs={},
+        model_name: str,
+        model: torch.nn.Module | None = None,
+        context: np.ndarray | None = None,
+        context_fn: Callable | None = None,
+        labels: np.ndarray | None = None,
+        latents: np.ndarray | None = None,
+        distribute_model: bool = True,
+        device_ids: list | None = None,
+        model_kwargs: dict = {},
         **settings_kwargs,
-    ):
+    ) -> np.ndarray:
         """
         Sample images from a model and return them as a numpy array.
 
@@ -223,9 +215,11 @@ class Sampler:
         model : torch.nn.Module, optional
             The model to use for sampling. If not provided, the model will be loaded using `model_utils.load_model`.
         context : torch.Tensor, optional
-            The context tensor for conditioning the sampling. If provided, it should have shape (n_samples, context_dim).
+            The context tensor for conditioning the sampling. If provided, it should have shape (n_samples,
+            context_dim).
         context_fn : callable, optional
-            A function that generates the context tensor for conditioning the sampling. If provided, it should take the number of samples as input and return a tensor of shape (n_samples, context_dim).
+            A function that generates the context tensor for conditioning the sampling. If provided, it should take the
+            number of samples as input and return a tensor of shape (n_samples, context_dim).
         labels : torch.Tensor, optional
             The labels tensor for conditioning the sampling. If provided, it should have shape (n_samples, label_dim).
         latents : torch.Tensor, optional
@@ -276,7 +270,7 @@ class Sampler:
 
             # Assert equal shapes if both are passed
             if context is not None and labels is not None:
-                assert (cs := self.context.shape) == (
+                assert (cs := context.shape) == (
                     ls := labels.shape
                 ), f"Number of samples must match! Got shapes: {cs} (context) and {ls} (labels)."
             self.settings["n_samples"] = (
@@ -463,7 +457,7 @@ class Sampler:
 
         return lambda n: model_dist.rvs(size=n)
 
-    def get_labels(self, n_labels=4, samples_per_label=None):
+    def get_labels(self, n_labels: int = 4, samples_per_label: int | None = None) -> np.ndarray:
         """
         Get an array of labels for class-conditioned sampling.
 
@@ -495,7 +489,12 @@ class Sampler:
         return labels
 
     def _save_batch_h5(
-        self, out_file, imgs, dataset_name="samples", inputs={}, attrs={}
+        self,
+        out_file: Path | str,
+        imgs: np.ndarray,
+        dataset_name: str = "samples",
+        inputs: dict = {},
+        attrs: dict = {}
     ):
         """
         Save a batch of images to an HDF5 file.
@@ -532,7 +531,7 @@ class Sampler:
             for key, val in inputs.items():
                 self._h5_dataset_save(f, f"{dataset_name}_{key}", val)
 
-    def _h5_dataset_save(self, f, dataset_name, data, attrs={}):
+    def _h5_dataset_save(self, f: h5py.File, dataset_name: str, data: np.ndarray, attrs: dict = {}):
         """
         Save data to an HDF5 dataset.
 
@@ -594,7 +593,7 @@ class Sampler:
         )
         dset.attrs.update(attrs)
 
-    def _h5_dataset_append(self, dset, data):
+    def _h5_dataset_append(self, dset: h5py.Dataset, data: np.ndarray):
         """
         Append data to an HDF5 dataset.
 
