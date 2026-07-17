@@ -182,14 +182,14 @@ class TestExclusiveMode:
 
 class TestLowFluxAndRedshiftOverride:
     """
-    Test the low peak-flux and low redshift overrides that force all masks to True, independent of the
-    magnitude/cosmology conversion.
+    Test the survey cut that excludes sources at or below the peak-flux threshold, or at or below z=0.01, from all
+    three class masks (they are dropped from the sample entirely, independent of the WISE-based classification).
     """
 
-    def test_low_peak_flux_forces_all_masks_true_even_for_a_clear_sfg_source(self, patch_wise3_absmag, flat_lcdm_cosmo):
+    def test_low_peak_flux_excludes_source_even_when_it_would_classify(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
-        Test a source with a peak flux below the default threshold is classified as RLAGN/SFG/RQQ, even if its
-        luminosity is above the SFG cutoff and its absolute magnitude is too bright to be RQQ.
+        Test a source with a peak flux at or below the threshold is dropped from all three masks, even though its
+        luminosity/magnitude would otherwise place it in one of the classes.
         """
         absmag = np.array([-25.0])
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
@@ -198,17 +198,17 @@ class TestLowFluxAndRedshiftOverride:
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
             luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]),
-            peak_flux=np.array([1.1e-3]),  # exactly at the default threshold -> "<=" triggers the override
+            peak_flux=np.array([1.1e-3]),  # exactly at the threshold -> below "peak_flux > threshold", so excluded
             cosmo=flat_lcdm_cosmo, peak_flux_threshold=1.1e-3,
         )
-        assert rlagn == [True]
-        assert sfg == [True]
-        assert rqq == [True]
+        assert rlagn == [False]
+        assert sfg == [False]
+        assert rqq == [False]
 
-    def test_low_redshift_forces_all_masks_true_even_for_a_clear_rqq_source(self, patch_wise3_absmag, flat_lcdm_cosmo):
+    def test_low_redshift_excludes_source_even_when_it_would_classify(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
-        Test a source with a redshift below the default threshold is classified as RLAGN/SFG/RQQ, even if its luminosity
-        is below the RQQ cutoff and its absolute magnitude is bright enough to pass the RQQ cutoff.
+        Test a source with a redshift at or below 0.01 is dropped from all three masks, even though its
+        luminosity/magnitude would otherwise place it in one of the classes.
         """
         absmag = np.array([-30.0])
         rqq_cutoff = _rqq_cutoff_lum(absmag[0])
@@ -217,12 +217,12 @@ class TestLowFluxAndRedshiftOverride:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([luminosity]), redshifts=np.array([0.01]),  # exactly at the "<=" override
+            luminosities=np.array([luminosity]), redshifts=np.array([0.01]),  # exactly at the z=0.01 survey floor
             peak_flux=np.array([1.0]), cosmo=flat_lcdm_cosmo,
         )
-        assert rlagn == [True]
-        assert sfg == [True]
-        assert rqq == [True]
+        assert rlagn == [False]
+        assert sfg == [False]
+        assert rqq == [False]
 
     def test_override_does_not_affect_sources_above_both_thresholds(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
@@ -278,13 +278,14 @@ class TestGetCatalogueInfo:
         """
         Test that get_catalogue_info converts the catalogue's Total_flux from mJy to Jy in its output fluxes array.
         """
-        # A single source with redshift <= 0.01 hits the low-redshift override unconditionally, so it's guaranteed
-        # to be classified RLAGN regardless of the (patched) absmag/luminosity - isolating the flux unit conversion
-        # from the classification logic.
+        # A single source that classifies cleanly as RLAGN (bright patched absmag, high luminosity) and sits well clear
+        # of the survey cut (z > 0.01, peak flux > threshold), so it is kept and the flux unit conversion is what's
+        # under test, isolated from the classification logic.
         patch_wise3_absmag(np.array([-20.0]))
         fake_catalogue({
-            "z_best": np.array([0.005]),
+            "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),  # mJy, as stored in the real catalogue
+            "Peak_flux": np.array([50.0]),  # mJy/beam; well above the 1.1 mJy survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
@@ -315,6 +316,7 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3, 0.4]),
             "Total_flux": np.array([50.0, 60.0]),  # mJy
+            "Peak_flux": np.array([50.0, 60.0]),  # mJy/beam; both well above the survey cut
             "L_144": np.array([rlagn_luminosity, sfg_luminosity]),
             "mag_w3": np.array([13.0, 13.0]),
             "magerr_w3": np.array([0.1, 0.1]),
@@ -344,6 +346,7 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
+            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([np.nan]),
@@ -374,6 +377,7 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
+            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
@@ -397,6 +401,7 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
+            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
