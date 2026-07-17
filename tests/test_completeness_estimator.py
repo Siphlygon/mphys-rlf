@@ -52,6 +52,19 @@ class TestCreateBeamCorrNoise:
 
         np.testing.assert_allclose(actual, expected)
 
+    def test_raises_value_error_for_non_3d_kernel(self, completeness_estimator_factory):
+        """Test that _create_beam_corr_noise raises ValueError for a non-3D kernel."""
+        ce = completeness_estimator_factory()
+        kernel = np.ones((3, 3))  # 2D kernel instead of 3D
+        with pytest.raises(ValueError):
+            ce._create_beam_corr_noise(kernel, rms=0.05, shape=(2, 10, 10))
+
+    def test_kernel_is_normalized_to_unit_l2_norm(self, completeness_estimator_factory):
+        """Test that the kernel is normalized to unit L2 norm before convolution."""
+        ce = completeness_estimator_factory()
+        kernel = ce._create_filter_kernel(correlation_scale=4.0, make_3d=True)
+        assert np.isclose(np.sqrt(np.sum(kernel**2)), 1.0)
+
 
 class TestComputeCompletenessPerBin:
     """

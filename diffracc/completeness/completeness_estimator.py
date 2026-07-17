@@ -1,3 +1,9 @@
+"""
+Module for estimating the completeness of a dataset by creating mock images with noise and checking if they are
+detectable based on a peak-flux limit. The completeness is calculated as the fraction of detectable sources in bins of
+flux, and confidence intervals are calculated using Poisson statistics. The completeness curve can be fitted with a
+specified function (default is sigmoid) and the fitted parameters can be saved for later use.
+"""
 import argparse
 import configparser
 import inspect
@@ -298,6 +304,47 @@ class CompletenessEstimator:
         return noise
 
 
+    def _create_filter_kernel(self,
+                              correlation_scale: float = 4.0,
+                              make_3d: bool = True) -> np.ndarray:
+        """
+        Create a 2D or 3D Gaussian filter kernel for beam-correlated noise.
+
+        Parameters
+        ----------
+        correlation_scale : float, optional
+            The scale of the correlation in pixels. Defaults to 4.0.
+        make_3d : bool, optional
+            Whether to return a 3D kernel with a leading singleton axis for broadcasting. Defaults to True.
+        
+        Returns
+        -------
+        np.ndarray
+            A 2D or 3D array of shape (size, size) or (1, size, size) containing the Gaussian filter kernel.
+        """
+        # Precompute correlation / blur parameters used to create beam-correlated noise.
+        # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
+        correlation_scale = 6 / 1.5    # beam FWHM in pixels (6" beam / 1.5" per pixel)
+
+        # Find the size of the kernel based on the correlation scale. The kernel should extend to at least 4 sigma.
+        # To go from FWHM (corr scale) to Gaussian sigma, we cheaply approximate 1/(2*sqrt(2*log(2))))
+        sigma = correlation_scale / 2.3548   # (~1.70 px)
+        half = int(np.ceil(4 * sigma))
+        grid = np.arange(-half, half + 1)
+        x, y = np.meshgrid(grid, grid)
+
+        # Create a 2D Gaussian kernel for the beam-correlated noise. The kernel is normalised to have an L2 norm of 1,
+        # so that convolving white noise with it preserves the RMS of the noise.
+        _filter_kernel_2d = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+        _filter_kernel_2d /= np.sqrt(np.sum(_filter_kernel_2d**2))
+
+        if make_3d:
+            _filter_kernel_3d = _filter_kernel_2d[np.newaxis, :, :]
+            return _filter_kernel_3d
+
+        return _filter_kernel_2d
+
+
     def _detect_mock_sources(self,
                             images: np.ndarray,
                             model_fluxes: np.ndarray,
@@ -322,19 +369,7 @@ class CompletenessEstimator:
         detectable : np.ndarray
             A boolean array indicating whether each mock source is detectable based on the peak-flux threshold.
         """
-        # Precompute correlation / blur parameters used to create beam-correlated noise.
-        # correlation_scale chosen to match previous behaviour: (6 arcsec / beam) / (1.5 arcsec / pix)
-        correlation_scale = 6 / 1.5
-        x = np.arange(-correlation_scale, correlation_scale)
-        y = np.arange(-correlation_scale, correlation_scale)
-        x, y = np.meshgrid(x, y)
-
-        # Compute the distance from the center of the kernel for each pixel
-        dist = np.sqrt(x * x + y * y)
-        dist = dist[np.newaxis, :, :]
-
-        # Normalise the kernel
-        _filter_kernel_2d = np.exp(-dist**2 / (2*correlation_scale)) * (1 / (2*np.pi*correlation_scale**2))
+        _filter_kernel_3d = self._create_filter_kernel(correlation_scale=6.0/1.5, make_3d=True)
 
         # Initialise empty arrays to store the mock fluxes (real images w/ noise) and whether they are detectable
         mock_fluxes = np.empty((images.shape[0] * self.num_noise_patches), dtype=float)
@@ -351,8 +386,9 @@ class CompletenessEstimator:
 
             # Create and apply noise patches for every input image
             mock_fluxes[start:end] = np.full((self.num_noise_patches,), model_fluxes[i], dtype=float)
-            noise_patches = self._create_beam_corr_noise(_filter_kernel_2d,
-                                                        rms=rms, shape=(self.num_noise_patches, 80, 80))
+            noise_patches = self._create_beam_corr_noise(filter_kernel=_filter_kernel_3d,
+                                                         rms=rms,
+                                                         shape=(self.num_noise_patches, 80, 80))
 
             # Ensure the image slice is 2D so it can broadcast against (n_patches, 80, 80).
             # Some FITS readers return shapes like (1, 80, 80) for a single image.
