@@ -8,6 +8,7 @@ from inspect import signature
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from .config import ModelConfig
