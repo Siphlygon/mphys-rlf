@@ -183,18 +183,31 @@ class TestFitFunction:
         with pytest.raises(AttributeError):
             ce._fit_function(np.array([0.0]), np.array([0.5]), np.array([0.1]), function="not callable")
 
-    def test_saves_popt_and_pcov_to_output_file(self, completeness_estimator_factory, tmp_path):
-        """Test that _fit_function saves the fitted parameters and covariance matrix to an output file if specified."""
+    def test_saves_self_describing_fit_to_output_file(self, completeness_estimator_factory, tmp_path):
+        """Test that _fit_function saves a self-describing completeness fit that round-trips through the reader."""
+        from diffracc.completeness.completeness_io import X_SPACE_LOG10_MJY, read_completeness_fit
+
         ce = completeness_estimator_factory()
         bin_centers, completeness, yerr = self._synthetic_curve()
-        out_path = tmp_path / "fit_params.txt"
+        out_path = tmp_path / "fit_params.json"
 
-        ce._fit_function(bin_centers, completeness, yerr, output_file=out_path)
+        popt, pcov = ce._fit_function(bin_centers, completeness, yerr, output_file=out_path)
 
         assert out_path.exists()
-        content = out_path.read_text()
-        assert "Fitted parameters" in content
-        assert "Covariance matrix" in content
+        # The written record must carry the function and x-axis with it, and read back to the same parameters.
+        fit = read_completeness_fit(out_path)
+        assert fit.function_name == "sigmoid"
+        assert fit.x_space == X_SPACE_LOG10_MJY
+        np.testing.assert_allclose(fit.popt, popt)
+        assert fit.pcov is not None
+
+    def test_refuses_to_save_fit_to_non_json_path(self, completeness_estimator_factory, tmp_path):
+        """Test that saving a fit to a non-.json path is refused, since it could not be read back."""
+        ce = completeness_estimator_factory()
+        bin_centers, completeness, yerr = self._synthetic_curve()
+
+        with pytest.raises(ValueError):
+            ce._fit_function(bin_centers, completeness, yerr, output_file=tmp_path / "fit_params.txt")
 
     def test_empty_data_falls_back_to_median_x0_guess_and_is_caught(self, completeness_estimator_factory):
         """
