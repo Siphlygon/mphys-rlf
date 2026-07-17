@@ -31,7 +31,6 @@ class RLF:
                  cosmo : astropy.cosmology.FlatLambdaCDM,
                  bias: float = 0,
                  flux_cut_jy: float = 1.1e-3,
-                 debug_flux_lum_relation: bool = False,
                  vmax_method: bool = False,
                  use_shimwell: bool = True,
                  completeness_path: str | Path | None = None,
@@ -56,8 +55,6 @@ class RLF:
             The bias factor for the RLF calculation, by default 0
         flux_cut_jy : float, optional
             The flux cut in Jy, by default 1.1e-3
-        debug_flux_lum_relation : bool, optional
-            Whether to debug the flux-luminosity relation, by default False
         vmax_method : bool, optional
             Whether to use the 1/Vmax method, by default False
         use_shimwell : bool, optional
@@ -71,7 +68,6 @@ class RLF:
         self.logger = get_logger("RLF", LoggingLevels.INFO.value)
 
         # init parameters
-        self.debug_flux_lum_relation = debug_flux_lum_relation
         self.vmax_method = vmax_method
         self.bias = bias
         self.flux_cut_jy = flux_cut_jy
@@ -340,7 +336,7 @@ class RLF:
         """
         Derive luminosities from flux and redshift (the catalogue's own luminosity column is always recomputed to
         avoid inconsistencies at the margin), optionally save a debug comparison plot, and drop sources with
-        non-positive flux.
+        non-positive flux or a non-physical redshift.
 
         Returns
         -------
@@ -362,18 +358,23 @@ class RLF:
             # conversion from comoving volume to redshift
             redshifts = z_from_v(volumes, *self.zvparams)
 
+        # Drop sources with non-positive flux or a non-physical redshift (<=0, including catalogue placeholder values
+        # such as z=-1 for "missing") before running the redshift-dependent cosmology calculation below. Every z_bin
+        # starts at self.z_min > 0, so such sources could never land in a redshift bin anyway -- excluding them here is
+        # a no-op for the final RLF, and avoids feeding invalid input into astropy's comoving-distance integral and the
+        # k-correction (which previously produced RuntimeWarnings, and at z=-1 exactly, a literal division by zero).
+        mask = (fluxes > 0) & np.isfinite(redshifts) & (redshifts > 0)
+        fluxes = fluxes[mask]
+        redshifts = redshifts[mask]
+        resolved = resolved[mask]
+
         # use the redshift to calculate luminosity distance and luminosity
         # recalculate luminosities from fluxes and redshifts to avoid inconsistencies at the margin
         luminosity_distances = self.cosmo.luminosity_distance(redshifts).to(u.m).value
         luminosities = 4 * np.pi * 1e-26 * fluxes * luminosity_distances**2 \
             / func.k_corr_factor(redshifts, spectral_index=self.spectral_index) # W/Hz
 
-        if self.debug_flux_lum_relation:
-            self._plot_flux_luminosity_debug(fluxes, redshifts, luminosities)
-
-        # clip flux values to those above 0 for log plotting
-        mask = fluxes > 0
-        return redshifts[mask], luminosities[mask], resolved[mask]
+        return redshifts, luminosities, resolved
 
 
     def _warn_on_zero_bin_integrals(self,
@@ -384,11 +385,12 @@ class RLF:
                                     bin_integrals_resolved: np.ndarray,
                                     bin_integrals_unresolved: np.ndarray,
                                     n_resolved_in_lum_bins: np.ndarray,
-                                    n_unresolved_in_lum_bins: np.ndarray) -> None:
+                                    n_unresolved_in_lum_bins: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
-        Log an error for any bin that has sources but a 0 Monte Carlo integral, which indicates n_mc_pts is too
-        low for the number of bins used (or a completeness mismatch).
-        
+        Log an error for any bin that has sources but a 0 Monte Carlo integral, which indicates n_mc_pts is too low for
+        the number of bins used (or a completeness/flux_cut_jy mismatch), and return masks identifying those bins so the
+        caller can mark their phi estimate as undefined instead of dividing by zero.
+
         Parameters
         ----------
         v_min : float
@@ -407,6 +409,14 @@ class RLF:
             The number of resolved sources in each luminosity bin
         n_unresolved_in_lum_bins : np.ndarray
             The number of unresolved sources in each luminosity bin
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            Boolean masks of shape (n_lum_bins,), for resolved and unresolved respectively, marking luminosity bins that
+            have real sources but a zero completeness-weighted Monte Carlo integral. Such bins have no well-defined phi
+            estimate (dividing a nonzero count by a zero integral gives +inf) and should be treated as undefined (NaN)
+            by the caller.
         """
         categories = [
             ('resolved', bin_integrals_resolved, n_resolved_in_lum_bins),
@@ -414,7 +424,7 @@ class RLF:
         ]
         problematic = {name: (integrals == 0) & (counts > 0) for name, integrals, counts in categories}
         if not any(np.any(mask) for mask in problematic.values()):
-            return
+            return problematic['resolved'], problematic['unresolved']
 
         self.logger.error(f"Monte Carlo failure - {self.n_mc_pts} points insufficient for number of bins")
         for name, _, counts in categories:
@@ -430,6 +440,8 @@ class RLF:
                 self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {self.flux_cut_jy}')
             else:
                 self.logger.error(f'{indices.shape[0]} {name} bins had sources but a 0 bin integral, indices {indices}')
+
+        return problematic['resolved'], problematic['unresolved']
 
 
     # ---------- RLF ESTIMATION ----------
@@ -573,29 +585,44 @@ class RLF:
             self.logger.debug(f"bin integrals resolved: {bin_integrals_resolved}")
             self.logger.debug(f"bin integrals unresolved: {bin_integrals_unresolved}")
 
-            self._warn_on_zero_bin_integrals(v_min, v_max, l_mins, l_maxs,
-                                             bin_integrals_resolved, bin_integrals_unresolved,
-                                             n_resolved_in_lum_bins, n_unresolved_in_lum_bins)
+            impossible_resolved, impossible_unresolved = self._warn_on_zero_bin_integrals(
+                v_min, v_max, l_mins, l_maxs,
+                bin_integrals_resolved, bin_integrals_unresolved,
+                n_resolved_in_lum_bins, n_unresolved_in_lum_bins)
 
             bin_integrals_unresolved[n_unresolved_in_lum_bins == 0] = 1
             bin_integrals_resolved[n_resolved_in_lum_bins == 0] = 1
 
-            # now we have phi_est as given by Page & Carrera 2000
-            self.phi[i_z] = n_unresolved_in_lum_bins / bin_integrals_unresolved + n_resolved_in_lum_bins / bin_integrals_resolved
-            self.counts[i_z] = n_sources_in_lum_bins
+            # For "impossible" bins (real sources, zero completeness-weighted integral -- already reported by
+            # _warn_on_zero_bin_integrals above), the divisions below are 0-count-safe (count/1 above) except at
+            # exactly these bins, where they hit a genuine x/0. That is expected and immediately overwritten with
+            # NaN below, so the resulting RuntimeWarnings are suppressed here rather than left to clutter output.
+            with np.errstate(divide='ignore', invalid='ignore'):
+                # now we have phi_est as given by Page & Carrera 2000
+                self.phi[i_z] = n_unresolved_in_lum_bins / bin_integrals_unresolved + n_resolved_in_lum_bins / bin_integrals_resolved
+                self.counts[i_z] = n_sources_in_lum_bins
 
-            # get errors from poisson statistics
-            phi_err_range_resolved = astropy.stats.poisson_conf_interval(n_resolved_in_lum_bins) / bin_integrals_resolved
-            phi_err_range_unresolved = astropy.stats.poisson_conf_interval(n_unresolved_in_lum_bins) / bin_integrals_unresolved
-            phi_err_resolved = np.abs(phi_err_range_resolved[1] - phi_err_range_resolved[0]) / 2
-            phi_err_unresolved = np.abs(phi_err_range_unresolved[1] - phi_err_range_unresolved[0]) / 2
+                # get errors from poisson statistics
+                phi_err_range_resolved = astropy.stats.poisson_conf_interval(n_resolved_in_lum_bins) / bin_integrals_resolved
+                phi_err_range_unresolved = astropy.stats.poisson_conf_interval(n_unresolved_in_lum_bins) / bin_integrals_unresolved
+                phi_err_resolved = np.abs(phi_err_range_resolved[1] - phi_err_range_resolved[0]) / 2
+                phi_err_unresolved = np.abs(phi_err_range_unresolved[1] - phi_err_range_unresolved[0]) / 2
 
-            phi_err_resolved[n_resolved_in_lum_bins == 0] = 0
-            phi_err_unresolved[n_unresolved_in_lum_bins == 0] = 0
+                phi_err_resolved[n_resolved_in_lum_bins == 0] = 0
+                phi_err_unresolved[n_unresolved_in_lum_bins == 0] = 0
 
-            self.logger.debug(f"phi err resolved: {phi_err_resolved}")
-            self.logger.debug(f"phi err unresolved: {phi_err_unresolved}")
-            self.phi_err[i_z] = np.sqrt(phi_err_resolved**2 + phi_err_unresolved**2 + (0.05*self.phi[i_z])**2)
+                self.logger.debug(f"phi err resolved: {phi_err_resolved}")
+                self.logger.debug(f"phi err unresolved: {phi_err_unresolved}")
+                self.phi_err[i_z] = np.sqrt(phi_err_resolved**2 + phi_err_unresolved**2 + (0.05*self.phi[i_z])**2)
+
+            # Bins with real sources but a geometrically zero completeness-weighted integral (e.g. flux_cut_jy set above
+            # the brightest flux physically reachable in that bin -- see _warn_on_zero_bin_integrals) have no
+            # well-defined phi estimate. Mark them NaN instead of leaving the +inf that dividing by the untouched zero
+            # integral above would otherwise silently carry into self.phi/self.phi_err and any downstream sum, plot, or
+            # fit.
+            impossible = impossible_resolved | impossible_unresolved
+            self.phi[i_z, impossible] = np.nan
+            self.phi_err[i_z, impossible] = np.nan
 
             self.logger.info(f'Redshift range {z_min:.2f}-{z_max:.2f} complete')
 
