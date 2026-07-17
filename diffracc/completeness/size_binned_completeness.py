@@ -175,7 +175,7 @@ class SizeBinnedCompleteness(CompletenessEstimator):
 
             log_bin_centers, completeness, yerr, fitted_params, pcov = self.estimate_completeness(
                 comp_output_file=f"completeness_size_bin_{i}.txt",
-                func_output_file=f"completeness_fit_params_size_bin_{i}.txt",
+                func_output_file=f"completeness_fit_params_size_bin_{i}.json",
                 plot_completeness=False,
                 show_progress=show_progress
             )

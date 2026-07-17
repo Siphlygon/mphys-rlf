@@ -17,6 +17,7 @@ from ..utils import paths
 from ..utils.functions import sigmoid
 from ..utils.img_data_arrays import ImageDataArrays, SubdirData
 from ..utils.logger import LoggingLevels, get_logger
+from .completeness_io import X_SPACE_LOG10_MJY, CompletenessFit, write_completeness_fit
 
 
 class CompletenessEstimator:
@@ -77,6 +78,7 @@ class CompletenessEstimator:
                      function: Callable = sigmoid,
                      initial_guess: list[float] | np.ndarray | None = None,
                      output_file: str | Path | None = None,
+                     x_space: str = X_SPACE_LOG10_MJY,
                      show_progress: bool = True,
                      **kwargs) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -96,8 +98,11 @@ class CompletenessEstimator:
             Initial guess for the parameters of the function. If None, a default guess will be generated based on the
             function signature. Defaults to None.
         output_file : str | Path | None, optional
-            The name of the file to save the fitted parameters and covariance matrix. If None, the parameters will not
-            be saved. Defaults to None.
+            The path to save the fitted completeness curve to, as a self-describing JSON record (see
+            `completeness_io.write_completeness_fit`). If None, the fit is not saved. Defaults to None.
+        x_space : str, optional
+            The x-axis the fit is being performed against, recorded into the saved fit so RLF evaluates it in the same
+            space it was born in. `bin_centers` is expected to already be in this space. Defaults to log10(mJy).
         show_progress : bool, optional
             Whether to show progress bars for the different stages of the completeness estimation. Defaults to True.
         **kwargs : dict
@@ -189,21 +194,26 @@ class CompletenessEstimator:
                 popt, pcov = curve_fit(function, bin_centers, completeness,
                                        p0=initial_guess, sigma=yerr, maxfev=100000, **kwargs)
 
-            # Save fitted parameters to a file for use in RLF
-            if output_file:
-                out_path = Path(output_file)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(out_path, "w", encoding="utf-8") as f:
-                    f.write("# Fitted parameters (popt)\n")
-                    np.savetxt(f, np.asarray(popt)[None, :])
-                    f.write("\n# Covariance matrix (pcov)\n")
-                    np.savetxt(f, pcov)
-
-            return popt, pcov
-
         except Exception as e:
             self.logger.error(f"Error: {function.__name__} fit failed: {e}")
             return np.array([]), np.array([])
+
+        # Save the fit for use in RLF as a self-describing record. Writing the covariance into the same JSON (rather
+        # than appending extra rows to a bare-float text file) also keeps popt unambiguously a single row on read-back.
+        if output_file:
+            param_names = [p.name for p in list(inspect.signature(function).parameters.values())[1:]]
+            fit = CompletenessFit(
+                function_name=function.__name__,
+                x_space=x_space,
+                popt=np.asarray(popt, dtype=float),
+                pcov=np.asarray(pcov, dtype=float),
+                param_names=param_names,
+                provenance=(f"CompletenessEstimator on {self.which_dataset} dataset, "
+                            f"{self.sigma_threshold}-sigma detection, {self.num_noise_patches} noise patches/image"),
+            )
+            write_completeness_fit(output_file, fit)
+
+        return popt, pcov
 
 
     def plot_completeness(self,

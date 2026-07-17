@@ -48,10 +48,15 @@ class TestEstimateCompleteness:
 
         ce.estimate_completeness(
             comp_output_file=tmp_path / "completeness.txt",
-            func_output_file=tmp_path / "fit_params.txt",
+            func_output_file=tmp_path / "fit_params.json",
             plot_completeness=False, show_progress=False,
         )
 
         assert (tmp_path / "completeness.txt").exists()
-        assert (tmp_path / "fit_params.txt").exists()
+        assert (tmp_path / "fit_params.json").exists()
         assert (tmp_path / "mock_fluxes_detectability.txt").exists()
+
+        # The fit is written as a self-describing record that reads back and reports the x-axis it was fitted against.
+        from diffracc.completeness.completeness_io import X_SPACE_LOG10_MJY, read_completeness_fit
+        fit = read_completeness_fit(tmp_path / "fit_params.json")
+        assert fit.x_space == X_SPACE_LOG10_MJY

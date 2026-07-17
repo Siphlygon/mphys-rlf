@@ -1,9 +1,9 @@
 """
 Unit tests for diffracc/rlf/rlf.py's RLF class.
 
-These use the rlf_factory fixture (tests/conftest.py), which builds RLF instances against a small temp config.ini
-and completeness-args file rather than the real ones - real N_MC_PTS (100000) and LUM_BINS (16) would make this
-suite far too slow, per rlf_config_path's small N_MC_PTS/LUM_BINS.
+These use the rlf_factory fixture (tests/conftest.py), which builds RLF instances against a small temp config.ini and
+completeness-args file rather than the real ones - real N_MC_PTS (100000) and LUM_BINS (16) would make this suite far
+too slow, per rlf_config_path's small N_MC_PTS/LUM_BINS.
 """
 import numpy as np
 import pytest
@@ -52,11 +52,13 @@ class TestGetCompleteness:
         assert completeness[0] == 0.0
 
     def test_resolved_source_above_flux_cut_matches_sigmoid(self, rlf_factory):
-        """Test that a resolved source above the flux cut returns a completeness matching the sigmoid function."""
+        """Test that a resolved source above the flux cut returns the completeness fit evaluated at that flux."""
         rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, flux_cut_jy=1.1e-3, bias=0)
         flux = 5e-3  # 5 mJy, above the cut
         completeness = rlf._get_completeness(np.array([flux]), resolved=np.array([True]))
-        expected = func.sigmoid(np.log10(flux * 1000), *rlf.completeness_args)
+        # The fixture fit is a `sigmoid` fitted against log10(mJy); _get_completeness hands it flux in mJy and the fit
+        # applies the log10 itself, so the expected value is the raw function at log10(flux / mJy).
+        expected = func.sigmoid(np.log10(flux * 1000), *rlf.completeness_fit.popt)
         assert completeness[0] == pytest.approx(expected)
 
     def test_bias_shifts_the_resolved_sigmoid_completeness(self, rlf_factory):
@@ -89,14 +91,15 @@ class TestGetCompleteness:
         assert below == 0.0
         assert above == 1.0
 
-    def test_completeness_args_are_restored_after_call(self, rlf_factory):
-        """Test that _get_completeness does not permanently mutate self.completeness_args."""
-        # _get_completeness temporarily shifts self.completeness_args[0] by `bias` and shifts it back at the end -
-        # confirm it's actually restored (not permanently mutated), since completeness_args is reused across calls.
+    def test_biased_call_does_not_mutate_the_completeness_fit(self, rlf_factory):
+        """Test that evaluating _get_completeness with a nonzero bias leaves the stored fit parameters untouched."""
+        # The bias shifts the curve's midpoint only for the duration of the evaluation (CompletenessFit.evaluate works
+        # on a copy of popt), so the fit reused across the millions of Monte Carlo calls must never drift. Guard that
+        # the stored popt is byte-for-byte unchanged after a biased call.
         rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, bias=3)
-        original = rlf.completeness_args.copy()
+        original = rlf.completeness_fit.popt.copy()
         rlf._get_completeness(np.array([5e-3]), resolved=np.array([True]))
-        np.testing.assert_allclose(rlf.completeness_args, original)
+        np.testing.assert_array_equal(rlf.completeness_fit.popt, original)
 
 
 class TestCalculateRlfBinning:

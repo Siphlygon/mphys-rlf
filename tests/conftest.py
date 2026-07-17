@@ -84,12 +84,23 @@ def rlf_config_path(tmp_path):
 @pytest.fixture
 def completeness_args_path(tmp_path):
     """
-    Write a temp completeness_args_sigmoid.txt (x0, k, a, b for utils.functions.sigmoid) and return its path.
-    x0=0 (log10(mJy)=0, i.e. 1 mJy), k=5 (fairly sharp transition), a=1, b=0 -> a completeness curve rising from 0 to 1
-    around 1 mJy, which is a realistic-shaped stand-in for the real fitted values.
+    Write a temp self-describing completeness fit (JSON) and return its path.
+
+    A 4-parameter `sigmoid` fitted against log10(mJy) with x0=0 (i.e. 1 mJy), k=5 (fairly sharp transition), a=1, b=0
+    -> a completeness curve rising from 0 to 1 around 1 mJy, a realistic-shaped stand-in for the real fitted values.
+    The function and x-axis are recorded alongside the parameters, matching the contract RLF now loads through
+    completeness_io.read_completeness_fit.
     """
-    args_path = tmp_path / "completeness_args_sigmoid.txt"
-    np.savetxt(args_path, np.array([0.0, 5.0, 1.0, 0.0]))
+    from diffracc.completeness.completeness_io import CompletenessFit, write_completeness_fit
+
+    args_path = tmp_path / "completeness_args_sigmoid.json"
+    write_completeness_fit(args_path, CompletenessFit(
+        function_name="sigmoid",
+        x_space="log10_mJy",
+        popt=np.array([0.0, 5.0, 1.0, 0.0]),
+        param_names=["x0", "k", "a", "b"],
+        provenance="test fixture",
+    ))
     return args_path
 
 
