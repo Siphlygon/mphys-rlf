@@ -86,7 +86,7 @@ class RLF:
         self.use_pde = use_pde
 
         if completeness_path is None:
-            completeness_path = paths.NP_ARRAY_PARENT / 'completeness_args_sigmoid.json'
+            completeness_path = paths.NP_ARRAY_PARENT / 'completeness_args.json'
         if isinstance(completeness_path, str):
             completeness_path = Path(completeness_path)
 
