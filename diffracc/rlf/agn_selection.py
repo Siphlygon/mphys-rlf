@@ -165,6 +165,9 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     logger.info("Getting redshifts, fluxes, magnitudes, and luminosities from the catalogue...")
     redshifts = catalogue.get_value_column(Source.Redshift)  # z, unitless
     fluxes = catalogue.get_value_column(Source.TotalFlux) / 1000  # catalogue stores mJy; RLF expects Jy throughout
+    # The Hardcastle et al. 2025 survey cut is on PEAK flux, not integrated flux, so it needs its own column -- the two
+    # differ for exactly the resolved sources this selection cares about.
+    peak_fluxes = catalogue.get_value_column(Source.PeakFlux) / 1000  # catalogue stores mJy/beam; cut is applied in Jy
     luminosities = catalogue.get_value_column(Source.Luminosity)  # in W/Hz
     wise3_mag = catalogue.get_value_column(Source.WISE3Mag)  # in mag
     wise3_magerr = catalogue.get_value_column(Source.WISE3MagErr)  # in mag
@@ -189,7 +192,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                                                   wise3_magerr,
                                                   luminosities,
                                                   redshifts,
-                                                  fluxes,
+                                                  peak_fluxes,
                                                   cosmo=cosmo,
                                                   exclusive=True,
                                                   peak_flux_threshold=flux_cut_jy)
@@ -281,9 +284,10 @@ def select_rlagn(wise2_mag: np.ndarray,
         rlagn_mask = rlagn_mask & ~insufficient_data
 
     # They also cut out peak fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
-    # regardless of exclusivity, since this override doesn't depend on the WISE-based classification above
-    rlagn_mask = rlagn_mask | (peak_flux <= peak_flux_threshold) | (redshifts <= 0.01)
-    sfg_mask = sfg_mask | (peak_flux <= peak_flux_threshold) | (redshifts <= 0.01)
-    rqq_mask = rqq_mask | (peak_flux <= peak_flux_threshold) | (redshifts <= 0.01)
+    # regardless of exclusivity, since this cut doesn't depend on the WISE-based classification above.
+    survey_selection = (peak_flux > peak_flux_threshold) & (redshifts > 0.01)
+    rlagn_mask = rlagn_mask & survey_selection
+    sfg_mask = sfg_mask & survey_selection
+    rqq_mask = rqq_mask & survey_selection
 
     return rlagn_mask, sfg_mask, rqq_mask
