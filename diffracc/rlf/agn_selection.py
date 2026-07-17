@@ -26,30 +26,41 @@ WISE_3_FREQ = 3e8 / 12e-6
 WISE_2_FREQ = 3e8 / 4.6e-6
 
 
-def _get_wise3_absmag(wise3_mag: np.ndarray,
-                      wise2_mag: np.ndarray,
-                      redshifts: np.ndarray,
-                      cosmo: astropy.cosmology.Cosmology) -> np.ndarray:
+def _get_wise3_absmag(wise3_mag: np.ndarray | float,
+                      wise2_mag: np.ndarray | float,
+                      redshifts: np.ndarray | float,
+                      cosmo: astropy.cosmology.Cosmology) -> np.ndarray | float:
     """
     Calculate the absolute magnitude in the WISE 3 band for a set of sources, given their apparent magnitudes in the
     WISE 2 and 3 bands, their redshifts, and a cosmology.
-    
+
+    Accepts either arrays (vectorised, over a whole catalogue) or plain floats (a single source) - the return type
+    matches whatever was passed in for wise3_mag.
+
     Parameters
     ----------
-    wise3_mag : np.ndarray
-        The apparent magnitudes in the WISE 3 band.
-    wise2_mag : np.ndarray
-        The apparent magnitudes in the WISE 2 band.
-    redshifts : np.ndarray
-        The redshifts of the sources.
+    wise3_mag : np.ndarray or float
+        The apparent magnitude(s) in the WISE 3 band.
+    wise2_mag : np.ndarray or float
+        The apparent magnitude(s) in the WISE 2 band.
+    redshifts : np.ndarray or float
+        The redshift(s) of the source(s).
     cosmo : astropy.cosmology.Cosmology
         The cosmology to use for calculating luminosity distances.
-    
+
     Returns
     -------
-    wise3_absmag : np.ndarray
-        The absolute magnitudes in the WISE 3 band.
+    wise3_absmag : np.ndarray or float
+        The absolute magnitude(s) in the WISE 3 band.
     """
+    # select_rlagn is called both vectorised (arrays, over a whole catalogue) and per-source (plain floats, from
+    # apply_preprocessing's iterative flag path) - accept either by working in at-least-1D arrays internally, then
+    # unwrapping back to a scalar if that's what came in.
+    scalar_input = np.ndim(wise3_mag) == 0
+    wise3_mag = np.atleast_1d(wise3_mag)
+    wise2_mag = np.atleast_1d(wise2_mag)
+    redshifts = np.atleast_1d(redshifts)
+
     # Extract the WISE frequencies
     wise3_flux = mag_to_flux_w3(wise3_mag)
     wise2_flux = mag_to_flux_w2(wise2_mag)
@@ -57,10 +68,21 @@ def _get_wise3_absmag(wise3_mag: np.ndarray,
     # Calculate the spectral indices for the sources for a k-correction
     spectral_inds = -np.log(wise3_flux / wise2_flux) / np.log(WISE_3_FREQ / WISE_2_FREQ)
 
-    # Convert the magnitudes to absolute magnitudes using the luminosity distance and k-correction
-    wise3_absmag = wise3_mag - 5 * (np.log10(cosmo.luminosity_distance(redshifts).to(u.parsec).value) - 1) \
-        + k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
-    return wise3_absmag
+    # Sources with a non-physical redshift (<=0, e.g. the catalogue's sentinel value for "missing", commonly z=-1)
+    # would send astropy's luminosity_distance and the k-correction into invalid territory: luminosity_distance
+    # emits an "invalid value" warning from its comoving-distance integral, and k_corr_factor((1+z)**1.7) divides by
+    # zero exactly at z=-1. Their WISE-based classification is discarded regardless by the `redshifts <= 0.01`
+    # override in select_rlagn, so it is safe -- and avoids every one of those warnings -- to only evaluate the
+    # redshift-dependent terms for the valid subset and leave the rest as NaN (which safely fails every downstream
+    # comparison rather than propagating garbage).
+    valid = np.isfinite(redshifts) & (redshifts > 0)
+    wise3_absmag = np.full(wise3_mag.shape, np.nan)
+    wise3_absmag[valid] = (
+        wise3_mag[valid]
+        - 5 * (np.log10(cosmo.luminosity_distance(redshifts[valid]).to(u.parsec).value) - 1)
+        + k_corr_factor(redshifts[valid], mag_space=True, spectral_index=spectral_inds[valid])
+    )
+    return wise3_absmag[0] if scalar_input else wise3_absmag
 
 
 def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
