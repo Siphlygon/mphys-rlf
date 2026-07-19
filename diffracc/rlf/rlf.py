@@ -177,9 +177,21 @@ class RLF:
         np.ndarray
             The completeness correction for each source
         """
-        # The fit knows its own x-axis, so it is handed a plain flux in mJy and applies the log10 (or not) itself.
-        sigmoid_completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
-        resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0)
+        # If resolved is a single boolean value, we can just return the completeness for that case without needing to
+        # evaluate both resolved and unresolved completeness for each source.
+        if np.ndim(resolved) == 0:
+            if resolved:
+                completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
+            elif self.use_shimwell:
+                completeness = np.interp(integ_fluxes, shimwell_data[0] / 1000, shimwell_data[1])
+            else:
+                completeness = np.ones_like(integ_fluxes)
+            return np.where(integ_fluxes > self.flux_cut_jy, completeness, 0)
+
+        # Otherwise fall back to evluating both resolved and unresolved completeness for each source, and returning the
+        # appropriate value based on the resolved array.
+        func_completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
+        resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, func_completeness, 0)
 
         # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
         # function at the flux_cut_jy threshold.
