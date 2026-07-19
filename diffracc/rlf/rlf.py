@@ -446,7 +446,7 @@ class RLF:
         if not any(np.any(mask) for mask in problematic.values()):
             return problematic['resolved'], problematic['unresolved']
 
-        self.logger.error(f"Monte Carlo failure - {self.n_mc_pts} points insufficient for number of bins")
+        self.logger.error("Monte Carlo failure - points insufficient for number of bins")
         for name, _, counts in categories:
             mask = problematic[name]
             if not np.any(mask):
@@ -499,10 +499,10 @@ class RLF:
         if plot_rlf:
             # plot the resulting graph
             if self.vmax_method:
-                title = f'1/Va RLF - {self.n_mc_pts // 10} pts per source'
+                title = f'1/Va RLF - {self.n_mc_pts_vmax} pts per source'
                 output = 'rlf_vmax.png'
             else:
-                title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
+                title = f'Page & Carrera RLF - {self.n_mc_pts_pc} pts per bin'
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf(title, colors, output=output)
 
