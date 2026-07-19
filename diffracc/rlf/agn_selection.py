@@ -61,21 +61,26 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
     wise2_mag = np.atleast_1d(wise2_mag)
     redshifts = np.atleast_1d(redshifts)
 
+    # Filter out sources with non-finite redshifts or WISE magnitudes, as these cannot be used for the log calculation.
+    # Does NOT filter specific criteriaa e.g., flux > 1.1mJy; that's not the job of this function
+    # This does not change the behaviour (as it would default to NaN anyway and be caught in select_agn), but it avoids
+    # a runtime warning from numpy about log of non-finite values.
+    valid = np.isfinite(redshifts) & (redshifts > -1) \
+            & np.isfinite(wise3_mag) & (wise3_mag > 0) \
+            & np.isfinite(wise2_mag) & (wise2_mag > 0)
+
     # Extract the WISE frequencies
-    wise3_flux = mag_to_flux_w3(wise3_mag)
-    wise2_flux = mag_to_flux_w2(wise2_mag)
+    wise3_flux = np.full(wise3_mag.shape, np.nan)
+    wise2_flux = np.full(wise2_mag.shape, np.nan)
+    wise3_flux[valid] = mag_to_flux_w3(wise3_mag[valid])
+    wise2_flux[valid] = mag_to_flux_w2(wise2_mag[valid])
 
     # Calculate the spectral indices for the sources for a k-correction
-    spectral_inds = -np.log(wise3_flux / wise2_flux) / np.log(WISE_3_FREQ / WISE_2_FREQ)
+    spectral_inds = np.full(wise3_mag.shape, np.nan)
+    spectral_inds[valid] = -np.log(wise3_flux[valid] / wise2_flux[valid]) / np.log(WISE_3_FREQ / WISE_2_FREQ)
 
-    # Sources with a non-physical redshift (<=0, e.g. the catalogue's sentinel value for "missing", commonly z=-1)
-    # would send astropy's luminosity_distance and the k-correction into invalid territory: luminosity_distance
-    # emits an "invalid value" warning from its comoving-distance integral, and k_corr_factor((1+z)**1.7) divides by
-    # zero exactly at z=-1. Their WISE-based classification is discarded regardless by the `redshifts <= 0.01`
-    # override in select_rlagn, so it is safe -- and avoids every one of those warnings -- to only evaluate the
-    # redshift-dependent terms for the valid subset and leave the rest as NaN (which safely fails every downstream
-    # comparison rather than propagating garbage).
-    valid = np.isfinite(redshifts) & (redshifts > 0)
+    # Sources with a non-physical redshift (<=0, e.g. the catalogue's value for "missing" commonly z=-1) would send
+    # astropy's luminosity_distance and the k-correction into invalid territory due to a divie by 0.
     wise3_absmag = np.full(wise3_mag.shape, np.nan)
     wise3_absmag[valid] = (
         wise3_mag[valid]
@@ -121,8 +126,8 @@ def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
     plt.plot(wise3_linspace_sfg, sfg_lum_cutoff, color='r')
     plt.plot(wise3_linspace_rqq, rqq_lum_cutoff, color='m')
     plt.plot([-27, -27], [1, rqq_lum_cutoff[-1]], color='m')
-    plt.xlabel('wise 3 absolute magnitude')
-    plt.ylabel('L144')
+    plt.xlabel('WISE-band 3 absolute magnitude')
+    plt.ylabel('$L_144$')
     plt.title('H25 RLAGN Selection Plot')
     plt.yscale('log')
     plt.xlim(-18, -34)
@@ -201,7 +206,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                 f'# sfg: {redshifts[sfg_mask].shape[0]} - '
                 f'# rqq: {redshifts[rqq_mask].shape[0]} - '
                 f'total: {redshifts.shape[0]}')
-    logger.info(f'{np.isnan(wise3_magerr).sum()} wise 3 values are upper limits')
+    logger.debug(f'{np.isnan(wise3_magerr).sum()} wise 3 values are upper limits (NaN)')
 
     redshifts = redshifts[rlagn_mask]
     fluxes = fluxes[rlagn_mask]
