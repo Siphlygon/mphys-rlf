@@ -67,7 +67,7 @@ def rlf_config_path(tmp_path):
         "[DEFAULT]\n"
         "dz = 0.5\n"
         "LUM_BINS = 9\n"
-        "N_INTERP_PTS = 200\n"
+        "N_INTERP_PTS = 1000\n"
         "N_MC_PTS_PC = 20000\n"
         "N_MC_PTS_VMAX = 2000\n"
         "SPECTRAL_INDEX = -0.7\n"

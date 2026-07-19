@@ -134,6 +134,7 @@ class RLF:
         self.logger.debug(f"volume range: {self.v_min}-{self.v_max}")
         self.redshift_grid = np.geomspace(self.z_min, self.z_max, self.n_interp_pts)
         self.volume_grid = self.cosmo.comoving_volume(self.redshift_grid).to(u.Mpc**3).value
+        self.lum_dist_grid = self.cosmo.luminosity_distance(self.redshift_grid).to(u.m).value
 
         # define RLF z/l bins
         if default_config.getboolean('HARDCASTLE_Z_BINS'):
@@ -256,8 +257,9 @@ class RLF:
             reds = z_from_v(vols, *self.zvparams)
 
         # Find the luminosity distance & convert into flux with a k-correction
-        d_l = self.cosmo.luminosity_distance(reds).to(u.m).value
-        s = 1e26 * lums / (4 * np.pi * d_l**2) * func.k_corr_factor(reds, spectral_index = self.spectral_index)
+        # d_l = self.cosmo.luminosity_distance(reds).to(u.m).value
+        d_l = np.interp(reds, self.redshift_grid, self.lum_dist_grid)
+        s = 1e26 * lums / (4 * np.pi * d_l**2) * func.k_corr_factor(reds, spectral_index=self.spectral_index)
         return s
 
 
