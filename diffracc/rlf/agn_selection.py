@@ -177,15 +177,15 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
 
     logger.info(f"Total sources in catalogue: {redshifts.shape[0]}")
 
-    logger.debug(f'wise3_mag: mean={np.nanmean(wise3_mag):.4f}, '
-                 f'std={np.nanstd(wise3_mag):.4f}, '
-                 f'max={np.nanmax(wise3_mag):.4f}, '
-                 f'min={np.nanmin(wise3_mag):.4f}, '
+    logger.debug(f'wise3_mag: mean={np.average(wise3_mag[np.isfinite(wise3_mag)]):.4f}, '
+                 f'std={np.std(wise3_mag[np.isfinite(wise3_mag)]):.4f}, '
+                 f'max={np.max(wise3_mag[np.isfinite(wise3_mag)]):.4f}, '
+                 f'min={np.min(wise3_mag[np.isfinite(wise3_mag)]):.4f}, '
                  f'count={wise3_mag.shape[0]}')
-    logger.debug(f'wise2_mag: mean={np.nanmean(wise2_mag):.4f}, '
-                 f'std={np.nanstd(wise2_mag):.4f}, '
-                 f'max={np.nanmax(wise2_mag):.4f}, '
-                 f'min={np.nanmin(wise2_mag):.4f}, '
+    logger.debug(f'wise2_mag: mean={np.average(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
+                 f'std={np.std(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
+                 f'max={np.max(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
+                 f'min={np.min(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
                  f'count={wise2_mag.shape[0]}')
 
     # Calculate the RLAGN, SFG, and RQQ masks using the selection criteria from Hardcastle et al. 2025
@@ -205,7 +205,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                 f'# sfg: {num_sfg} - '
                 f'# rqq: {num_rqq} - '
                 f'total: {num_rlagn + num_sfg + num_rqq} -')
-    logger.debug(f'{np.isnan(wise3_magerr).sum()} wise 3 values are upper limits (NaN)')
+    logger.debug(f'{(np.isnan(wise3_magerr) & np.isfinite(wise3_mag)).sum()} wise 3 values are upper limits')
 
     redshifts = redshifts[rlagn_mask]
     tot_fluxes = tot_fluxes[rlagn_mask]
@@ -266,52 +266,43 @@ def select_rlagn(wise1_mag: np.ndarray,
     rqq_mask : np.ndarray
         A boolean mask indicating which sources are RQQ.
     """
-    # Perform all initial filters H25 uses before they apply the WISE-based classification
-    sample_mask = (tot_fluxes > 1.1e-3) & (redshifts > 0.01) & (~np.isnan(luminosities)) \
-        & (~np.isnan(wise3_mag)) & (~np.isnan(wise2_mag)) & (~np.isnan(wise1_mag))
-    wise2_mag = wise2_mag[sample_mask]
-    wise3_mag = wise3_mag[sample_mask]
-    wise3_magerr = wise3_magerr[sample_mask]
-    luminosities = luminosities[sample_mask]
-    redshifts = redshifts[sample_mask]
+    # Perform all initial filters H25 uses before they apply the WISE-based classification i.e., obtain their sample
+    sample = (tot_fluxes > 1.1e-3) & (redshifts > 0.01) & (np.isfinite(luminosities)) \
+        & (np.isfinite(wise1_mag)) & (np.isfinite(wise2_mag)) & (np.isfinite(wise3_mag))
 
-    wise3_absmag = _get_wise3_absmag(wise3_mag, wise2_mag, redshifts, cosmo)
-    if isinstance(wise3_absmag, np.ndarray):
-        logger.debug("number of sources with finite wise3_absmag "
+    wise3_absmag = np.full(wise3_mag.shape, np.nan)
+    wise3_absmag[sample] = _get_wise3_absmag(wise3_mag[sample],
+                                             wise2_mag[sample],
+                                             redshifts[sample],
+                                             cosmo)
+    logger.debug("number of sources with finite wise3_absmag "
                  f": {np.isfinite(wise3_absmag).sum()} / {wise3_absmag.shape[0]}")
 
     # Calculate the SFG exclusion mask based on Hardcastle et al. 2025
-    sfg_mask = (luminosities < 10**(14 - wise3_absmag / 2.5)) \
-        & (luminosities < 10**(24.8)) & ~np.isnan(wise3_magerr)
-    if isinstance(sfg_mask, np.ndarray):
-        logger.debug(f"number of sources initially classified as SFG: {sfg_mask.sum()} / {sfg_mask.shape[0]}")
+    sfg_mask = np.full(wise3_absmag.shape, False)
+    sfg_mask[sample] = (luminosities[sample] < 10**(14 - wise3_absmag[sample] / 2.5)) \
+        & (luminosities[sample] < 10**(24.8))
+    logger.debug(f"number of sources initially classified as SFG: {sfg_mask.sum()} / {sfg_mask.shape[0]}")
 
     # Calculate the RQQ exclusion criteria based on Hardcastle et al. 2025
-    rqq_mask = (luminosities < 10**(-(wise3_absmag - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)) \
-        & (wise3_absmag < -27) & ~np.isnan(wise3_magerr)
-    if isinstance(rqq_mask, np.ndarray):
-        logger.debug(f"number of sources initially classified as RQQ: {rqq_mask.sum()} / {rqq_mask.shape[0]}")
+    rqq_mask = np.full(wise3_absmag.shape, False)
+    rqq_mask[sample] = (luminosities[sample] < 10**(-(wise3_absmag[sample] - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)) \
+        & (wise3_absmag[sample] < -27)
+    logger.debug(f"number of sources initially classified as RQQ: {rqq_mask.sum()} / {rqq_mask.shape[0]}")
+
+
+    # Sources with insufficient data to classify as SFG or RQQ (i.e., NaN wise3_magerr) are kept by default, but can be
+    # dropped if exclusive=True. This will remove them from the SFG and RQQ masks and therefore classify them as RLAGN
+    # by default therefore increasing the number of RLAGN sources.
+    if not exclusive:
+        insufficient_data = ~np.isfinite(wise3_magerr)
+        logger.debug("number of sources with insufficient data to classify as SFG or RQQ: "
+                     f"{insufficient_data.sum()} / {insufficient_data.shape[0]}")
+        sfg_mask = sfg_mask & ~insufficient_data
+        rqq_mask = rqq_mask & ~insufficient_data
 
     # Everything left is RLAGN
-    rlagn_mask = ~sfg_mask & ~rqq_mask
-
-    # Sources without enough WISE/luminosity/redshift data to be classified as SFG or RQQ fall through to ~sfg_mask &
-    # ~rqq_mask = True above, i.e. they are kept by default. exclusive flips this default: only sources with the data to
-    # positively confirm they're not SFG/RQQ are kept, so undetermined sources are cut.
-    if exclusive:
-        insufficient_data = np.isnan(wise2_mag) | np.isnan(wise3_mag) | np.isnan(wise3_magerr) \
-            | np.isnan(luminosities) | np.isnan(redshifts)
-        if isinstance(rlagn_mask, np.ndarray):
-            logger.debug(f"num rlagn before exclusive cut: {rlagn_mask.sum()} / {rlagn_mask.shape[0]}")
-        rlagn_mask = rlagn_mask & ~insufficient_data
-        if isinstance(rlagn_mask, np.ndarray):
-            logger.debug(f"num rlagn after exclusive cut: {rlagn_mask.sum()} / {rlagn_mask.shape[0]}")
-
-    # They also cut out total fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
-    # regardless of exclusivity, since this cut doesn't depend on the WISE-based classification above.
-    survey_selection = (tot_fluxes > 1.1e-3) & (redshifts > 0.01)
-    rlagn_mask = rlagn_mask & survey_selection
-    sfg_mask = sfg_mask & survey_selection
-    rqq_mask = rqq_mask & survey_selection
+    rlagn_mask = np.full(wise3_absmag.shape, False)
+    rlagn_mask[sample] = ~sfg_mask[sample] & ~rqq_mask[sample]
 
     return rlagn_mask, sfg_mask, rqq_mask
