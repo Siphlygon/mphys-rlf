@@ -16,7 +16,8 @@ import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ..data.hardcastle_catalogue import HardcastleCatalogue, Source
+from ..data.hardcastle_catalogue import HardcastleCatalogue
+from ..utils.data_utils import Source
 from ..utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
 from ..utils.logger import LoggingLevels, get_logger
 
@@ -24,7 +25,7 @@ RQQ_XPT = -27.923076923076923  # mag
 RQQ_YPT = 25.563106796116504  # log10(lum
 WISE_3_FREQ = 3e8 / 12.1e-6
 WISE_2_FREQ = 3e8 / 4.6e-6
-logger = get_logger("RLF Catalogue Info", LoggingLevels.INFO.value)
+logger = get_logger("RLF Catalogue Info", LoggingLevels.DEBUG.value)
 
 
 def _get_wise3_absmag(wise3_mag: np.ndarray | float,
@@ -63,7 +64,7 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
     redshifts = np.atleast_1d(redshifts)
 
     # Filter out sources with non-finite redshifts or WISE magnitudes, as these cannot be used for the log calculation.
-    # Does NOT filter specific criteriaa e.g., flux > 1.1mJy; that's not the job of this function
+    # Does NOT filter specific criteria e.g., flux > 1.1mJy; that's not the job of this function
     # This does not change the behaviour (as it would default to NaN anyway and be caught in select_agn), but it avoids
     # a runtime warning from numpy about log of non-finite values.
     valid = np.isfinite(redshifts) & (redshifts > -1) \
@@ -79,15 +80,15 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
     # Calculate the spectral indices for the sources for a k-correction
     spectral_inds = np.full(wise3_mag.shape, np.nan)
     spectral_inds[valid] = -np.log(wise3_flux[valid] / wise2_flux[valid]) / np.log(WISE_3_FREQ / WISE_2_FREQ)
-    logger.debug(f"average spectral index: {np.nanmean(spectral_inds)}, std: {np.nanstd(spectral_inds)}")
+    logger.debug(f"average spectral index: {np.nanmean(spectral_inds):.4f}, std: {np.nanstd(spectral_inds):.4f}")
 
-    # Sources with a non-physical redshift (<=0, e.g. the catalogue's value for "missing" commonly z=-1) would send
-    # astropy's luminosity_distance and the k-correction into invalid territory due to a divie by 0.
     wise3_absmag = np.full(wise3_mag.shape, np.nan)
+    # Note; the -ve here is necessary despite the negative in the mag_space return of k_corr, because we calculate
+    # the factor as (1-alpha), whereas H26 uses (alpha-1)
     wise3_absmag[valid] = (
         wise3_mag[valid]
         - 5 * (np.log10(cosmo.luminosity_distance(redshifts[valid]).to(u.parsec).value) - 1)
-        + k_corr_factor(redshifts[valid], mag_space=True, spectral_index=spectral_inds[valid])
+        - k_corr_factor(redshifts[valid], mag_space=True, spectral_index=spectral_inds[valid])
     )
     return wise3_absmag[0] if scalar_input else wise3_absmag
 
@@ -179,15 +180,15 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     resolved = catalogue.get_value_column(Source.Resolved)  # boolean
     logger.info(f"Total sources in catalogue: {redshifts.shape[0]}")
 
-    logger.debug(f'wise3_mag: mean={np.average(wise3_mag)}, '
-                 f'std={np.std(wise3_mag)}, '
-                 f'max={np.max(wise3_mag)}, '
-                 f'min={np.min(wise3_mag) }, '
+    logger.debug(f'wise3_mag: mean={np.nanmean(wise3_mag):.4f}, '
+                 f'std={np.nanstd(wise3_mag):.4f}, '
+                 f'max={np.nanmax(wise3_mag):.4f}, '
+                 f'min={np.nanmin(wise3_mag):.4f}, '
                  f'count={wise3_mag.shape[0]}')
-    logger.debug(f'wise2_mag: mean={np.average(wise2_mag)}, '
-                 f'std={np.std(wise2_mag)}, '
-                 f'max={np.max(wise2_mag)}, '
-                 f'min={np.min(wise2_mag) }, '
+    logger.debug(f'wise2_mag: mean={np.nanmean(wise2_mag):.4f}, '
+                 f'std={np.nanstd(wise2_mag):.4f}, '
+                 f'max={np.nanmax(wise2_mag):.4f}, '
+                 f'min={np.nanmin(wise2_mag):.4f}, '
                  f'count={wise2_mag.shape[0]}')
 
     # Calculate the RLAGN, SFG, and RQQ masks using the selection criteria from Hardcastle et al. 2025
@@ -198,7 +199,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                                                   redshifts,
                                                   tot_fluxes,
                                                   cosmo=cosmo,
-                                                  exclusive=False,
+                                                  exclusive=True,
                                                   tot_flux_threshold=flux_cut_jy)
     num_rlagn = np.sum(rlagn_mask)
     num_sfg = np.sum(sfg_mask)
