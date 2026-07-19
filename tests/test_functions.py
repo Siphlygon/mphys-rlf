@@ -52,6 +52,26 @@ class TestSigmoids:
         assert func.erf01(np.array([-1e3]), x0=0, sigma=1)[0] == pytest.approx(0.0, abs=1e-9)
         assert func.erf01(np.array([1e3]), x0=0, sigma=1)[0] == pytest.approx(1.0, abs=1e-9)
 
+    def test_each_sigmoid_matches_numpy_expression(self):
+        """
+        Test that each of the sigmoid01, sigmoid, and richards01 functions matches the equivalent numpy expression.
+        """
+        x = np.linspace(-5, 5, 11)
+        x0, k, a, b, nu = 0.5, 1.5, 2.0, -1.0, 3.0
+        np.testing.assert_allclose(func.sigmoid01(x, x0=x0, k=k), 1 / (1 + np.exp(-k * (x - x0))))
+        np.testing.assert_allclose(func.sigmoid(x, x0=x0, k=k, a=a, b=b), a / (1 + np.exp(-k * (x - x0))) + b)
+        np.testing.assert_allclose(func.richards01(x, x0=x0, k=k, nu=nu), 1 / ((1 + np.exp(-k * (x - x0)))**(1/nu)))
+
+    def test_each_sigmoid_behaves_with_np_arrays(self):
+        """
+        Test that each of the sigmoid01, sigmoid, erf01, and richards01 functions can handle numpy arrays as input.
+        """
+        x = np.array([-1.0, 0.0, 1.0])
+        assert func.sigmoid01(x, x0=0, k=1).shape == x.shape
+        assert func.sigmoid(x, x0=0, k=1, a=1, b=0).shape == x.shape
+        assert func.erf01(x, x0=0, sigma=1).shape == x.shape
+        assert func.richards01(x, x0=0, k=1, nu=1).shape == x.shape
+
 
 class TestWiseFluxConversion:
     """Tests for the mag_to_flux_w2 and mag_to_flux_w3 functions, which convert WISE magnitudes to fluxes in mJy."""

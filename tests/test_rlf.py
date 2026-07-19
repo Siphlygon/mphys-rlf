@@ -7,6 +7,7 @@ too slow, per rlf_config_path's small N_MC_PTS/LUM_BINS.
 """
 import numpy as np
 import pytest
+from astropy import units as u
 
 from diffracc.rlf.rlf_constants import shimwell_data
 from diffracc.utils import functions as func
@@ -102,9 +103,21 @@ class TestGetCompleteness:
         np.testing.assert_array_equal(rlf.completeness_fit.popt, original)
 
 
+class TestInterpolation:
+    """Tests that the z_from_v interpolation method returns expected values for known inputs."""
+
+    def test_luminosity_distance_interpolation_matches_cosmo(self, rlf_factory):
+        """Test that the luminosity distance interpolation matches the cosmology's luminosity distance at known redshifts."""
+        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL)
+        for z in np.linspace(0.01, 1.0, 10):
+            expected_dl = rlf.cosmo.luminosity_distance(z).to(u.m).value
+            interpolated_dl = np.interp(z, rlf.redshift_grid, rlf.lum_dist_grid)
+            assert interpolated_dl == pytest.approx(expected_dl)
+
+
 class TestCalculateRlfBinning:
     """Tests that the RLF binning methods correctly count sources and produce phi arrays of the expected shape."""
-    
+
     @staticmethod
     def _synthetic_catalogue(rng, n=200):
         """Test helper: generate a synthetic catalogue of fluxes, redshifts, and resolved flags."""

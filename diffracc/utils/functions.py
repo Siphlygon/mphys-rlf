@@ -1,8 +1,9 @@
 import numpy as np
+import scipy
 from scipy.special import erf
 
 
-def sigmoid(x : np.ndarray,
+def sigmoid(x: np.ndarray,
             x0: float,
             k: float,
             a: float,
@@ -29,15 +30,16 @@ def sigmoid(x : np.ndarray,
     np.ndarray
         The output values of the sigmoid function.
     """
-    return a / (1 + np.exp(-k * (x - x0))) + b
+    return scipy.special.expit(k * (x - x0)) * a + b
 
 
-def sigmoid01(x : np.ndarray, x0: float, k: float) -> np.ndarray:
+def sigmoid01(x: np.ndarray, x0: float, k: float) -> np.ndarray:
     """
     Standard logistic in (0, 1) with fixed asymptotes.
 
-    This is equivalent to `sigmoid(x, x0, k, a=1, b=0)`.
-    For k>0: approaches 0 as x -> -inf and 1 as x -> +inf.
+    This is equivalent to `sigmoid(x, x0, k, a=1, b=0)`. For k>0: approaches 0 as x -> -inf and 1 as x -> +inf.
+    
+    Sigmoid01 function: 1 / (1 + exp(-k*(x-x0)))
 
     Parameters
     ----------
@@ -53,18 +55,17 @@ def sigmoid01(x : np.ndarray, x0: float, k: float) -> np.ndarray:
     np.ndarray
         The output values of the sigmoid function.
     """
-    return 1.0 / (1.0 + np.exp(-k * (x - x0)))
+    return scipy.special.expit(k * (x - x0))
 
 
-def richards01(x : np.ndarray, x0: float, k: float, nu: float) -> np.ndarray:
+def richards01(x: np.ndarray, x0: float, k: float, nu: float) -> np.ndarray:
     """
     Richards / generalized logistic with fixed asymptotes 0 and 1.
 
-    Adds a shape parameter `nu` to allow asymmetric transitions while
-    preserving the long-term behaviour.
-
-    For k>0 and nu>0: approaches 0 as x -> -inf and 1 as x -> +inf.
-    Setting nu=1 reduces to the standard logistic.
+    Adds a shape parameter `nu` to allow asymmetric transitions while preserving the long-term behaviour.
+    For k>0 and nu>0: approaches 0 as x -> -inf and 1 as x -> +inf. Setting nu=1 reduces to the standard logistic.
+   
+    Richards function: (1 / (1 + exp(-k*(x-x0))))^ (1/nu)
     
     Parameters
     ----------
@@ -82,10 +83,10 @@ def richards01(x : np.ndarray, x0: float, k: float, nu: float) -> np.ndarray:
     np.ndarray
         The output values of the Richards function.
     """
-    return 1.0 / (1.0 + np.exp(-k * (x - x0))) ** nu
+    return scipy.special.expit(k * (x - x0)) ** (1/nu)
 
 
-def erf01(x : np.ndarray, x0: float, sigma: float) -> np.ndarray:
+def erf01(x: np.ndarray, x0: float, sigma: float) -> np.ndarray:
     """
     Error-function CDF with fixed asymptotes 0 and 1.
 
@@ -110,7 +111,7 @@ def erf01(x : np.ndarray, x0: float, sigma: float) -> np.ndarray:
     return 0.5 * (1.0 + erf(z))
 
 
-def mag_to_flux_w3( mag : np.ndarray ) -> np.ndarray:
+def mag_to_flux_w3(mag: np.ndarray) -> np.ndarray:
     """
     Converts magnitude to flux for W3 band.
 
@@ -129,7 +130,7 @@ def mag_to_flux_w3( mag : np.ndarray ) -> np.ndarray:
     return F_v0 * 10**(-mag / 2.5)
 
 
-def mag_to_flux_w2( mag : np.ndarray ) -> np.ndarray:
+def mag_to_flux_w2(mag: np.ndarray) -> np.ndarray:
     """
     Converts magnitude to flux for W2 band.
 
@@ -148,9 +149,9 @@ def mag_to_flux_w2( mag : np.ndarray ) -> np.ndarray:
     return F_v0 * 10**(-mag / 2.5)
 
 
-def k_corr_factor( redshift : np.ndarray,
+def k_corr_factor(redshift: np.ndarray,
                   mag_space: bool = False,
-                  spectral_index: float = -0.7 ) -> np.ndarray:
+                  spectral_index: float = -0.7) -> np.ndarray:
     """
     Returns the k-correction factor for one or more objects at given redshifts
     
@@ -173,21 +174,21 @@ def k_corr_factor( redshift : np.ndarray,
         The k-correction factors for the given redshift(s) in either magnitude or luminosity space, depending on the
         value of `mag_space`.
     """
-    k_corr_lum_space = ( 1 + redshift ) ** ( 1 - spectral_index )
+    k_corr_lum_space = (1 + redshift) ** (1 - spectral_index)
     if not mag_space:
         return k_corr_lum_space
-    return -2.5 * np.log10( k_corr_lum_space )
+    return -2.5 * np.log10(k_corr_lum_space)
 
 
-def rlf_power_law( luminosity : np.ndarray,
-                  alpha : float,
-                  beta : float,
-                  Log10C : float,
-                  Log10Lstar : float ) -> np.ndarray:
+def rlf_power_law(luminosity: np.ndarray,
+                  alpha: float,
+                  beta: float,
+                  Log10C: float,
+                  Log10Lstar: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity using a double power-law model.
     
-    Double power-law: C / ( (L/Lstar)^alpha + (L/Lstar)^beta )
+    Double power-law: C / ((L/Lstar)^alpha + (L/Lstar)^beta)
 
     Parameters
     ----------
@@ -209,14 +210,14 @@ def rlf_power_law( luminosity : np.ndarray,
     """
     C = 10**Log10C
     Lstar = 10**Log10Lstar
-    return C / ( ( luminosity / Lstar )**alpha + ( luminosity / Lstar )**beta )
+    return C / ((luminosity / Lstar)**alpha + (luminosity / Lstar)**beta)
 
 
-def rlf_schechter( luminosity : np.ndarray,
-                  beta : float,
-                  gamma : float,
-                  Log10Phi : float,
-                  Log10Lstar : float ) -> np.ndarray:
+def rlf_schechter(luminosity: np.ndarray,
+                  beta: float,
+                  gamma: float,
+                  Log10Phi: float,
+                  Log10Lstar: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity using a Schechter function model.
 
@@ -242,22 +243,22 @@ def rlf_schechter( luminosity : np.ndarray,
     """
     phi = 10**Log10Phi
     Lstar = 10**Log10Lstar
-    return phi / ( np.log( 10 ) ) * ( luminosity / Lstar )**(-beta) * np.exp( -(luminosity / Lstar)**gamma )
+    return phi / (np.log(10)) * (luminosity / Lstar)**(-beta) * np.exp(-(luminosity / Lstar)**gamma)
 
 
-def rlf_power_law_evolution( x : np.ndarray,
-                            alpha : float,
-                            beta : float,
-                            Log10C : float,
-                            Log10Lstar : float,
-                            alphaD : float,
-                            alphaL : float ) -> np.ndarray:
+def rlf_power_law_evolution(x: np.ndarray,
+                            alpha: float,
+                            beta: float,
+                            Log10C: float,
+                            Log10Lstar: float,
+                            alphaD: float,
+                            alphaL: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution.
     
-    Power-law evolution: (1 + z)^alphaD * C / ( (L/(1+z)^alphaL/Lstar)^alpha + (L/(1+z)^alphaL/Lstar)^beta )
-    or equivalently: (1 + z)^alphaD * rlf_power_law( L/(1+z)^alphaL, alpha, beta, Log10C, Log10Lstar )
+    Power-law evolution: (1 + z)^alphaD * C / ((L/(1+z)^alphaL/Lstar)^alpha + (L/(1+z)^alphaL/Lstar)^beta)
+    or equivalently: (1 + z)^alphaD * rlf_power_law(L/(1+z)^alphaL, alpha, beta, Log10C, Log10Lstar)
 
     Parameters
     ----------
@@ -283,22 +284,22 @@ def rlf_power_law_evolution( x : np.ndarray,
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
-    power_law = rlf_power_law( luminosity / ( 1 + redshift )**( alphaL ), alpha, beta, Log10C, Log10Lstar )
-    return ( 1 + redshift )**( alphaD ) * power_law
+    power_law = rlf_power_law(luminosity / (1 + redshift)**(alphaL), alpha, beta, Log10C, Log10Lstar)
+    return (1 + redshift)**(alphaD) * power_law
 
 
-def rlf_pde( x : np.ndarray,
-            alpha : float,
-            beta : float,
-            Log10C : float,
-            Log10Lstar : float,
-            alphaD : float ) -> np.ndarray:
+def rlf_pde(x: np.ndarray,
+            alpha: float,
+            beta: float,
+            Log10C: float,
+            Log10Lstar: float,
+            alphaD: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with pure density evolution (PDE).
     
-    Pure density evolution: (1 + z)^alphaD * C / ( (L/Lstar)^alpha + (L/Lstar)^beta )
-    or equivalently: (1 + z)^alphaD * rlf_power_law( L, alpha, beta, Log10C, Log10Lstar )
+    Pure density evolution: (1 + z)^alphaD * C / ((L/Lstar)^alpha + (L/Lstar)^beta)
+    or equivalently: (1 + z)^alphaD * rlf_power_law(L, alpha, beta, Log10C, Log10Lstar)
 
     Parameters
     ----------
@@ -322,15 +323,15 @@ def rlf_pde( x : np.ndarray,
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
-    return ( 1 + redshift )**( alphaD ) * rlf_power_law( luminosity, alpha, beta, Log10C, Log10Lstar )
+    return (1 + redshift)**(alphaD) * rlf_power_law(luminosity, alpha, beta, Log10C, Log10Lstar)
 
 
-def rlf_ple( x : np.ndarray,
-            alpha : float,
-            beta : float,
-            Log10C : float,
-            Log10Lstar : float,
-            alphaL : float ) -> np.ndarray:
+def rlf_ple(x: np.ndarray,
+            alpha: float,
+            beta: float,
+            Log10C: float,
+            Log10Lstar: float,
+            alphaL: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with pure luminosity evolution (PLE).
@@ -357,23 +358,23 @@ def rlf_ple( x : np.ndarray,
     """
     luminosity = x[ 0 ]
     redshift = x[ 1 ]
-    return rlf_power_law( luminosity / ( 1 + redshift )**( alphaL ), alpha, beta, Log10C, Log10Lstar )
+    return rlf_power_law(luminosity / (1 + redshift)**(alphaL), alpha, beta, Log10C, Log10Lstar)
 
 
-def yuan_evolution_a( x : np.ndarray,
-                     alpha : float,
-                     beta : float,
-                     Log10C : float,
-                     Log10Lstar : float,
-                     m : float,
-                     z0 : float,
-                     zsigma : float,
-                     k1 : float ) -> np.ndarray:
+def yuan_evolution_a(x: np.ndarray,
+                     alpha: float,
+                     beta: float,
+                     Log10C: float,
+                     Log10Lstar: float,
+                     m: float,
+                     z0: float,
+                     zsigma: float,
+                     k1: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution as described in Yuan et al. (2018).
     
-    Yuan et al. (2018) evolution: e1 * rlf_power_law( L/e2, alpha, beta, Log10C, Log10Lstar )
+    Yuan et al. (2018) evolution: e1 * rlf_power_law(L/e2, alpha, beta, Log10C, Log10Lstar)
 
     Parameters
     ----------
@@ -404,27 +405,27 @@ def yuan_evolution_a( x : np.ndarray,
     l = x[ 0 ]
     z = x[ 1 ]
 
-    e1 = np.where( z > z0, z**m, z**m * np.exp( -0.5 * ( ( z - z0 ) / zsigma )**2 ) )
+    e1 = np.where(z > z0, z**m, z**m * np.exp(-0.5 * ((z - z0) / zsigma)**2))
     e2 = (1 + z)**k1
 
-    return e1 * rlf_power_law( l / e2, alpha, beta, Log10C, Log10Lstar )
+    return e1 * rlf_power_law(l / e2, alpha, beta, Log10C, Log10Lstar)
 
 
-def yuan2018_evolution_a( x : np.ndarray,
-                         p1 : float,
-                         p2 : float,
-                         zc : float,
-                         Log10Phi : float,
-                         Log10Lstar : float,
-                         beta : float,
-                         gamma : float,
-                         k1 : float ) -> np.ndarray:
+def yuan2018_evolution_a(x: np.ndarray,
+                         p1: float,
+                         p2: float,
+                         zc: float,
+                         Log10Phi: float,
+                         Log10Lstar: float,
+                         beta: float,
+                         gamma: float,
+                         k1: float) -> np.ndarray:
     """
     Returns the value of the radio luminosity function (RLF) at a given luminosity and redshift using a double power-law
     model with evolution as described in Yuan et al. (2018a).
 
-    Yuan et al. (2018a) evolution: e1 * rlf_schechter( L/e2, beta, gamma, Log10Phi, Log10Lstar )
-    but e1 = p0 * ( ( (1+zc) / (1+z) )**p1 + ( (1+zc) / (1+z) )**p2 )**(-1)
+    Yuan et al. (2018a) evolution: e1 * rlf_schechter(L/e2, beta, gamma, Log10Phi, Log10Lstar)
+    but e1 = p0 * (((1+zc) / (1+z))**p1 + ((1+zc) / (1+z))**p2)**(-1)
 
     Parameters
     ----------
@@ -456,6 +457,6 @@ def yuan2018_evolution_a( x : np.ndarray,
     z = x[ 1 ]
 
     p0 = (1+zc)**p1 + (z+zc)**p2
-    e1 = p0 * ( ( (1+zc) / (1+z) )**p1 + ( (1+zc) / (1+z) )**p2 )**(-1)
+    e1 = p0 * (((1+zc) / (1+z))**p1 + ((1+zc) / (1+z))**p2)**(-1)
     e2 = (1 + z)**k1
-    return e1 * rlf_schechter( l / e2, beta, gamma, Log10Phi, Log10Lstar )
+    return e1 * rlf_schechter(l / e2, beta, gamma, Log10Phi, Log10Lstar)

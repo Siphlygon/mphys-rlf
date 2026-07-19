@@ -113,8 +113,10 @@ class RLF:
         self.lum_bins_count = int(default_config['LUM_BINS'])
         # number of points to use in interpolation approximation of
         self.n_interp_pts = int(default_config['N_INTERP_PTS'])
-        # number of points to use in the monte-carlo integral for each redshift-luminosity bin
-        self.n_mc_pts = int(default_config['N_MC_PTS'])
+        # number of points to use in the monte-carlo integral for each redshift-luminosity bin (Page & Carrera 2000)
+        self.n_mc_pts_pc = int(default_config['N_MC_PTS_PC'])
+        # number of points to use in the monte-carlo integral for each source in the 1/Vmax calculation
+        self.n_mc_pts_vmax = int(default_config['N_MC_PTS_VMAX'])
         # spectral index to use for the k-correction, typically -0.7 for AGN
         self.spectral_index = float(default_config['SPECTRAL_INDEX'])
         # maximum Z (redshift) to consider in RLF calculation
@@ -132,6 +134,7 @@ class RLF:
         self.logger.debug(f"volume range: {self.v_min}-{self.v_max}")
         self.redshift_grid = np.geomspace(self.z_min, self.z_max, self.n_interp_pts)
         self.volume_grid = self.cosmo.comoving_volume(self.redshift_grid).to(u.Mpc**3).value
+        self.lum_dist_grid = self.cosmo.luminosity_distance(self.redshift_grid).to(u.m).value
 
         # define RLF z/l bins
         if default_config.getboolean('HARDCASTLE_Z_BINS'):
@@ -177,9 +180,21 @@ class RLF:
         np.ndarray
             The completeness correction for each source
         """
-        # The fit knows its own x-axis, so it is handed a plain flux in mJy and applies the log10 (or not) itself.
-        sigmoid_completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
-        resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, sigmoid_completeness, 0)
+        # If resolved is a single boolean value, we can just return the completeness for that case without needing to
+        # evaluate both resolved and unresolved completeness for each source.
+        if np.ndim(resolved) == 0:
+            if resolved:
+                completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
+            elif self.use_shimwell:
+                completeness = np.interp(integ_fluxes, shimwell_data[0] / 1000, shimwell_data[1])
+            else:
+                completeness = np.ones_like(integ_fluxes)
+            return np.where(integ_fluxes > self.flux_cut_jy, completeness, 0)
+
+        # Otherwise fall back to evluating both resolved and unresolved completeness for each source, and returning the
+        # appropriate value based on the resolved array.
+        func_completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
+        resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, func_completeness, 0)
 
         # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
         # function at the flux_cut_jy threshold.
@@ -242,8 +257,9 @@ class RLF:
             reds = z_from_v(vols, *self.zvparams)
 
         # Find the luminosity distance & convert into flux with a k-correction
-        d_l = self.cosmo.luminosity_distance(reds).to(u.m).value
-        s = 1e26 * lums / (4 * np.pi * d_l**2) * func.k_corr_factor(reds, spectral_index = self.spectral_index)
+        # d_l = self.cosmo.luminosity_distance(reds).to(u.m).value
+        d_l = np.interp(reds, self.redshift_grid, self.lum_dist_grid)
+        s = 1e26 * lums / (4 * np.pi * d_l**2) * func.k_corr_factor(reds, spectral_index=self.spectral_index)
         return s
 
 
@@ -287,7 +303,7 @@ class RLF:
             luminosity-volume bin area so the result is in units of / MPc^3 / log10(W/Hz)
         """
         # V_max has many more calculations so we can reduce the number of Monte Carlo points to speed up the function
-        mc_pts = self.n_mc_pts // 10 if vmax_method else self.n_mc_pts
+        mc_pts = self.n_mc_pts_vmax if vmax_method else self.n_mc_pts_pc
 
         # If lum is None, generate random luminosities within the bin(s).
         if lum is None:
@@ -432,7 +448,7 @@ class RLF:
         if not any(np.any(mask) for mask in problematic.values()):
             return problematic['resolved'], problematic['unresolved']
 
-        self.logger.error(f"Monte Carlo failure - {self.n_mc_pts} points insufficient for number of bins")
+        self.logger.error("Monte Carlo failure - points insufficient for number of bins")
         for name, _, counts in categories:
             mask = problematic[name]
             if not np.any(mask):
@@ -485,10 +501,10 @@ class RLF:
         if plot_rlf:
             # plot the resulting graph
             if self.vmax_method:
-                title = f'1/Va RLF - {self.n_mc_pts // 10} pts per source'
+                title = f'1/Va RLF - {self.n_mc_pts_vmax} pts per source'
                 output = 'rlf_vmax.png'
             else:
-                title = f'Page & Carrera RLF - {self.n_mc_pts} pts per bin'
+                title = f'Page & Carrera RLF - {self.n_mc_pts_pc} pts per bin'
                 output = 'rlf_page_and_carrera.png'
             self.plot_rlf(title, colors, output=output)
 
