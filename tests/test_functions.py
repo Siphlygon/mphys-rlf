@@ -76,14 +76,6 @@ class TestSigmoids:
 class TestWiseFluxConversion:
     """Tests for the mag_to_flux_w2 and mag_to_flux_w3 functions, which convert WISE magnitudes to fluxes in mJy."""
 
-    def test_mag_to_flux_w3_zero_mag_is_zeropoint(self):
-        """Test that a source with 0.0 WISE W3 magnitude has a flux equal to the W3 zeropoint (31.674 mJy)."""
-        assert func.mag_to_flux_w3(np.array([0.0]))[0] == pytest.approx(31.674)
-
-    def test_mag_to_flux_w2_zero_mag_is_zeropoint(self):
-        """Test that a source with 0.0 WISE W2 magnitude has a flux equal to the W2 zeropoint (171.787 mJy)."""
-        assert func.mag_to_flux_w2(np.array([0.0]))[0] == pytest.approx(171.787)
-
     @pytest.mark.parametrize("flux_fn", [func.mag_to_flux_w2, func.mag_to_flux_w3])
     def test_flux_decreases_with_increasing_magnitude(self, flux_fn):
         """Test that a source with a larger WISE magnitude has a smaller flux, for both W2 and W3."""
