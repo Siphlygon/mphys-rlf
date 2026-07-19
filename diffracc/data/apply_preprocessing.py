@@ -430,19 +430,21 @@ class CutoutPreprocessor:
         self.logger.info("Creating vectorised flags for RLAGN selection...")
         start_time = time.time()
         total_fluxes = np.array([info['Total_flux'] for info in cat_info])[valid_mask] / 1000  # convert from mJy to Jy
+        wise_1_mag = np.array([info['mag_w1'] for info in cat_info])[valid_mask]
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
         luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
         redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
-        rlagn_mask = select_rlagn(wise_2_mag,
-                                  wise_3_mag,
-                                  wise_3_magerr,
-                                  luminosities,
-                                  redshifts,
-                                  total_fluxes,  # wants Jy
-                                  cosmo=self.cosmo,
-                                  exclusive=self.exclusive)[0]
+        rlagn_mask, _, _ = select_rlagn(wise_1_mag,
+                                        wise_2_mag,
+                                        wise_3_mag,
+                                        wise_3_magerr,
+                                        luminosities,
+                                        redshifts,
+                                        total_fluxes,  # wants Jy
+                                        cosmo=self.cosmo,
+                                        exclusive=self.exclusive)
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
@@ -491,7 +493,8 @@ class CutoutPreprocessor:
             edge_max_list.append(self._calculate_edge_max_single(img))
             # select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
             total_flux = source['Total_flux'] / 1000  # convert from mJy to Jy
-            rlagn_list.append(select_rlagn(source['mag_w2'],
+            rlagn_list.append(select_rlagn(source['mag_w1'],
+                                           source['mag_w2'],
                                            source['mag_w3'],
                                            source['magerr_w3'],
                                            source['L_144'],

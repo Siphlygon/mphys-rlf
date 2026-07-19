@@ -140,7 +140,6 @@ def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
 
 
 def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
-                       flux_cut_jy: float,
                        plot_rlagn_selection_contour: bool = False) \
                          -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -150,8 +149,6 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     ----------
     cosmo : astropy.cosmology.Cosmology
         The cosmology to use for calculating luminosity distances and volumes
-    flux_cut_jy : float
-        The flux cut in Jy
     plot_rlagn_selection_contour : bool, optional
         Whether to plot the RLAGN selection contour, by default False
 
@@ -171,13 +168,13 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     logger.info("Getting redshifts, fluxes, magnitudes, and luminosities from the catalogue...")
     redshifts = catalogue.get_value_column(Source.Redshift)  # z, unitless
     tot_fluxes = catalogue.get_value_column(Source.TotalFlux) / 1000  # catalogue stores mJy; RLF expects Jy throughout
-    # The Hardcastle et al. 2025 survey cut is on PEAK flux, not integrated flux, so it needs its own column -- the two
-    # differ for exactly the resolved sources this selection cares about.
     luminosities = catalogue.get_value_column(Source.Luminosity)  # in W/Hz
+    wise1_mag = catalogue.get_value_column(Source.WISE1Mag)  # in mag
+    wise2_mag = catalogue.get_value_column(Source.WISE2Mag)  # in mag
     wise3_mag = catalogue.get_value_column(Source.WISE3Mag)  # in mag
     wise3_magerr = catalogue.get_value_column(Source.WISE3MagErr)  # in mag
-    wise2_mag = catalogue.get_value_column(Source.WISE2Mag)  # in mag
     resolved = catalogue.get_value_column(Source.Resolved)  # boolean
+
     logger.info(f"Total sources in catalogue: {redshifts.shape[0]}")
 
     logger.debug(f'wise3_mag: mean={np.nanmean(wise3_mag):.4f}, '
@@ -192,15 +189,15 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                  f'count={wise2_mag.shape[0]}')
 
     # Calculate the RLAGN, SFG, and RQQ masks using the selection criteria from Hardcastle et al. 2025
-    rlagn_mask, sfg_mask, rqq_mask = select_rlagn(wise2_mag,
+    rlagn_mask, sfg_mask, rqq_mask = select_rlagn(wise1_mag,
+                                                  wise2_mag,
                                                   wise3_mag,
                                                   wise3_magerr,
                                                   luminosities,
                                                   redshifts,
                                                   tot_fluxes,
                                                   cosmo=cosmo,
-                                                  exclusive=True,
-                                                  tot_flux_threshold=flux_cut_jy)
+                                                  exclusive=True)
     num_rlagn = np.sum(rlagn_mask)
     num_sfg = np.sum(sfg_mask)
     num_rqq = np.sum(rqq_mask)
@@ -223,21 +220,23 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     return redshifts, tot_fluxes, luminosities, resolved
 
 
-def select_rlagn(wise2_mag: np.ndarray,
+def select_rlagn(wise1_mag: np.ndarray,
+                 wise2_mag: np.ndarray,
                  wise3_mag: np.ndarray,
                  wise3_magerr: np.ndarray,
                  luminosities: np.ndarray,
                  redshifts: np.ndarray,
                  tot_fluxes: np.ndarray,
                  cosmo: astropy.cosmology.Cosmology,
-                 exclusive: bool = False,
-                 tot_flux_threshold: float = 1.1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 exclusive: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Selects RLAGN sources based on the criteria from Hardcastle et al. 2025, using WISE magnitudes, luminosities,
     and redshifts.
 
     Parameters
     ----------
+    wise1_mag : np.ndarray
+        The WISE W1 magnitudes.
     wise2_mag : np.ndarray
         The WISE W2 magnitudes.
     wise3_mag : np.ndarray
@@ -253,22 +252,29 @@ def select_rlagn(wise2_mag: np.ndarray,
     cosmo : astropy.cosmology.Cosmology
         The cosmology to use for calculating luminosity distances and volumes.
     exclusive : bool, optional
-        Whether to keep only sources with sufficient data to classify them as SFG or RQQ (True) or to keep sources
-        lacking sufficient data (False), by default False.
-    tot_flux_threshold : float, optional
-        The total flux threshold below which sources are automatically classified as RLAGN, by default 1.1e-3 Jy.
+        Whether to keep only sources with sufficient data (i.e., non-NaN wise3_magerr) to classify them as SFG or RQQ
+        (True) or to keep sources lacking sufficient data (i.e., NaN wise3_magerr) (False), by default False.
 
     Returns
     -------
     rlagn_mask : np.ndarray
-        A boolean mask indicating which sources are RLAGN. Sources lacking the WISE/luminosity/redshift data needed to
-        classify them as SFG or RQQ are kept by default (exclusive=False) or dropped (exclusive=True), except for the
-        low total-flux / low-redshift override, which always applies.
+        A boolean mask indicating which sources are RLAGN. Sources lacking the WISE-band 3 magnitude error data needed
+        to classify them as SFG or RQQ are kept by default (exclusive=False) or dropped (exclusive=True). Removes
+        sources with NaNs in other values, or below the flux/redshift thresholds, regardless of exclusivity.
     sfg_mask : np.ndarray
         A boolean mask indicating which sources are SFG.
     rqq_mask : np.ndarray
         A boolean mask indicating which sources are RQQ.
     """
+    # Perform all initial filters H25 uses before they apply the WISE-based classification
+    sample_mask = (tot_fluxes > 1.1e-3) & (redshifts > 0.01) & (~np.isnan(luminosities)) \
+        & (~np.isnan(wise3_mag)) & (~np.isnan(wise2_mag)) & (~np.isnan(wise1_mag))
+    wise2_mag = wise2_mag[sample_mask]
+    wise3_mag = wise3_mag[sample_mask]
+    wise3_magerr = wise3_magerr[sample_mask]
+    luminosities = luminosities[sample_mask]
+    redshifts = redshifts[sample_mask]
+
     wise3_absmag = _get_wise3_absmag(wise3_mag, wise2_mag, redshifts, cosmo)
     if isinstance(wise3_absmag, np.ndarray):
         logger.debug("number of sources with finite wise3_absmag "
@@ -303,7 +309,7 @@ def select_rlagn(wise2_mag: np.ndarray,
 
     # They also cut out total fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
     # regardless of exclusivity, since this cut doesn't depend on the WISE-based classification above.
-    survey_selection = (tot_fluxes > tot_flux_threshold) & (redshifts > 0.01)
+    survey_selection = (tot_fluxes > 1.1e-3) & (redshifts > 0.01)
     rlagn_mask = rlagn_mask & survey_selection
     sfg_mask = sfg_mask & survey_selection
     rqq_mask = rqq_mask & survey_selection

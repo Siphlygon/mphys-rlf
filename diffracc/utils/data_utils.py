@@ -27,7 +27,6 @@ class Source(Enum):
     WISE2Mag = "mag_w2" # magnitude in the wise band 2
     WISE3Mag = "mag_w3" # magnitude in the wise band 3
     WISE3MagErr = "magerr_w3" # magnitude error in the wise band 3, or blank for upper lim
-    WISE4Mag = "mag_w4" # magnitude in the wise band 4
     Resolved = "Resolved" # Whether the source is resolved (True) or not (False)
 
 
