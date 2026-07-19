@@ -286,6 +286,7 @@ class CutoutPreprocessor:
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
 
+
     def _calculate_snr_single(self,
                              noise_level: float,
                              peak_flux: float) -> float:
@@ -428,6 +429,7 @@ class CutoutPreprocessor:
         # Vectorised RLAGN selection using catalogue information
         self.logger.info("Creating vectorised flags for RLAGN selection...")
         start_time = time.time()
+        total_fluxes = np.array([info['Total_flux'] for info in cat_info])[valid_mask] / 1000  # convert from mJy to Jy
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
@@ -438,7 +440,7 @@ class CutoutPreprocessor:
                                   wise_3_magerr,
                                   luminosities,
                                   redshifts,
-                                  global_max*1000,
+                                  total_fluxes,  # wants Jy
                                   cosmo=self.cosmo,
                                   exclusive=self.exclusive)[0]
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
@@ -477,7 +479,7 @@ class CutoutPreprocessor:
         valid_indices = dataset.index[~dataset['broken'] & ~dataset['incomplete']]
 
         for idx in tqdm(valid_indices, desc="Computing flags for each image in the dataset"):
-            img = dataset.at[idx, 'pixel_values']
+            img: np.ndarray = dataset.at[idx, 'pixel_values']
             source = cat_info[idx]
 
             size_list.append(source['LAS'])
@@ -487,13 +489,14 @@ class CutoutPreprocessor:
             peak_flux_list.append(peak_flux)
 
             edge_max_list.append(self._calculate_edge_max_single(img))
-            # _select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
+            # select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
+            total_flux = source['Total_flux'] / 1000  # convert from mJy to Jy
             rlagn_list.append(select_rlagn(source['mag_w2'],
                                            source['mag_w3'],
                                            source['magerr_w3'],
                                            source['L_144'],
                                            source['z_best'],
-                                           peak_flux,
+                                           total_flux,  # wants Jy
                                            cosmo=self.cosmo,
                                            exclusive=self.exclusive)[0])
 

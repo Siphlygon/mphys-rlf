@@ -52,7 +52,7 @@ class TestSelectRlagnMaskLogic:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo,
         )
         assert sfg == [True]
@@ -72,7 +72,7 @@ class TestSelectRlagnMaskLogic:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo,
         )
         assert sfg == [False]
@@ -95,7 +95,7 @@ class TestSelectRlagnMaskLogic:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([luminosity]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([luminosity]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo,
         )
         assert rqq == [True]
@@ -117,7 +117,7 @@ class TestSelectRlagnMaskLogic:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([np.nan]),
-            luminosities=np.array([1.0]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([1.0]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo, exclusive=False,
         )
         assert sfg == [False]
@@ -140,7 +140,7 @@ class TestExclusiveMode:
         patch_wise3_absmag(absmag)
         return select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([np.nan]),
-            luminosities=np.array([1.0]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([1.0]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo, exclusive=exclusive,
         )
 
@@ -174,7 +174,7 @@ class TestExclusiveMode:
 
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), peak_flux=np.array([1.0]),
+            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
             cosmo=flat_lcdm_cosmo, exclusive=True,
         )
         assert rlagn == [True]
@@ -186,7 +186,7 @@ class TestLowFluxAndRedshiftOverride:
     three class masks (they are dropped from the sample entirely, independent of the WISE-based classification).
     """
 
-    def test_low_peak_flux_excludes_source_even_when_it_would_classify(self, patch_wise3_absmag, flat_lcdm_cosmo):
+    def test_low_tot_fluxes_excludes_source_even_when_it_would_classify(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
         Test a source with a peak flux at or below the threshold is dropped from all three masks, even though its
         luminosity/magnitude would otherwise place it in one of the classes.
@@ -198,8 +198,8 @@ class TestLowFluxAndRedshiftOverride:
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
             luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]),
-            peak_flux=np.array([1.1e-3]),  # exactly at the threshold -> below "peak_flux > threshold", so excluded
-            cosmo=flat_lcdm_cosmo, peak_flux_threshold=1.1e-3,
+            tot_fluxes=np.array([1.1e-3]),  # exactly at the threshold -> below "tot_fluxes > threshold", so excluded
+            cosmo=flat_lcdm_cosmo, tot_flux_threshold=1.1e-3,
         )
         assert rlagn == [False]
         assert sfg == [False]
@@ -218,7 +218,7 @@ class TestLowFluxAndRedshiftOverride:
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
             luminosities=np.array([luminosity]), redshifts=np.array([0.01]),  # exactly at the z=0.01 survey floor
-            peak_flux=np.array([1.0]), cosmo=flat_lcdm_cosmo,
+            tot_fluxes=np.array([1.0]), cosmo=flat_lcdm_cosmo,
         )
         assert rlagn == [False]
         assert sfg == [False]
@@ -236,7 +236,7 @@ class TestLowFluxAndRedshiftOverride:
         rlagn, sfg, rqq = select_rlagn(
             wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
             luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]),
-            peak_flux=np.array([1.0]), cosmo=flat_lcdm_cosmo, peak_flux_threshold=1.1e-3,
+            tot_fluxes=np.array([1.0]), cosmo=flat_lcdm_cosmo, tot_flux_threshold=1.1e-3,
         )
         assert sfg == [True]
         assert rqq == [False]
@@ -285,7 +285,6 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),  # mJy, as stored in the real catalogue
-            "Peak_flux": np.array([50.0]),  # mJy/beam; well above the 1.1 mJy survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
@@ -316,7 +315,6 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3, 0.4]),
             "Total_flux": np.array([50.0, 60.0]),  # mJy
-            "Peak_flux": np.array([50.0, 60.0]),  # mJy/beam; both well above the survey cut
             "L_144": np.array([rlagn_luminosity, sfg_luminosity]),
             "mag_w3": np.array([13.0, 13.0]),
             "magerr_w3": np.array([0.1, 0.1]),
@@ -342,16 +340,15 @@ class TestGetCatalogueInfo:
         # get_catalogue_info always calls select_rlagn with exclusive=True, so a source with a NaN wise3_magerr
         # (and nothing else rescuing it via the override) should be dropped entirely, not just have its SFG/RQQ
         # classification blanked.
-        patch_wise3_absmag(np.array([-20.0]))
+        patch_wise3_absmag(np.array([-20.0, -25.0]))
         fake_catalogue({
-            "z_best": np.array([0.3]),
-            "Total_flux": np.array([50.0]),
-            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
-            "L_144": np.array([1e26]),
-            "mag_w3": np.array([13.0]),
-            "magerr_w3": np.array([np.nan]),
-            "mag_w2": np.array([15.0]),
-            "Resolved": np.array([True]),
+            "z_best": np.array([0.3, 0.4]),
+            "Total_flux": np.array([50.0, 60.0]),  # mJy
+            "L_144": np.array([1e26, 1e26]),
+            "mag_w3": np.array([13.0, 13.0]),
+            "magerr_w3": np.array([np.nan, 1.0]),
+            "mag_w2": np.array([15.0, 15.0]),
+            "Resolved": np.array([True, False]),
         })
 
         redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(
@@ -377,7 +374,6 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
-            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
@@ -401,7 +397,6 @@ class TestGetCatalogueInfo:
         fake_catalogue({
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
-            "Peak_flux": np.array([50.0]),  # mJy/beam; above the survey cut
             "L_144": np.array([1e26]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),

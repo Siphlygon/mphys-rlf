@@ -22,8 +22,9 @@ from ..utils.logger import LoggingLevels, get_logger
 
 RQQ_XPT = -27.923076923076923  # mag
 RQQ_YPT = 25.563106796116504  # log10(lum
-WISE_3_FREQ = 3e8 / 12e-6
+WISE_3_FREQ = 3e8 / 12.1e-6
 WISE_2_FREQ = 3e8 / 4.6e-6
+logger = get_logger("RLF Catalogue Info", LoggingLevels.INFO.value)
 
 
 def _get_wise3_absmag(wise3_mag: np.ndarray | float,
@@ -78,6 +79,7 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
     # Calculate the spectral indices for the sources for a k-correction
     spectral_inds = np.full(wise3_mag.shape, np.nan)
     spectral_inds[valid] = -np.log(wise3_flux[valid] / wise2_flux[valid]) / np.log(WISE_3_FREQ / WISE_2_FREQ)
+    logger.debug(f"average spectral index: {np.nanmean(spectral_inds)}, std: {np.nanstd(spectral_inds)}")
 
     # Sources with a non-physical redshift (<=0, e.g. the catalogue's value for "missing" commonly z=-1) would send
     # astropy's luminosity_distance and the k-correction into invalid territory due to a divie by 0.
@@ -163,16 +165,13 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     resolved : np.ndarray
         The resolved status of the sources in the catalog
     """
-    logger = get_logger("RLF Catalogue Info", LoggingLevels.INFO.value)
-
     catalogue = HardcastleCatalogue(resolved_only=False)
 
     logger.info("Getting redshifts, fluxes, magnitudes, and luminosities from the catalogue...")
     redshifts = catalogue.get_value_column(Source.Redshift)  # z, unitless
-    fluxes = catalogue.get_value_column(Source.TotalFlux) / 1000  # catalogue stores mJy; RLF expects Jy throughout
+    tot_fluxes = catalogue.get_value_column(Source.TotalFlux) / 1000  # catalogue stores mJy; RLF expects Jy throughout
     # The Hardcastle et al. 2025 survey cut is on PEAK flux, not integrated flux, so it needs its own column -- the two
     # differ for exactly the resolved sources this selection cares about.
-    peak_fluxes = catalogue.get_value_column(Source.PeakFlux) / 1000  # catalogue stores mJy/beam; cut is applied in Jy
     luminosities = catalogue.get_value_column(Source.Luminosity)  # in W/Hz
     wise3_mag = catalogue.get_value_column(Source.WISE3Mag)  # in mag
     wise3_magerr = catalogue.get_value_column(Source.WISE3MagErr)  # in mag
@@ -197,19 +196,21 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                                                   wise3_magerr,
                                                   luminosities,
                                                   redshifts,
-                                                  peak_fluxes,
+                                                  tot_fluxes,
                                                   cosmo=cosmo,
-                                                  exclusive=True,
-                                                  peak_flux_threshold=flux_cut_jy)
-
-    logger.info(f'# agn: {redshifts[rlagn_mask].shape[0]} - '
-                f'# sfg: {redshifts[sfg_mask].shape[0]} - '
-                f'# rqq: {redshifts[rqq_mask].shape[0]} - '
-                f'total: {redshifts.shape[0]}')
+                                                  exclusive=False,
+                                                  tot_flux_threshold=flux_cut_jy)
+    num_rlagn = np.sum(rlagn_mask)
+    num_sfg = np.sum(sfg_mask)
+    num_rqq = np.sum(rqq_mask)
+    logger.info(f'# agn: {num_rlagn} - '
+                f'# sfg: {num_sfg} - '
+                f'# rqq: {num_rqq} - '
+                f'total: {num_rlagn + num_sfg + num_rqq} -')
     logger.debug(f'{np.isnan(wise3_magerr).sum()} wise 3 values are upper limits (NaN)')
 
     redshifts = redshifts[rlagn_mask]
-    fluxes = fluxes[rlagn_mask]
+    tot_fluxes = tot_fluxes[rlagn_mask]
     luminosities = luminosities[rlagn_mask]
     resolved = resolved[rlagn_mask]
 
@@ -218,7 +219,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
         _plot_rlagn_selection_contour(wise2_mag, wise3_mag, redshifts, luminosities, cosmo)
         logger.info("saved lum_vs_w3.png")
 
-    return redshifts, fluxes, luminosities, resolved
+    return redshifts, tot_fluxes, luminosities, resolved
 
 
 def select_rlagn(wise2_mag: np.ndarray,
@@ -226,10 +227,10 @@ def select_rlagn(wise2_mag: np.ndarray,
                  wise3_magerr: np.ndarray,
                  luminosities: np.ndarray,
                  redshifts: np.ndarray,
-                 peak_flux: np.ndarray,
+                 tot_fluxes: np.ndarray,
                  cosmo: astropy.cosmology.Cosmology,
                  exclusive: bool = False,
-                 peak_flux_threshold: float = 1.1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                 tot_flux_threshold: float = 1.1e-3) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Selects RLAGN sources based on the criteria from Hardcastle et al. 2025, using WISE magnitudes, luminosities,
     and redshifts.
@@ -243,39 +244,46 @@ def select_rlagn(wise2_mag: np.ndarray,
     wise3_magerr : np.ndarray
         The errors in the WISE W3 magnitudes.
     luminosities : np.ndarray
-        The luminosities of the sources.
+        The luminosities of the sources, in W/Hz.
     redshifts : np.ndarray
         The redshifts of the sources.
-    peak_flux : np.ndarray
-        The peak fluxes of the sources.
+    tot_fluxes : np.ndarray
+        The total fluxes of the sources, in Jy.
     cosmo : astropy.cosmology.Cosmology
         The cosmology to use for calculating luminosity distances and volumes.
     exclusive : bool, optional
         Whether to keep only sources with sufficient data to classify them as SFG or RQQ (True) or to keep sources
         lacking sufficient data (False), by default False.
-    peak_flux_threshold : float, optional
-        The peak flux threshold below which sources are automatically classified as RLAGN, by default 1.1e-3 Jy.
+    tot_flux_threshold : float, optional
+        The total flux threshold below which sources are automatically classified as RLAGN, by default 1.1e-3 Jy.
 
     Returns
     -------
     rlagn_mask : np.ndarray
         A boolean mask indicating which sources are RLAGN. Sources lacking the WISE/luminosity/redshift data needed to
         classify them as SFG or RQQ are kept by default (exclusive=False) or dropped (exclusive=True), except for the
-        low peak-flux / low-redshift override, which always applies.
+        low total-flux / low-redshift override, which always applies.
     sfg_mask : np.ndarray
         A boolean mask indicating which sources are SFG.
     rqq_mask : np.ndarray
         A boolean mask indicating which sources are RQQ.
     """
     wise3_absmag = _get_wise3_absmag(wise3_mag, wise2_mag, redshifts, cosmo)
+    if isinstance(wise3_absmag, np.ndarray):
+        logger.debug("number of sources with finite wise3_absmag "
+                 f": {np.isfinite(wise3_absmag).sum()} / {wise3_absmag.shape[0]}")
 
     # Calculate the SFG exclusion mask based on Hardcastle et al. 2025
     sfg_mask = (luminosities < 10**(14 - wise3_absmag / 2.5)) \
         & (luminosities < 10**(24.8)) & ~np.isnan(wise3_magerr)
+    if isinstance(sfg_mask, np.ndarray):
+        logger.debug(f"number of sources initially classified as SFG: {sfg_mask.sum()} / {sfg_mask.shape[0]}")
 
     # Calculate the RQQ exclusion criteria based on Hardcastle et al. 2025
     rqq_mask = (luminosities < 10**(-(wise3_absmag - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)) \
         & (wise3_absmag < -27) & ~np.isnan(wise3_magerr)
+    if isinstance(rqq_mask, np.ndarray):
+        logger.debug(f"number of sources initially classified as RQQ: {rqq_mask.sum()} / {rqq_mask.shape[0]}")
 
     # Everything left is RLAGN
     rlagn_mask = ~sfg_mask & ~rqq_mask
@@ -286,11 +294,15 @@ def select_rlagn(wise2_mag: np.ndarray,
     if exclusive:
         insufficient_data = np.isnan(wise2_mag) | np.isnan(wise3_mag) | np.isnan(wise3_magerr) \
             | np.isnan(luminosities) | np.isnan(redshifts)
+        if isinstance(rlagn_mask, np.ndarray):
+            logger.debug(f"num rlagn before exclusive cut: {rlagn_mask.sum()} / {rlagn_mask.shape[0]}")
         rlagn_mask = rlagn_mask & ~insufficient_data
+        if isinstance(rlagn_mask, np.ndarray):
+            logger.debug(f"num rlagn after exclusive cut: {rlagn_mask.sum()} / {rlagn_mask.shape[0]}")
 
-    # They also cut out peak fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
+    # They also cut out total fluxes less than or equal to 1.1mjy, and also redshifts lower than or equal to 0.01,
     # regardless of exclusivity, since this cut doesn't depend on the WISE-based classification above.
-    survey_selection = (peak_flux > peak_flux_threshold) & (redshifts > 0.01)
+    survey_selection = (tot_fluxes > tot_flux_threshold) & (redshifts > 0.01)
     rlagn_mask = rlagn_mask & survey_selection
     sfg_mask = sfg_mask & survey_selection
     rqq_mask = rqq_mask & survey_selection

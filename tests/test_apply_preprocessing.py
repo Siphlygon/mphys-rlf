@@ -107,9 +107,9 @@ class _SyntheticCatalogue:
         ])
         self.cat_info = [
             {'LAS': 10.0, 'Isl_rms': 0.5, 'mag_w2': 15.0, 'mag_w3': 13.0, 'magerr_w3': 0.1,
-             'L_144': 1e26, 'z_best': 0.3},
+             'L_144': 1e26, 'z_best': 0.3, 'Total_flux': 1000.0},  # mJy
             {'LAS': 20.0, 'Isl_rms': 1.0, 'mag_w2': 14.0, 'mag_w3': 12.0, 'magerr_w3': 0.1,
-             'L_144': 1e23, 'z_best': 0.5},
+             'L_144': 1e23, 'z_best': 0.5, 'Total_flux': 2000.0},  # mJy
         ]
 
 
@@ -130,8 +130,8 @@ class TestComputeFlags:
         wise_3_magerr = np.array([r['magerr_w3'] for r in cat.cat_info])
         luminosities = np.array([r['L_144'] for r in cat.cat_info])
         redshifts = np.array([r['z_best'] for r in cat.cat_info])
-        peak_flux_mjy = np.array([cat.image_a.max(), cat.image_b.max()]) * 1000
-        return select_rlagn(wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, peak_flux_mjy,
+        total_fluxes = np.array([r['Total_flux'] / 1000 for r in cat.cat_info])  # convert from mJy to Jy
+        return select_rlagn(wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, total_fluxes,
                             cosmo=cp.cosmo, exclusive=cp.exclusive)[0]
 
     def test_vectorised_flags_match_hand_computed_values(self, cutout_preprocessor_factory):
