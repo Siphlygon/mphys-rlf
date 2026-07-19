@@ -113,8 +113,10 @@ class RLF:
         self.lum_bins_count = int(default_config['LUM_BINS'])
         # number of points to use in interpolation approximation of
         self.n_interp_pts = int(default_config['N_INTERP_PTS'])
-        # number of points to use in the monte-carlo integral for each redshift-luminosity bin
-        self.n_mc_pts = int(default_config['N_MC_PTS'])
+        # number of points to use in the monte-carlo integral for each redshift-luminosity bin (Page & Carrera 2000)
+        self.n_mc_pts_pc = int(default_config['N_MC_PTS_PC'])
+        # number of points to use in the monte-carlo integral for each source in the 1/Vmax calculation
+        self.n_mc_pts_vmax = int(default_config['N_MC_PTS_VMAX'])
         # spectral index to use for the k-correction, typically -0.7 for AGN
         self.spectral_index = float(default_config['SPECTRAL_INDEX'])
         # maximum Z (redshift) to consider in RLF calculation
@@ -299,7 +301,7 @@ class RLF:
             luminosity-volume bin area so the result is in units of / MPc^3 / log10(W/Hz)
         """
         # V_max has many more calculations so we can reduce the number of Monte Carlo points to speed up the function
-        mc_pts = self.n_mc_pts // 10 if vmax_method else self.n_mc_pts
+        mc_pts = self.n_mc_pts_vmax if vmax_method else self.n_mc_pts_pc
 
         # If lum is None, generate random luminosities within the bin(s).
         if lum is None:
