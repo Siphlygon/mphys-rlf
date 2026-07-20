@@ -21,8 +21,6 @@ from ..utils.data_utils import Source
 from ..utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
 from ..utils.logger import LoggingLevels, get_logger
 
-RQQ_XPT = -27.923076923076923  # mag
-RQQ_YPT = 25.563106796116504  # log10(lum
 WISE_3_FREQ = 3e8 / 12.1e-6
 WISE_2_FREQ = 3e8 / 4.6e-6
 logger = get_logger("RLF Catalogue Info", LoggingLevels.DEBUG.value)
@@ -130,7 +128,7 @@ def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
     plt.plot(wise3_linspace_rqq, rqq_lum_cutoff, color='m')
     plt.plot([-27, -27], [1, rqq_lum_cutoff[-1]], color='m')
     plt.xlabel('WISE-band 3 absolute magnitude')
-    plt.ylabel('$L_144$')
+    plt.ylabel('$L_{144}$')
     plt.title('H25 RLAGN Selection Plot')
     plt.yscale('log')
     plt.xlim(-18, -34)
@@ -188,6 +186,11 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                  f'min={np.min(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
                  f'count={wise2_mag.shape[0]}')
 
+    # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
+    if plot_rlagn_selection_contour:
+        _plot_rlagn_selection_contour(wise2_mag, wise3_mag, redshifts, luminosities, cosmo)
+        logger.info("saved lum_vs_w3.png")
+
     # Calculate the RLAGN, SFG, and RQQ masks using the selection criteria from Hardcastle et al. 2025
     rlagn_mask, sfg_mask, rqq_mask = select_rlagn(wise1_mag,
                                                   wise2_mag,
@@ -197,7 +200,7 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                                                   redshifts,
                                                   tot_fluxes,
                                                   cosmo=cosmo,
-                                                  exclusive=True)
+                                                  exclusive=False)
     num_rlagn = np.sum(rlagn_mask)
     num_sfg = np.sum(sfg_mask)
     num_rqq = np.sum(rqq_mask)
@@ -212,21 +215,16 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
     luminosities = luminosities[rlagn_mask]
     resolved = resolved[rlagn_mask]
 
-    # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
-    if plot_rlagn_selection_contour:
-        _plot_rlagn_selection_contour(wise2_mag, wise3_mag, redshifts, luminosities, cosmo)
-        logger.info("saved lum_vs_w3.png")
-
     return redshifts, tot_fluxes, luminosities, resolved
 
 
-def select_rlagn(wise1_mag: np.ndarray,
-                 wise2_mag: np.ndarray,
-                 wise3_mag: np.ndarray,
-                 wise3_magerr: np.ndarray,
-                 luminosities: np.ndarray,
-                 redshifts: np.ndarray,
-                 tot_fluxes: np.ndarray,
+def select_rlagn(wise1_mag: np.ndarray | float,
+                 wise2_mag: np.ndarray | float,
+                 wise3_mag: np.ndarray | float,
+                 wise3_magerr: np.ndarray | float,
+                 luminosities: np.ndarray | float,
+                 redshifts: np.ndarray | float,
+                 tot_fluxes: np.ndarray | float,
                  cosmo: astropy.cosmology.Cosmology,
                  exclusive: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -266,6 +264,15 @@ def select_rlagn(wise1_mag: np.ndarray,
     rqq_mask : np.ndarray
         A boolean mask indicating which sources are RQQ.
     """
+    # float guard
+    wise1_mag = np.atleast_1d(wise1_mag)
+    wise2_mag = np.atleast_1d(wise2_mag)
+    wise3_mag = np.atleast_1d(wise3_mag)
+    wise3_magerr = np.atleast_1d(wise3_magerr)
+    luminosities = np.atleast_1d(luminosities)
+    redshifts = np.atleast_1d(redshifts)
+    tot_fluxes = np.atleast_1d(tot_fluxes)
+
     # Perform all initial filters H25 uses before they apply the WISE-based classification i.e., obtain their sample
     sample = (tot_fluxes > 1.1e-3) & (redshifts > 0.01) & (np.isfinite(luminosities)) \
         & (np.isfinite(wise1_mag)) & (np.isfinite(wise2_mag)) & (np.isfinite(wise3_mag))
@@ -286,10 +293,9 @@ def select_rlagn(wise1_mag: np.ndarray,
 
     # Calculate the RQQ exclusion criteria based on Hardcastle et al. 2025
     rqq_mask = np.full(wise3_absmag.shape, False)
-    rqq_mask[sample] = (luminosities[sample] < 10**(-(wise3_absmag[sample] - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)) \
-        & (wise3_absmag[sample] < -27)
+    rqq_mask[sample] = (luminosities[sample] < 10**(25.3 + (-wise3_absmag[sample] - 27) * 2.0/7)) \
+        & (wise3_absmag[sample] < -27) & (luminosities[sample] >= 10**(24.8))
     logger.debug(f"number of sources initially classified as RQQ: {rqq_mask.sum()} / {rqq_mask.shape[0]}")
-
 
     # Sources with insufficient data to classify as SFG or RQQ (i.e., NaN wise3_magerr) are kept by default, but can be
     # dropped if exclusive=True. This will remove them from the SFG and RQQ masks and therefore classify them as RLAGN
