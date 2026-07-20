@@ -337,7 +337,17 @@ class Unet(configModuleBase):
                 # disentangled, independently-promptable control.
                 per_feature = self.context_emb.embed_each(context)  # (batch, context_dim, emb_dim)
                 if self.training and self.context_dropout:
+                    # Two independent dropout mechanisms, both required:
+                    #  - per-feature: each condition is dropped on its own, so the model sees every subset of conditions
+                    #    and learns each one's marginal effect (disentangled, independently-promptable control).
+                    #  - joint: all conditions dropped together, which is the fully unconditional state that
+                    #    classifier-free guidance subtracts at sampling time (diffusion.denoised_guided passes
+                    #    context=None). Per-feature dropout alone reaches that state only with probability
+                    #    context_dropout ** context_dim - 1% for two conditions at p=0.1 - leaving the guidance branch
+                    #    essentially untrained. The joint mask restores it to ~context_dropout (~10.9%).
                     keep = torch.rand(per_feature.shape[:2], device=x.device) >= self.context_dropout
+                    keep_all = torch.rand([x.shape[0], 1], device=x.device) >= self.context_dropout
+                    keep = keep & keep_all
                     per_feature = per_feature * keep.to(per_feature.dtype)[..., None]
                 context_emb = per_feature.sum(dim=1)
             else:
