@@ -413,7 +413,10 @@ class Sampler:
         if isinstance( max_vals, Path ):
             max_vals = np.load( max_vals )
 
-        pt = PowerTransformer(method="box-cox")
+        # Mirror ImagePathDataset._power_transform's method selection (Box-Cox needs strictly-positive input), so the
+        # sampled context distribution lives in the same standardised space the model was trained on.
+        method = "yeo-johnson" if bool((max_vals <= 0).any()) else "box-cox"
+        pt = PowerTransformer(method=method)
         pt.fit(max_vals.reshape(-1, 1))
         max_values_tr = pt.transform(max_vals.reshape(-1, 1)).reshape(max_vals.shape)
         hist_tr = np.histogram(max_values_tr, bins=100)
