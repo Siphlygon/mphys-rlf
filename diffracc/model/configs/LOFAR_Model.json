@@ -32,6 +32,5 @@
     "context": [
         "max_values_tr"
     ],
-    "context_dropout": 0.1,
-    "context_dim": 1
+    "context_dropout": 0.1
 }

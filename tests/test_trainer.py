@@ -8,6 +8,7 @@ bare trainer via __new__ and setting only the attributes each method reads. The 
 validation_loss, batch_loss) needs a GPU/DDP and is verified on the cluster, not here.
 """
 import types
+from pathlib import Path
 
 import pytest
 import torch
@@ -251,3 +252,59 @@ class TestLoadState:
         assert torch.allclose(fresh_model.weight, model.weight)
         assert torch.allclose(fresh_ema.weight, torch.full_like(fresh_ema.weight, 9.0))
         assert fresh_optimizer.state_dict()["state"].keys() == optimizer.state_dict()["state"].keys()
+
+    def _checkpoint_with(self, tmp_path, model, **extra) -> Path:
+        """Write a minimal pickup checkpoint, optionally carrying extra keys (e.g. a saved scaler state)."""
+        checkpoint_path = tmp_path / "parameters_mymodel.pt"
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "ema_model": model.state_dict(),
+                "optimizer": torch.optim.Adam(model.parameters()).state_dict(),
+                **extra,
+            },
+            checkpoint_path,
+        )
+        return checkpoint_path
+
+    def _trainer_for(self, checkpoint_path, scaler) -> DiffusionTrainer:
+        """Build a bare trainer wired to read the given checkpoint, using the given (stub) scaler."""
+        fresh_model = torch.nn.Linear(2, 2)
+        return _bare_trainer(
+            OM=types.SimpleNamespace(expected_parameters_file=lambda: checkpoint_path),
+            inner_model=fresh_model, ema_model=torch.nn.Linear(2, 2),
+            optimizer=torch.optim.Adam(fresh_model.parameters()), power_ema=False, scaler=scaler,
+        )
+
+    def test_restores_saved_gradscaler_state(self, tmp_path):
+        """
+        Testing load_state() feeds a checkpoint's saved scaler state back into the trainer's GradScaler, so a resumed
+        run continues at the loss scale it had already converged on instead of restarting at init_scale and skipping
+        optimizer steps while it overflows its way back down.
+
+        A stub stands in for the real GradScaler: a genuine one is a no-op with an empty state dict unless CUDA is
+        available, which would make this test silently vacuous on a CPU-only machine.
+        """
+        scaler_state = {"scale": 128.0, "growth_tracker": 3}
+        checkpoint_path = self._checkpoint_with(tmp_path, torch.nn.Linear(2, 2), scaler=scaler_state)
+
+        loaded = []
+        stub_scaler = types.SimpleNamespace(load_state_dict=loaded.append)
+
+        self._trainer_for(checkpoint_path, stub_scaler).load_state()
+
+        assert loaded == [scaler_state]
+
+    def test_legacy_checkpoint_without_scaler_leaves_scaler_untouched(self, tmp_path):
+        """
+        Testing a checkpoint written before the scaler was persisted still resumes: the missing key falls back to the
+        freshly-constructed scaler (the old behaviour) rather than raising a KeyError and failing the pickup.
+        """
+        checkpoint_path = self._checkpoint_with(tmp_path, torch.nn.Linear(2, 2))
+
+        loaded = []
+        stub_scaler = types.SimpleNamespace(load_state_dict=loaded.append)
+
+        self._trainer_for(checkpoint_path, stub_scaler).load_state()
+
+        assert loaded == []

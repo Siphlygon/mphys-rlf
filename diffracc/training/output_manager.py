@@ -106,10 +106,14 @@ class OutputManager:
         # Set up logger
         self.logger = get_logger(self.__class__.__name__)
 
+        # Must be initialised *before* _setup_files(), which sets it True on success. Assigning it afterwards
+        # unconditionally clobbered that back to False, so an OutputManager constructed with write_output=True was
+        # left permanently claiming it could not write - silently disabling everything gated on ready_to_write
+        # (the wandb run-id persistence and job metadata in DiffusionTrainer).
+        self.ready_to_write = False
+
         if self.write_output:
             self._setup_files()
-
-        self.ready_to_write = False
 
     def _setup_files(self):
         """
@@ -364,7 +368,8 @@ class OutputManager:
         optimizer: torch.optim.Optimizer,
         power_ema_models: list = [],
         gammas: list = [],
-        path: Path | None = None
+        path: Path | None = None,
+        scaler: torch.cuda.amp.GradScaler | None = None
     ):
         """
         Save the parameters of the model, ema_model, optimizer, and power_ema_models to a file.
@@ -383,6 +388,10 @@ class OutputManager:
             A list of gammas corresponding to the power ema models, by default [].
         path : Path | None, optional
             The path to save the parameters file, by default None.
+        scaler : torch.cuda.amp.GradScaler | None, optional
+            The mixed-precision loss scaler to save, by default None. Persisting it lets a resumed run continue at
+            the loss scale it had already converged on, instead of restarting at init_scale and skipping several
+            optimizer steps while it overflows its way back down.
         """
         assert self.write_output, (
             "OutputManager is not initialized for writing output. Set write_output to True to initialize output " + \
@@ -399,6 +408,7 @@ class OutputManager:
                 "model": state_dict_or_none(model),
                 "ema_model": state_dict_or_none(ema_model),
                 "optimizer": state_dict_or_none(optimizer),
+                "scaler": state_dict_or_none(scaler),
                 **{
                     f"power_ema_{gamma}": state_dict_or_none(model)
                     for model, gamma in zip(power_ema_models, gammas)
@@ -407,7 +417,12 @@ class OutputManager:
             path,
         )
 
-    def save_snapshot(self, snap_name: str, model: nn.Module, ema_model: nn.Module, optimizer: torch.optim.Optimizer):
+    def save_snapshot(self,
+                      snap_name: str,
+                      model: nn.Module,
+                      ema_model: nn.Module,
+                      optimizer: torch.optim.Optimizer,
+                      scaler: torch.cuda.amp.GradScaler | None = None):
         """
         Save a snapshot of the model, EMA model, and optimizer.
 
@@ -421,6 +436,9 @@ class OutputManager:
             The exponential moving average (EMA) model to be saved.
         optimizer : torch.optim.Optimizer
             The optimizer to be saved.
+        scaler : torch.cuda.amp.GradScaler | None, optional
+            The mixed-precision loss scaler to be saved, by default None. Included so a snapshot carries the full
+            training state, not just what is needed for inference.
         """
         assert self.write_output, (
             "OutputManager is not initialized for writing output. Set write_output to True to initialize output " + \
@@ -433,6 +451,7 @@ class OutputManager:
             ema_model,
             optimizer,
             path=snap_dir.joinpath(f"snapshot_{snap_name}.pt"),
+            scaler=scaler,
         )
 
     def save_power_ema(self, models: list, iteration: int, gammas: list):

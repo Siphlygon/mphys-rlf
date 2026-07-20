@@ -7,6 +7,7 @@
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
+#SBATCH --cpus-per-task=16
 #SBATCH --nodelist=compute-0-9
 #SBATCH --exclude=compute-0-6,compute-0-1,compute-0-14,compute-0-15,compute-0-17
 
@@ -34,12 +35,20 @@ export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
 
 # Training params
-export MODEL_PRESET="LOFAR_asinh"
+# LOFAR_asinh_nolas, not LOFAR_asinh: the preset's "context" list is what the trainer standardises and feeds to the
+# model, and LOFAR_asinh lists las_values_tr. Pairing it with USE_LAS_VALUES=FALSE means set_las_values is never
+# called and transform_las_vals asserts on startup. LOFAR_asinh_nolas is the same architecture/hyperparameters with
+# peak flux as the only condition.
+export MODEL_PRESET="LOFAR_asinh_nolas"
 export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
 export MODEL_NAME="snr15_inclusive_nolas"
 export USE_TRANSFORMS='TRUE'
 export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
 export USE_LAS_VALUES='FALSE'
+
+# Data-loading worker processes per rank. The default of 1 starves the GPU; with --cpus-per-task=16 there is ample
+# headroom for 4 per rank across the 2 ranks (plus their validation loaders).
+export DATALOADER_WORKERS=4
 
 # To resume a crashed/interrupted run instead of starting fresh, uncomment the next line. Picks up from
 # model_results/$MODEL_NAME/parameters_$MODEL_NAME.pt - if that directory was ever renamed/moved, run
