@@ -724,9 +724,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         help="Keep every source except those positively identified as an SFG or RQQ, instead of keeping only sources "
         "confirmed to be in the H25 RLAGN sample. This is in the interest of some level of quality control while "
         "including enough images to build a training dataset. If False, defaults to the H25 RLAGN sample selection "
-        "controlled by --exclusive. Default True.",
-        action='store_true',
-        default=True
+        "controlled by --exclusive. Default False.",
+        action='store_true'
     )
     return parser
 
