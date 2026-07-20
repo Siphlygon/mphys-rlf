@@ -22,6 +22,10 @@ from ..utils.paths import MODEL_PARENT
 from .output_manager import OutputManager
 from .train_utils import UseEMA, edm_loss, get_power_ema_avg_fn, load_data
 
+# Module-level logger, for the code paths that must not depend on instance state (self.logger is only bound once
+# __init__ has run, and load_state is reachable on partially-constructed trainers).
+logger = logging.getLogger(__name__)
+
 
 class DiffusionTrainer:
     """
@@ -273,6 +277,20 @@ class DiffusionTrainer:
         self.optimizer: torch.optim.Optimizer
         self.init_optimizer()
 
+        # Mixed-precision loss scaler. Created here rather than in training_loop() so its state can be restored by
+        # load_state() on pickup: a fresh GradScaler restarts at init_scale=65536 and has to re-discover the working
+        # scale by overflowing (and therefore skipping) several optimizer steps at every resume.
+        self.scaler = GradScaler()
+
+        # Optional gradient-norm clipping (None = off, preserving the original behaviour for presets that don't set
+        # it). Applied after scaler.unscale_, so the clip threshold is in true un-scaled gradient units. Cheap
+        # insurance that a single loss spike can't wreck a multi-day unattended run.
+        self.grad_clip_norm = getattr(self.config, "grad_clip_norm", None)
+        # Pre-clip gradient norm of the most recent optimizer step, recorded by training_step and logged to wandb.
+        self.last_grad_norm = float("nan")
+        if self.grad_clip_norm:
+            self.logger.info(f"Gradient clipping enabled at max_norm={self.grad_clip_norm}.")
+
         if pickup:
             self.logger.info(f"Picking up model, EMA, optimizer and PowerEMA from {self.OM.model_name}.")
             self.load_state()
@@ -475,6 +493,16 @@ class DiffusionTrainer:
         self.ema_model.load_state_dict(checkpoint["ema_model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
 
+        # .get(): checkpoints written before the scaler was persisted have no "scaler" key. Falling back to the
+        # freshly-constructed scaler reproduces the old resume behaviour rather than failing the pickup.
+        if (scaler_state := checkpoint.get("scaler")) is not None:
+            self.scaler.load_state_dict(scaler_state)
+        else:
+            logger.warning(
+                "Checkpoint has no saved GradScaler state; resuming with a fresh scaler. Expect a few skipped "
+                "optimizer steps while it re-discovers the working loss scale."
+            )
+
         if self.power_ema:
             for gamma, model in zip(self.power_ema_gammas, self.power_ema_models):
                 model.load_state_dict(checkpoint[f"power_ema_{gamma}"])
@@ -588,7 +616,7 @@ class DiffusionTrainer:
 
         # Prepare training
         iterations = iterations or self.config.iterations
-        scaler = GradScaler()
+        scaler = self.scaler
         loss_buffer = []
         t0 = datetime.now()
         dt = lambda: datetime.now() - t0
@@ -642,9 +670,11 @@ class DiffusionTrainer:
             loss = self.training_step(scaler, i)
             loss_buffer.append([i+1, loss.item()])
 
-            # Log to wandb if primary process
+            # Log to wandb if primary process. grad_norm is the pre-clip gradient norm: watch its distribution to
+            # decide whether config.grad_clip_norm is set sensibly (it should sit well above the typical norm, so
+            # clipping catches outliers instead of throttling every step).
             if self.is_primary():
-                wandb.log({"train_loss": loss}, step=i+1,)
+                wandb.log({"train_loss": loss, "grad_norm": self.last_grad_norm}, step=i+1,)
 
             # Log & write output at log interval
             if (i + 1) % self.config.log_interval == 0:
@@ -678,7 +708,9 @@ class DiffusionTrainer:
                 and save_model
             ):
                 self.logger.info(f"Saving snapshot at iteration {i+1}...")
-                OM.save_snapshot(f"iter_{i+1:08d}", self.inner_model, self.ema_model, self.optimizer)
+                OM.save_snapshot(
+                    f"iter_{i+1:08d}", self.inner_model, self.ema_model, self.optimizer, scaler=self.scaler
+                )
 
             # Save power ema models at power ema interval if desired
             if self.power_ema and (i + 1) % power_ema_interval == 0:
@@ -781,6 +813,19 @@ class DiffusionTrainer:
 
         # Backward pass & optimizer step (a single step per accumulated batch).
         scaler.unscale_(self.optimizer)
+        # Clip on the un-scaled gradients, so max_norm is a threshold on the true gradient norm rather than on one
+        # multiplied by the (dynamically varying) loss scale. Under DDP the final micro-batch's backward has already
+        # all-reduced the gradients, so every rank clips an identical gradient and the ranks stay in lockstep.
+        #
+        # clip_grad_norm_ is called unconditionally, with an infinite threshold when clipping is disabled: it returns
+        # the PRE-clip total norm either way, so the norm is measurable whether or not clipping is active. Without
+        # that number there is no way to tell whether a given max_norm is harmless insurance (fires ~never) or a
+        # silent learning-rate reduction (fires every step) - see self.grad_clip_norm in __init__.
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(), self.grad_clip_norm if self.grad_clip_norm else float("inf")
+        )
+        # Stashed rather than returned, to keep training_step's single-value contract; training_loop logs it.
+        self.last_grad_norm = float(grad_norm)
         scaler.step(self.optimizer)
         scaler.update()
 
@@ -937,6 +982,7 @@ class DiffusionTrainer:
                 self.optimizer,
                 self.power_ema_models if self.power_ema else [],
                 self.power_ema_gammas if self.power_ema else [],
+                scaler=self.scaler,
             )
         OM.save_config(self.config.param_dict, iterations=i+1)
         loss_buffer.clear()
