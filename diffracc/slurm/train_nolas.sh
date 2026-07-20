@@ -2,13 +2,12 @@
 
 #SBATCH --job-name=difftrain
 #SBATCH --constraint=A100
-#SBATCH --time=1-23
+#SBATCH --time=7-23
 #SBATCH --output=/share/nas2_3/lgreen/logs/out-slurm_%j.out
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
-#SBATCH --nodelist=compute-0-9
 #SBATCH --exclude=compute-0-6,compute-0-1,compute-0-14,compute-0-15,compute-0-17
 
 set -e
