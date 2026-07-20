@@ -17,8 +17,12 @@ import numpy as np
 import pytest
 
 from diffracc.rlf import agn_selection
-from diffracc.rlf.agn_selection import RQQ_XPT, RQQ_YPT, _get_wise3_absmag, select_rlagn
+from diffracc.rlf.agn_selection import WISE_2_FREQ, WISE_3_FREQ, _get_wise3_absmag, select_rlagn
 from diffracc.utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
+
+
+# The luminosity below which a source is never classified RQQ - Hardcastle's rqq &= logl>=24.8 lower bound.
+RQQ_LOWER_LUM = 10 ** 24.8
 
 
 def _sfg_cutoff_lum(absmag: float) -> float:
@@ -26,7 +30,7 @@ def _sfg_cutoff_lum(absmag: float) -> float:
 
 
 def _rqq_cutoff_lum(absmag: float) -> float:
-    return 10 ** (-(absmag - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)
+    return 10 ** (25.3 + (-absmag - 27) * 2.0/7)
 
 
 @pytest.fixture
@@ -35,6 +39,22 @@ def patch_wise3_absmag(monkeypatch):
     def _patch(absmag: np.ndarray):
         monkeypatch.setattr(agn_selection, "_get_wise3_absmag", lambda *args, **kwargs: absmag)
     return _patch
+
+
+def _default_rlagn_selection(flat_lcdm_cosmo,
+                             wise1_mag=np.array([17.0]),
+                             wise2_mag=np.array([15.0]),
+                             wise3_mag=np.array([13.0]),
+                             wise3_magerr=np.array([0.1]),
+                             luminosities=np.array([1.0]),
+                             redshifts=np.array([0.5]),
+                             tot_fluxes=np.array([1.0]),
+                             exclusive=False,
+                             ):
+    return select_rlagn(
+        wise1_mag=wise1_mag, wise2_mag=wise2_mag, wise3_mag=wise3_mag,
+        wise3_magerr=wise3_magerr, luminosities=luminosities, redshifts=redshifts,
+        tot_fluxes=tot_fluxes, cosmo=flat_lcdm_cosmo, exclusive=exclusive)
 
 
 class TestSelectRlagnMaskLogic:
@@ -50,11 +70,7 @@ class TestSelectRlagnMaskLogic:
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo,
-        )
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo, luminosities=np.array([cutoff * 1e-3]))
         assert sfg == [True]
         assert rqq == [False]
         assert rlagn == [False]
@@ -70,11 +86,7 @@ class TestSelectRlagnMaskLogic:
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo,
-        )
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo, luminosities=np.array([cutoff * 1e3]))
         assert sfg == [False]
         assert rqq == [False]
         assert rlagn == [True]
@@ -88,41 +100,71 @@ class TestSelectRlagnMaskLogic:
         """
         absmag = np.array([-30.0])
         rqq_cutoff = _rqq_cutoff_lum(absmag[0])
-        # Keep well above 10**24.8 so the SFG mask's second AND-condition is unambiguously False, isolating RQQ.
-        luminosity = max(rqq_cutoff * 1e-3, 10**25)
-        assert luminosity < rqq_cutoff, "test luminosity must stay below the RQQ cutoff for this scenario to hold"
+        # Keep well above 10**24.8 so both the SFG mask's second AND-condition and the RQQ mask's lower bound are
+        # unambiguous, isolating RQQ. (1e25, not 10**25: the latter is a Python int too large for int64, which numpy
+        # would make an object array that np.isfinite in the sample mask rejects.)
+        luminosity = max(rqq_cutoff * 1e-3, 1e25)
+        assert RQQ_LOWER_LUM < luminosity < rqq_cutoff, "test luminosity must sit in the RQQ band for this scenario"
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([luminosity]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo,
-        )
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo, luminosities=np.array([luminosity]))
         assert rqq == [True]
         assert sfg == [False]
         assert rlagn == [False]
 
-    def test_nan_wise3_magerr_forces_sfg_and_rqq_false_regardless_of_luminosity(self,
-                                                                                patch_wise3_absmag,
-                                                                                flat_lcdm_cosmo):
+    def test_source_below_rqq_lower_luminosity_bound_is_not_rqq(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
-        Test that a source with np.nan wise3_magerr is never classified as SFG or RQQ, even if its luminosity is below
-        the SFG/RQQ cutoffs. This ensures the np.isnan(wise3_magerr) condition is applied correctly, and that the
-        exclusive-mode data-sufficiency cut is applied regardless of the `exclusive` argument.
+        Test the RQQ mask's lower luminosity bound (Hardcastle's rqq &= logl>=24.8): a source with abs_w3 < -27 and a
+        luminosity below the RQQ cutoff line, but *below* 10**24.8, must NOT be classified RQQ. With abs_w3 = -30 such
+        a source falls below the SFG divide line too, so it is classified SFG instead - which is exactly why the lower
+        bound matters (without it, the same source is double-counted into RQQ, inflating the RQQ total).
         """
-        # Both the SFG and RQQ masks require ~np.isnan(wise3_magerr), independent of `exclusive` - a source with
-        # no magerr measurement can never be positively classified as SFG/RQQ, only fall through to RLAGN.
-        absmag = np.array([-30.0])  # would otherwise clearly qualify as RQQ
+        absmag = np.array([-30.0])
+        luminosity = 10**24.0  # below 10**24.8, and below both the SFG divide and the RQQ cutoff for absmag=-30
+        assert luminosity < RQQ_LOWER_LUM and luminosity < _rqq_cutoff_lum(absmag[0])
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([np.nan]),
-            luminosities=np.array([1.0]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo, exclusive=False,
-        )
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo, luminosities=np.array([luminosity]))
+        assert rqq == [False]  # excluded by the lower bound despite being below the RQQ cutoff line
+        assert sfg == [True]
+        assert rlagn == [False]
+
+    def test_nan_wise3_magerr_forces_sfg_and_rqq_false_in_inclusive_mode(self,
+                                                                         patch_wise3_absmag,
+                                                                         flat_lcdm_cosmo):
+        """
+        Test that in the default (inclusive, exclusive=False) mode a source with np.nan wise3_magerr is never
+        classified as SFG or RQQ, even if its luminosity is below the SFG/RQQ cutoffs - it falls through to RLAGN. In
+        inclusive mode the magerr-sufficiency cut is applied to the SFG/RQQ masks, so a source with no trustworthy W3
+        measurement cannot be positively excluded. (The exclusive/narrow mode instead classifies such an in-zone
+        source - see TestExclusiveMode.)
+        """
+        absmag = np.array([-30.0])  # in the RQQ zone by position, but has no W3 detection to confirm it
+        patch_wise3_absmag(absmag)
+
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo,
+                                                   luminosities=np.array([1.0]), wise3_magerr=np.array([np.nan]))
         assert sfg == [False]
         assert rqq == [False]
         assert rlagn == [True]
+
+    @pytest.mark.parametrize("bad", [np.nan, np.inf])
+    @pytest.mark.parametrize("band", ["wise1_mag", "wise2_mag", "wise3_mag"])
+    def test_non_finite_wise_magnitude_excludes_source_from_all_masks(self, patch_wise3_absmag, flat_lcdm_cosmo,
+                                                                      band, bad):
+        """
+        Test the sample-completeness cut (Hardcastle's selection.py requires mag_w1/w2/w3 all present): a source with a
+        non-finite magnitude in any of the three WISE bands is dropped from all three class masks. np.isfinite (not
+        np.isnan) is used deliberately so an inf sentinel is caught as well as a NaN.
+        """
+        absmag = np.array([-20.0])  # would otherwise classify as RLAGN
+        patch_wise3_absmag(absmag)
+
+        rlagn, sfg, rqq = _default_rlagn_selection(
+            flat_lcdm_cosmo, luminosities=np.array([_sfg_cutoff_lum(-20.0) * 1e3]), **{band: np.array([bad])})
+        assert rlagn == [False]
+        assert sfg == [False]
+        assert rqq == [False]
 
 
 class TestExclusiveMode:
@@ -138,11 +180,9 @@ class TestExclusiveMode:
         """
         absmag = np.array([-30.0])
         patch_wise3_absmag(absmag)
-        return select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([np.nan]),
-            luminosities=np.array([1.0]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo, exclusive=exclusive,
-        )
+        return _default_rlagn_selection(flat_lcdm_cosmo,
+                                        luminosities=np.array([1.0]), wise3_magerr=np.array([np.nan]),
+                                        exclusive=exclusive)
 
     def test_non_exclusive_keeps_sources_with_insufficient_data_as_rlagn(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
@@ -152,14 +192,34 @@ class TestExclusiveMode:
         rlagn, sfg, rqq = self._insufficient_data_source(flat_lcdm_cosmo, patch_wise3_absmag, exclusive=False)
         assert rlagn == [True]
 
-    def test_exclusive_drops_sources_with_insufficient_data_from_rlagn(self, patch_wise3_absmag, flat_lcdm_cosmo):
+    def test_exclusive_drops_in_zone_source_with_insufficient_data_from_rlagn(self, patch_wise3_absmag,
+                                                                              flat_lcdm_cosmo):
         """
-        Test that a source with insufficient data to classify as SFG/RQQ is dropped from RLAGN when
-        exclusive=True.
+        Test that in exclusive (narrow) mode an in-zone source with insufficient data (NaN wise3_magerr) is dropped
+        from RLAGN. Unlike inclusive mode, exclusive mode does NOT require a W3 detection to classify: the source is
+        positively classified SFG on the strength of its (upper-limit) position, which is what removes it from RLAGN.
         """
         rlagn, sfg, rqq = self._insufficient_data_source(flat_lcdm_cosmo, patch_wise3_absmag, exclusive=True)
         assert rlagn == [False]
-        # exclusive only ever restricts rlagn_mask - sfg/rqq are unaffected either way.
+        # In narrow mode the source is classified by position despite the missing magerr - here as SFG (absmag=-30,
+        # luminosity=1.0 sits in the SFG zone), which is precisely the mechanism that excludes it from RLAGN.
+        assert sfg == [True]
+        assert rqq == [False]
+
+    def test_exclusive_keeps_out_of_zone_source_with_insufficient_data_as_rlagn(self, patch_wise3_absmag,
+                                                                                flat_lcdm_cosmo):
+        """
+        Test that even in exclusive (narrow) mode an insufficient-data (NaN wise3_magerr) source lying OUTSIDE the
+        SFG/RQQ zones is kept as RLAGN. Exclusive mode does not wholesale-drop magerr-less sources; it only excludes
+        the ones that positively classify as SFG/RQQ by position, so a source confidently RLAGN by position survives.
+        """
+        absmag = np.array([-20.0])  # too faint in W3 for RQQ, paired with a high luminosity so it is not SFG either
+        patch_wise3_absmag(absmag)
+
+        rlagn, sfg, rqq = _default_rlagn_selection(
+            flat_lcdm_cosmo, luminosities=np.array([_sfg_cutoff_lum(-20.0) * 1e3]),
+            wise3_magerr=np.array([np.nan]), exclusive=True)
+        assert rlagn == [True]
         assert sfg == [False]
         assert rqq == [False]
 
@@ -172,11 +232,9 @@ class TestExclusiveMode:
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e3]), redshifts=np.array([0.5]), tot_fluxes=np.array([1.0]),
-            cosmo=flat_lcdm_cosmo, exclusive=True,
-        )
+        rlagn, sfg, rqq = _default_rlagn_selection(flat_lcdm_cosmo,
+                                                    luminosities=np.array([cutoff * 1e3]),
+                                                    exclusive=True)
         assert rlagn == [True]
 
 
@@ -188,18 +246,17 @@ class TestLowFluxAndRedshiftOverride:
 
     def test_low_tot_fluxes_excludes_source_even_when_it_would_classify(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
-        Test a source with a peak flux at or below the threshold is dropped from all three masks, even though its
+        Test a source with a total flux at or below the threshold is dropped from all three masks, even though its
         luminosity/magnitude would otherwise place it in one of the classes.
         """
         absmag = np.array([-25.0])
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]),
-            tot_fluxes=np.array([1.1e-3]),  # exactly at the threshold -> below "tot_fluxes > threshold", so excluded
-            cosmo=flat_lcdm_cosmo, tot_flux_threshold=1.1e-3,
+        rlagn, sfg, rqq = _default_rlagn_selection(
+            flat_lcdm_cosmo,
+            luminosities=np.array([cutoff * 1e-3]),
+            tot_fluxes=np.array([1.1e-3]),  # exactly at the flux threshold
         )
         assert rlagn == [False]
         assert sfg == [False]
@@ -212,13 +269,13 @@ class TestLowFluxAndRedshiftOverride:
         """
         absmag = np.array([-30.0])
         rqq_cutoff = _rqq_cutoff_lum(absmag[0])
-        luminosity = max(rqq_cutoff * 1e-3, 10**25)
+        luminosity = max(rqq_cutoff * 1e-3, 1e25)  # 1e25 float, not 10**25 int (would become an object array)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([luminosity]), redshifts=np.array([0.01]),  # exactly at the z=0.01 survey floor
-            tot_fluxes=np.array([1.0]), cosmo=flat_lcdm_cosmo,
+        rlagn, sfg, rqq = _default_rlagn_selection(
+            flat_lcdm_cosmo,
+            luminosities=np.array([luminosity]),
+            redshifts=np.array([0.01]),  # exactly at the redshift threshold
         )
         assert rlagn == [False]
         assert sfg == [False]
@@ -226,17 +283,18 @@ class TestLowFluxAndRedshiftOverride:
 
     def test_override_does_not_affect_sources_above_both_thresholds(self, patch_wise3_absmag, flat_lcdm_cosmo):
         """
-        Test a source with a peak flux and redshift above the default thresholds is classified according to the SFG/RQQ
+        Test a source with a total flux and redshift above the default thresholds is classified according to the SFG/RQQ
         mask logic, even if its luminosity is below the SFG/RQQ cutoffs.
         """
         absmag = np.array([-25.0])
         cutoff = min(_sfg_cutoff_lum(absmag[0]), 10**24.8)
         patch_wise3_absmag(absmag)
 
-        rlagn, sfg, rqq = select_rlagn(
-            wise2_mag=np.array([15.0]), wise3_mag=np.array([13.0]), wise3_magerr=np.array([0.1]),
-            luminosities=np.array([cutoff * 1e-3]), redshifts=np.array([0.5]),
-            tot_fluxes=np.array([1.0]), cosmo=flat_lcdm_cosmo, tot_flux_threshold=1.1e-3,
+        rlagn, sfg, rqq = _default_rlagn_selection(
+            flat_lcdm_cosmo,
+            luminosities=np.array([cutoff * 1e-3]),
+            redshifts=np.array([0.5]),
+            tot_fluxes=np.array([1.0]),
         )
         assert sfg == [True]
         assert rqq == [False]
@@ -286,14 +344,14 @@ class TestGetCatalogueInfo:
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),  # mJy, as stored in the real catalogue
             "L_144": np.array([1e26]),
+            "mag_w1": np.array([17.0]),
+            "mag_w2": np.array([15.0]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
-            "mag_w2": np.array([15.0]),
             "Resolved": np.array([True]),
         })
 
-        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(
-            cosmo=flat_lcdm_cosmo, flux_cut_jy=1.1e-3)
+        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo)
 
         np.testing.assert_allclose(fluxes, [0.05])  # 50 mJy -> 0.05 Jy
 
@@ -316,48 +374,49 @@ class TestGetCatalogueInfo:
             "z_best": np.array([0.3, 0.4]),
             "Total_flux": np.array([50.0, 60.0]),  # mJy
             "L_144": np.array([rlagn_luminosity, sfg_luminosity]),
+            "mag_w1": np.array([17.0, 17.0]),
+            "mag_w2": np.array([15.0, 15.0]),
             "mag_w3": np.array([13.0, 13.0]),
             "magerr_w3": np.array([0.1, 0.1]),
-            "mag_w2": np.array([15.0, 15.0]),
             "Resolved": np.array([True, False]),
         })
 
-        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(
-            cosmo=flat_lcdm_cosmo, flux_cut_jy=1.1e-3)
+        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo)
 
         np.testing.assert_allclose(redshifts, [0.3])
         np.testing.assert_allclose(fluxes, [0.05])
         np.testing.assert_allclose(luminosities, [rlagn_luminosity])
         np.testing.assert_array_equal(resolved, [True])
 
-    def test_exclusive_mode_drops_sources_with_insufficient_data(self,
-                                                                 fake_catalogue,
-                                                                 patch_wise3_absmag,
-                                                                 flat_lcdm_cosmo):
+    def test_keeps_nan_magerr_source_as_rlagn_in_inclusive_mode(self,
+                                                                fake_catalogue,
+                                                                patch_wise3_absmag,
+                                                                flat_lcdm_cosmo):
         """
-        Test that get_catalogue_info drops sources with insufficient data to classify as SFG/RQQ when exclusive=True.
+        get_catalogue_info runs select_rlagn in inclusive (exclusive=False) mode, so a source with a NaN wise3_magerr
+        that is not otherwise SFG/RQQ is kept as RLAGN rather than dropped. Source 0 (NaN magerr, but RLAGN by
+        position) survives; source 1 (a detected SFG) does not.
         """
-        # get_catalogue_info always calls select_rlagn with exclusive=True, so a source with a NaN wise3_magerr
-        # (and nothing else rescuing it via the override) should be dropped entirely, not just have its SFG/RQQ
-        # classification blanked.
-        patch_wise3_absmag(np.array([-20.0, -25.0]))
+        rlagn_absmag, sfg_absmag = -20.0, -25.0
+        rlagn_luminosity = _sfg_cutoff_lum(rlagn_absmag) * 1e3  # high -> not SFG; absmag -20 -> not RQQ
+        sfg_luminosity = _sfg_cutoff_lum(sfg_absmag) * 1e-3     # low -> SFG
+        patch_wise3_absmag(np.array([rlagn_absmag, sfg_absmag]))
         fake_catalogue({
             "z_best": np.array([0.3, 0.4]),
             "Total_flux": np.array([50.0, 60.0]),  # mJy
-            "L_144": np.array([1e26, 1e26]),
-            "mag_w3": np.array([13.0, 13.0]),
-            "magerr_w3": np.array([np.nan, 1.0]),
+            "L_144": np.array([rlagn_luminosity, sfg_luminosity]),
+            "mag_w1": np.array([17.0, 17.0]),
             "mag_w2": np.array([15.0, 15.0]),
+            "mag_w3": np.array([13.0, 13.0]),
+            "magerr_w3": np.array([np.nan, 1.0]),  # source 0 has no W3 detection, but is RLAGN by position
             "Resolved": np.array([True, False]),
         })
 
-        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(
-            cosmo=flat_lcdm_cosmo, flux_cut_jy=1.1e-3)
+        redshifts, fluxes, luminosities, resolved = agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo)
 
-        assert redshifts.shape == (0,)
-        assert fluxes.shape == (0,)
-        assert luminosities.shape == (0,)
-        assert resolved.shape == (0,)
+        np.testing.assert_allclose(redshifts, [0.3])  # only the RLAGN source (index 0) is returned
+        np.testing.assert_allclose(luminosities, [rlagn_luminosity])
+        np.testing.assert_array_equal(resolved, [True])
 
     def test_plot_rlagn_selection_contour_false_does_not_call_plotting(self,
                                                                        fake_catalogue,
@@ -375,13 +434,14 @@ class TestGetCatalogueInfo:
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
             "L_144": np.array([1e26]),
+            "mag_w1": np.array([17.0]),
+            "mag_w2": np.array([15.0]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
-            "mag_w2": np.array([15.0]),
             "Resolved": np.array([True]),
         })
 
-        agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo, flux_cut_jy=1.1e-3, plot_rlagn_selection_contour=False)
+        agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo, plot_rlagn_selection_contour=False)
 
         assert called == []
 
@@ -398,13 +458,14 @@ class TestGetCatalogueInfo:
             "z_best": np.array([0.3]),
             "Total_flux": np.array([50.0]),
             "L_144": np.array([1e26]),
+            "mag_w1": np.array([17.0]),
+            "mag_w2": np.array([15.0]),
             "mag_w3": np.array([13.0]),
             "magerr_w3": np.array([0.1]),
-            "mag_w2": np.array([15.0]),
             "Resolved": np.array([True]),
         })
 
-        agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo, flux_cut_jy=1.1e-3, plot_rlagn_selection_contour=True)
+        agn_selection.get_catalogue_info(cosmo=flat_lcdm_cosmo, plot_rlagn_selection_contour=True)
 
         assert called == [True]
 
@@ -427,11 +488,12 @@ class TestGetWise3Absmag:
 
         wise3_flux = mag_to_flux_w3(wise3_mag)
         wise2_flux = mag_to_flux_w2(wise2_mag)
-        wise3_freq, wise2_freq = 3e8 / 12e-6, 3e8 / 4.6e-6
-        spectral_inds = -np.log(wise3_flux / wise2_flux) / np.log(wise3_freq / wise2_freq)
+        # Use the module's own band frequencies so this expected value can't drift from the implementation (the code
+        # uses 12.1um for W3, not 12um).
+        spectral_inds = -np.log(wise3_flux / wise2_flux) / np.log(WISE_3_FREQ / WISE_2_FREQ)
         d_pc = flat_lcdm_cosmo.luminosity_distance(redshifts).to(u.parsec).value
         expected = wise3_mag - 5 * (np.log10(d_pc) - 1) \
-            + k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
+            - k_corr_factor(redshifts, mag_space=True, spectral_index=spectral_inds)
 
         np.testing.assert_allclose(actual, expected)
 
