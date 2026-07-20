@@ -83,6 +83,28 @@ class TestWiseFluxConversion:
         fluxes = flux_fn(mags)
         assert np.all(np.diff(fluxes) < 0)
 
+    @pytest.mark.parametrize("flux_fn, offset, f_v0", [
+        (func.mag_to_flux_w2, 3.339, 171.787),
+        (func.mag_to_flux_w3, 5.174, 31.674),
+    ])
+    def test_vega_zero_point_offset_recovers_f_v0_at_offset_magnitude(self, flux_fn, offset, f_v0):
+        """
+        Test the Vega zero-point offset (AB->Vega correction from the IRSA WISE calibration, applied as
+        F_v0 * 10**(-(mag - offset)/2.5)). At mag == offset the exponent is 0, so the flux must equal the band's
+        zero-magnitude flux density F_v0. This pins the offset that the spectral index and W3 absolute magnitude - and
+        therefore the whole RLAGN/SFG/RQQ selection - depend on; omitting it shifts the spectral index by ~1.75.
+        """
+        assert flux_fn(np.array([offset]))[0] == pytest.approx(f_v0)
+
+    @pytest.mark.parametrize("flux_fn, offset, f_v0", [
+        (func.mag_to_flux_w2, 3.339, 171.787),
+        (func.mag_to_flux_w3, 5.174, 31.674),
+    ])
+    def test_matches_explicit_formula(self, flux_fn, offset, f_v0):
+        """Test mag_to_flux matches F_v0 * 10**(-(mag - offset)/2.5) across a range of magnitudes."""
+        mags = np.array([8.0, 12.0, 16.0])
+        np.testing.assert_allclose(flux_fn(mags), f_v0 * 10 ** (-(mags - offset) / 2.5))
+
 
 class TestKCorrFactor:
     """
