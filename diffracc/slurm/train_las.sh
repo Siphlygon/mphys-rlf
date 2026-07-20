@@ -7,6 +7,8 @@
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
+#SBATCH --exclusive
+#SBATCH --mem=0
 #SBATCH --cpus-per-task=16
 #SBATCH --exclude=compute-0-6,compute-0-1,compute-0-14,compute-0-15,compute-0-17
 

@@ -43,8 +43,8 @@ export GLOO_SOCKET_IFNAME=em1
 export MODEL_PRESET="LOFAR_asinh_nolas"
 export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
 export MODEL_NAME="snr15_inclusive_nolas"
-export USE_TRANSFORMS='TRUE'
-export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
+export USE_TRANSFORMS='FALSE'
+#export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
 export USE_LAS_VALUES='FALSE'
 
 # Data-loading worker processes per rank. The default of 1 starves the GPU; with --cpus-per-task=16 there is ample

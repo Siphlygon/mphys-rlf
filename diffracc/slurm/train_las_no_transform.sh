@@ -25,7 +25,7 @@ export HDF5_USE_FILE_LOCKING='FALSE'
 export WANDB_API_PATH="/share/nas2_3/lgreen/mphys-rlf/.wandb_api_key"
 
 ## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
-nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
+nodes=($(scontrol show hostnames $SLURM_JOB_NODELIST))
 nodes_array=($nodes)
 head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
@@ -36,16 +36,12 @@ export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
 
 # Training params
-# LOFAR_asinh_nolas, not LOFAR_asinh: the preset's "context" list is what the trainer standardises and feeds to the
-# model, and LOFAR_asinh lists las_values_tr. Pairing it with USE_LAS_VALUES=FALSE means set_las_values is never
-# called and transform_las_vals asserts on startup. LOFAR_asinh_nolas is the same architecture/hyperparameters with
-# peak flux as the only condition.
-export MODEL_PRESET="LOFAR_asinh_nolas"
+export MODEL_PRESET="LOFAR_asinh"
 export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
-export MODEL_NAME="snr15_inclusive_nolas"
-export USE_TRANSFORMS='TRUE'
-export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
-export USE_LAS_VALUES='FALSE'
+export MODEL_NAME="snr15_inclusive_las"
+export USE_TRANSFORMS='FALSE'
+#export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
+export USE_LAS_VALUES='TRUE'
 
 # Data-loading worker processes per rank. The default of 1 starves the GPU; with --cpus-per-task=16 there is ample
 # headroom for 4 per rank across the 2 ranks (plus their validation loaders).
