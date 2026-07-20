@@ -191,8 +191,10 @@ def main():
     rank, local_rank, is_ddp = setup_ddp()
     primary = (rank == 0)
 
-    # Load config & dataset
-    config = ModelConfig.from_preset("LOFAR_retrained")
+    # Load config & dataset. The base preset is overridable so a sweep can be run against whichever architecture is
+    # current; LOFAR_asinh is the default (the removed LOFAR_retrained preset conditioned on *unstandardised* LAS,
+    # which lets LAS dominate the shared context embedding - see TrainDatasetNoScale.transform_las_vals).
+    config = ModelConfig.from_preset(os.environ.get("MODEL_PRESET", "LOFAR_asinh"))
     config.__setattr__("model_name", os.environ.get("MODEL_NAME", "sweep_model"))
     
     # Load dataset:
