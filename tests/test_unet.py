@@ -257,6 +257,39 @@ class TestUnetDropoutGating:
             without_context_train = model(x, time, context=None)
         torch.testing.assert_close(with_context_train, without_context_train)
 
+    def test_multi_condition_drops_all_features_jointly_at_the_nominal_rate(self, monkeypatch):
+        """
+        Test that with multiple conditions the *fully unconditional* state - the one classifier-free guidance
+        subtracts, via context=None in diffusion.denoised_guided - is reached at roughly context_dropout, not at
+        context_dropout ** context_dim.
+
+        Per-feature dropout alone would reach it only 1% of the time for two conditions at p=0.1, leaving the
+        guidance branch essentially untrained; the joint mask restores it to ~10%.
+        """
+        torch.manual_seed(0)
+        model = _tiny_unet_no_zero_init(monkeypatch, context_dim=2, context_dropout=0.1)
+        n = 2000
+        x = torch.randn(n, 1, 8, 8)
+        time = torch.rand(n)
+        context = torch.randn(n, 2)
+
+        # Residual dropout defaults to 0, and no labels are used, so with context=None the forward pass draws no
+        # random numbers at all - making this a deterministic per-row reference for "all conditions dropped".
+        model.train()
+        with torch.no_grad():
+            unconditional = model(x, time, context=None)
+            conditional = model(x, time, context=context)
+            fully_kept = model.eval()(x, time, context=context)
+
+        per_row = lambda a, b: torch.isclose(a, b, atol=1e-6).flatten(1).all(dim=1)
+        dropped_all = per_row(conditional, unconditional)
+        kept_all = per_row(conditional, fully_kept)
+
+        # ~0.1 + 0.9*0.01 = 0.109 expected; the pre-fix per-feature-only behaviour would sit at ~0.01.
+        assert 0.05 < dropped_all.float().mean().item() < 0.20
+        # Per-feature dropout must survive: some rows keep exactly one of the two conditions.
+        assert (~dropped_all & ~kept_all).any()
+
 
 class TestUnetGradientFlow:
     """Unit tests to ensure that gradients flow through the Unet's parameters during backpropagation."""
