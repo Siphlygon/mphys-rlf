@@ -20,10 +20,11 @@ from ..data.hardcastle_catalogue import HardcastleCatalogue
 from ..utils.data_utils import Source
 from ..utils.functions import k_corr_factor, mag_to_flux_w2, mag_to_flux_w3
 from ..utils.logger import LoggingLevels, get_logger
+from ..utils.plotting import Boundary, Population, density_scatter, paper_style
 
 WISE_3_FREQ = 3e8 / 12.1e-6
 WISE_2_FREQ = 3e8 / 4.6e-6
-logger = get_logger("RLF Catalogue Info", LoggingLevels.DEBUG.value)
+logger = get_logger("RLF Catalogue Info", LoggingLevels.INFO.value)
 
 
 def _get_wise3_absmag(wise3_mag: np.ndarray | float,
@@ -69,6 +70,17 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
             & np.isfinite(wise3_mag) & (wise3_mag > 0) \
             & np.isfinite(wise2_mag) & (wise2_mag > 0)
 
+    wise3_absmag = np.full(wise3_mag.shape, np.nan)
+
+    # astropy's cosmology methods fall back to a np.vectorize-wrapped path whenever there's no closed-form comoving
+    # distance (e.g. Tcmb0 != 0 adds a radiation term) - and np.vectorize explicitly refuses a zero-length input rather
+    # than just returning an empty array. `valid` is all-False on every call whose single/every source fails the
+    # redshift/magnitude checks above - guaranteed to happen from apply_preprocessing's per-source iterative flag path,
+    # where each call passes exactly one source
+    if not np.any(valid):
+        # Can exit here as the next calculations would just return NaN anyway
+        return wise3_absmag[0] if scalar_input else wise3_absmag
+
     # Extract the WISE frequencies
     wise3_flux = np.full(wise3_mag.shape, np.nan)
     wise2_flux = np.full(wise2_mag.shape, np.nan)
@@ -80,7 +92,6 @@ def _get_wise3_absmag(wise3_mag: np.ndarray | float,
     spectral_inds[valid] = -np.log(wise3_flux[valid] / wise2_flux[valid]) / np.log(WISE_3_FREQ / WISE_2_FREQ)
     logger.debug(f"average spectral index: {np.nanmean(spectral_inds):.4f}, std: {np.nanstd(spectral_inds):.4f}")
 
-    wise3_absmag = np.full(wise3_mag.shape, np.nan)
     # Note; the -ve here is necessary despite the negative in the mag_space return of k_corr, because we calculate
     # the factor as (1-alpha), whereas H26 uses (alpha-1)
     wise3_absmag[valid] = (
@@ -95,46 +106,81 @@ def _plot_rlagn_selection_contour(wise2_mag: np.ndarray,
                                   wise3_mag: np.ndarray,
                                   redshifts: np.ndarray,
                                   luminosities: np.ndarray,
-                                  cosmo: astropy.cosmology.Cosmology):
+                                  cosmo: astropy.cosmology.Cosmology,
+                                  rlagn_mask: np.ndarray | None = None,
+                                  sfg_mask: np.ndarray | None = None,
+                                  rqq_mask: np.ndarray | None = None,
+                                  output: str = 'lum_vs_w3.png'):
     """
-    Plots the relationship between L144 and Abs W3 (Fig. 2, H25) for RLAGN selection.
+    Plot L144 vs absolute W3 magnitude (Fig. 2, H25) for RLAGN selection: a greyscale density of all sources, the SF
+    and RQQ exclusion boundaries, and - when the classification masks are supplied - the excluded SFG and RQQ
+    populations scattered on top. Rendered through diffracc.utils.plotting so it shares the project's paper style.
 
     Parameters
     ----------
-    wise2_mag : np.ndarray
-        The magnitudes in the WISE 2 band.
-    wise3_mag : np.ndarray
-        The magnitudes in the WISE 3 band.
+    wise2_mag, wise3_mag : np.ndarray
+        Apparent WISE W2 and W3 magnitudes.
     redshifts : np.ndarray
-        The redshifts of the sources.
+        Source redshifts.
     luminosities : np.ndarray
-        The luminosities of the sources.
+        144-MHz luminosities in W/Hz.
     cosmo : astropy.cosmology.Cosmology
-        The cosmology to use for calculating luminosity distances.
+        Cosmology for the absolute-magnitude conversion.
+    rlagn_mask, sfg_mask, rqq_mask : np.ndarray | None
+        Boolean masks (over the full input arrays) of the RLAGN, SFG- and RQQ-classified sources. Each supplied mask is
+        overlaid as a coloured, sub-sampled scatter population; the greyscale hexbin behind them is the density of all
+        sources.
+    output : str
+        Path to save the figure to.
     """
-    wise3_absmag = _get_wise3_absmag(wise3_mag, wise2_mag, redshifts, cosmo)
+    logger.info("Plotting L144 vs absolute W3 for RLAGN selection...")
 
-    wise3_linspace_sfg = np.linspace(-27, -18, 1000)
-    wise3_linspace_rqq = np.linspace(-34, -27, 1000)
-    sfg_lum_cutoff = 10**(14 - wise3_linspace_sfg / 2.5)
-    rqq_lum_cutoff = 10**(-(wise3_linspace_rqq - RQQ_XPT) / 3.4844629455909923 + RQQ_YPT)
-    plt.figure(figsize=(8,8))
-    hist2d, xedges, yedges = np.histogram2d(wise3_absmag, np.log10(luminosities), bins=50,
-                                            range=[[-35, -17], [19+np.log10(4), 30]])
-    xcenters = (xedges[1:] + xedges[:-1]) / 2
-    ycenters = (yedges[1:] + yedges[:-1]) / 2
-    plt.contourf(xcenters[::-1], 10**ycenters, np.sqrt(hist2d[::-1, :].T))
-    plt.plot(wise3_linspace_sfg, sfg_lum_cutoff, color='r')
-    plt.plot(wise3_linspace_rqq, rqq_lum_cutoff, color='m')
-    plt.plot([-27, -27], [1, rqq_lum_cutoff[-1]], color='m')
-    plt.xlabel('WISE-band 3 absolute magnitude')
-    plt.ylabel('$L_{144}$')
-    plt.title('H25 RLAGN Selection Plot')
-    plt.yscale('log')
-    plt.xlim(-18, -34)
-    plt.ylim(4e20, 1e29)
-    plt.savefig('lum_vs_w3.png')
-    plt.show()
+    cond = np.isfinite(wise3_mag) & np.isfinite(wise2_mag) & np.isfinite(redshifts) & np.isfinite(luminosities)
+    wise3_absmag = np.full(wise3_mag.shape, np.nan)
+    wise3_absmag[cond] = _get_wise3_absmag(wise3_mag[cond], wise2_mag[cond], redshifts[cond], cosmo)
+    valid = np.isfinite(wise3_absmag) & np.isfinite(luminosities)
+
+    # Analytic selection boundaries (see select_rlagn). The SF line spans the whole panel (it re-intersects the RQQ
+    # line towards the right); the RQQ line runs left from W3 = -27; and a vertical dotted edge at W3 = -27 drops to
+    # the x-axis, marking where the RQQ exclusion zone begins.
+    y_bottom = 4e20
+    w3_sf = np.linspace(-18, -34, 500)
+    w3_rqq = np.linspace(-27, -34, 500)
+    boundaries = [
+        Boundary(w3_sf, 10**(14 - w3_sf / 2.5), label='SF exclusion', linestyle='-'),
+        Boundary(w3_rqq, 10**(25.3 + (-w3_rqq - 27) * 2.0/7), label='RQQ exclusion', linestyle=':'),
+        Boundary(np.array([-27.0, -27.0]), np.array([y_bottom, 10**25.3]), linestyle=':'), # connecting RQQ to x-axis
+    ]
+
+    # Each population is drawn as a smooth filled density contour in its own colour (the H25 "blobs") with only a
+    # sparse scatter of individual sources on top, so the dense centre stays legible.
+    populations = []
+    if rlagn_mask is not None:
+        m = valid & rlagn_mask
+        populations.append(Population('RLAGN', wise3_absmag[m], luminosities[m],
+                                      color='#5e3c99', shade=True, max_scatter=400, size=10, alpha=0.9))
+    if sfg_mask is not None:
+        m = valid & sfg_mask
+        populations.append(Population('SFG (excluded)', wise3_absmag[m], luminosities[m],
+                                      color='#2c7fb8', shade=True, max_scatter=400, size=10, alpha=0.9))
+    if rqq_mask is not None:
+        m = valid & rqq_mask
+        populations.append(Population('RQQ (excluded)', wise3_absmag[m], luminosities[m],
+                                      color='#d95f02', shade=True, max_scatter=400, size=10, alpha=0.9))
+
+    with paper_style():
+        fig, ax = plt.subplots(figsize=(7.5, 7.5))
+        density_scatter(
+            ax, wise3_absmag[valid], luminosities[valid], gridsize=100,
+            populations=populations, boundaries=boundaries, density='hexbin',
+            xlabel='Absolute $W3$ magnitude', ylabel='$L_{144}$ (W Hz$^{-1}$)',
+            xlim=(-18, -34), ylim=(y_bottom, 1e29), ylog=True,
+            legend_loc='lower right', title='RLAGN selection (H25)',
+        )
+        fig.savefig(output)
+        plt.show()
+        plt.close(fig)
+    logger.info(f"saved {output}")
 
 
 def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
@@ -186,11 +232,6 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                  f'min={np.min(wise2_mag[np.isfinite(wise2_mag)]):.4f}, '
                  f'count={wise2_mag.shape[0]}')
 
-    # plot the relationship between L144 and Abs W3 (Fig. 2, H25)
-    if plot_rlagn_selection_contour:
-        _plot_rlagn_selection_contour(wise2_mag, wise3_mag, redshifts, luminosities, cosmo)
-        logger.info("saved lum_vs_w3.png")
-
     # Calculate the RLAGN, SFG, and RQQ masks using the selection criteria from Hardcastle et al. 2025
     rlagn_mask, sfg_mask, rqq_mask = select_rlagn(wise1_mag,
                                                   wise2_mag,
@@ -209,6 +250,11 @@ def get_catalogue_info(cosmo: astropy.cosmology.Cosmology,
                 f'# rqq: {num_rqq} - '
                 f'total: {num_rlagn + num_sfg + num_rqq} -')
     logger.debug(f'{(np.isnan(wise3_magerr) & np.isfinite(wise3_mag)).sum()} wise 3 values are upper limits')
+
+    # Plot L144 vs absolute W3 (Fig. 2, H25) with the excluded SFG/RQQ populations overlaid on the selection cuts.
+    if plot_rlagn_selection_contour:
+        _plot_rlagn_selection_contour(wise2_mag, wise3_mag, redshifts, luminosities, cosmo,
+                                      rlagn_mask=rlagn_mask, sfg_mask=sfg_mask, rqq_mask=rqq_mask)
 
     redshifts = redshifts[rlagn_mask]
     tot_fluxes = tot_fluxes[rlagn_mask]
