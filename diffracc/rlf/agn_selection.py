@@ -358,3 +358,76 @@ def select_rlagn(wise1_mag: np.ndarray | float,
     rlagn_mask[sample] = ~sfg_mask[sample] & ~rqq_mask[sample]
 
     return rlagn_mask, sfg_mask, rqq_mask
+
+
+def select_non_contaminants(wise1_mag: np.ndarray | float,
+                            wise2_mag: np.ndarray | float,
+                            wise3_mag: np.ndarray | float,
+                            wise3_magerr: np.ndarray | float,
+                            luminosities: np.ndarray | float,
+                            redshifts: np.ndarray | float,
+                            tot_fluxes: np.ndarray | float,
+                            cosmo: astropy.cosmology.Cosmology) -> np.ndarray:
+    """
+    Select every source that is NOT positively identified as an SFG or an RQQ.
+
+    This answers a deliberately different question from `select_rlagn`. `select_rlagn` asks "is this source in the
+    H25 RLAGN sample?", which requires it to *pass* the H25 sample gate (total flux > 1.1 mJy, z > 0.01, and finite
+    W1/W2/W3 magnitudes and luminosity) before it can be classified at all - so a source that simply lacks a WISE
+    cross-match or a redshift is excluded, because it cannot be confirmed to be an RLAGN. That is the right question
+    for the luminosity function, where the sample definition has to match the paper's.
+
+    It is the wrong question for building a training set, where discarding every source without WISE/redshift data
+    would throw away a large and non-random fraction of the images. This function instead asks "is this source free
+    of known contamination?", and only removes sources the WISE criteria positively place in the SFG or RQQ zones.
+    Anything that cannot be classified - because it fails the sample gate, or lacks the data - is kept, since it
+    cannot be shown to be a contaminant.
+
+    Sources whose W3 magnitude is an upper limit (NaN `wise3_magerr`) are always kept even when they fall inside a
+    contamination zone: without a real W3 detection the zone classification rests on a limiting magnitude, so such a
+    source is not *definitely* a contaminant. This is `select_rlagn`'s `exclusive=False` behaviour, and it is fixed
+    here rather than exposed, because trusting an upper-limit classification would contradict this function's whole
+    contract.
+
+    Parameters
+    ----------
+    wise1_mag : np.ndarray or float
+        The WISE W1 magnitudes.
+    wise2_mag : np.ndarray or float
+        The WISE W2 magnitudes.
+    wise3_mag : np.ndarray or float
+        The WISE W3 magnitudes.
+    wise3_magerr : np.ndarray or float
+        The errors in the WISE W3 magnitudes. NaN marks a W3 upper limit rather than a detection.
+    luminosities : np.ndarray or float
+        The luminosities of the sources, in W/Hz.
+    redshifts : np.ndarray or float
+        The redshifts of the sources.
+    tot_fluxes : np.ndarray or float
+        The total fluxes of the sources, in Jy.
+    cosmo : astropy.cosmology.Cosmology
+        The cosmology to use for calculating luminosity distances.
+
+    Returns
+    -------
+    np.ndarray
+        A boolean mask, True for every source not positively classified as an SFG or an RQQ.
+    """
+    # exclusive=False is the "insufficient data is not a classification" branch: it pulls W3-upper-limit sources back
+    # out of the SFG/RQQ masks, which is exactly the "definite contaminants only" contract described above.
+    _, sfg_mask, rqq_mask = select_rlagn(wise1_mag,
+                                         wise2_mag,
+                                         wise3_mag,
+                                         wise3_magerr,
+                                         luminosities,
+                                         redshifts,
+                                         tot_fluxes,
+                                         cosmo=cosmo,
+                                         exclusive=False)
+
+    # Note the absence of any `sample` restriction here, which is the whole difference from select_rlagn's
+    # rlagn_mask: sfg_mask/rqq_mask are only ever True for sources that passed the sample gate AND landed in a
+    # contamination zone, so negating them keeps every unclassifiable source rather than dropping it.
+    keep_mask = ~sfg_mask & ~rqq_mask
+    logger.debug(f"number of sources kept as non-contaminants: {keep_mask.sum()} / {keep_mask.shape[0]}")
+    return keep_mask
