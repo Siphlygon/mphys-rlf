@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from diffracc.rlf.agn_selection import select_rlagn
+from diffracc.rlf.agn_selection import select_non_contaminants, select_rlagn
 
 
 class TestCalculateSNR:
@@ -106,10 +106,10 @@ class _SyntheticCatalogue:
              'size': 0.0, 'S/N': 0.0, 'edge_max': 0.0, 'peak_flux': 0.0, 'rlagn': False},
         ])
         self.cat_info = [
-            {'LAS': 10.0, 'Isl_rms': 0.5, 'mag_w2': 15.0, 'mag_w3': 13.0, 'magerr_w3': 0.1,
-             'L_144': 1e26, 'z_best': 0.3},
-            {'LAS': 20.0, 'Isl_rms': 1.0, 'mag_w2': 14.0, 'mag_w3': 12.0, 'magerr_w3': 0.1,
-             'L_144': 1e23, 'z_best': 0.5},
+            {'LAS': 10.0, 'Isl_rms': 0.5, 'mag_w1': 17.0, 'mag_w2': 15.0, 'mag_w3': 13.0, 'magerr_w3': 0.1,
+             'L_144': 1e26, 'z_best': 0.3, 'Total_flux': 1000.0},  # mJy
+            {'LAS': 20.0, 'Isl_rms': 1.0, 'mag_w1': 16.0, 'mag_w2': 14.0, 'mag_w3': 12.0, 'magerr_w3': 0.1,
+             'L_144': 1e23, 'z_best': 0.5, 'Total_flux': 2000.0},  # mJy
         ]
 
 
@@ -125,13 +125,14 @@ class TestComputeFlags:
         """
         # Recompute independently via select_rlagn with the same per-source arrays/units the flag-computation
         # methods themselves pass to it, cross-checking argument order/units rather than re-deriving the astro.
+        wise_1_mag = np.array([r['mag_w1'] for r in cat.cat_info])
         wise_2_mag = np.array([r['mag_w2'] for r in cat.cat_info])
         wise_3_mag = np.array([r['mag_w3'] for r in cat.cat_info])
         wise_3_magerr = np.array([r['magerr_w3'] for r in cat.cat_info])
         luminosities = np.array([r['L_144'] for r in cat.cat_info])
         redshifts = np.array([r['z_best'] for r in cat.cat_info])
-        peak_flux_mjy = np.array([cat.image_a.max(), cat.image_b.max()]) * 1000
-        return select_rlagn(wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, peak_flux_mjy,
+        total_fluxes = np.array([r['Total_flux'] / 1000 for r in cat.cat_info])  # convert from mJy to Jy
+        return select_rlagn(wise_1_mag, wise_2_mag, wise_3_mag, wise_3_magerr, luminosities, redshifts, total_fluxes,
                             cosmo=cp.cosmo, exclusive=cp.exclusive)[0]
 
     def test_vectorised_flags_match_hand_computed_values(self, cutout_preprocessor_factory):
@@ -190,3 +191,72 @@ class TestComputeFlags:
         assert cat.dataset.loc[1, 'S/N'] == 0.0
         # the valid row was still processed
         assert cat.dataset.loc[0, 'edge_max'] == pytest.approx(0.1)
+
+
+class TestDropContaminantsOnlyMode:
+    """
+    Tests the drop_contaminants_only selection mode, which swaps the 'rlagn' column's meaning from "is in the H25
+    RLAGN sample" to "is not a known SFG/RQQ contaminant". The two only differ for sources that cannot be classified,
+    so these use a catalogue containing one such source.
+    """
+
+    @staticmethod
+    def _mixed_catalogue():
+        """
+        A two-source catalogue: index 0 is a clean, classifiable RLAGN; index 1 has no WISE data at all, so it fails
+        the H25 sample gate and can never be classified - the case the two modes disagree on.
+        """
+        cat = _SyntheticCatalogue()
+        cat.cat_info[1] = {'LAS': 20.0, 'Isl_rms': 1.0,
+                           'mag_w1': np.nan, 'mag_w2': np.nan, 'mag_w3': np.nan, 'magerr_w3': np.nan,
+                           'L_144': 1e26, 'z_best': 0.5, 'Total_flux': 2000.0}  # mJy
+        return cat
+
+    def test_unclassifiable_source_kept_in_contaminant_mode_but_dropped_otherwise(self,
+                                                                                  cutout_preprocessor_factory):
+        """
+        Test that the WISE-less source is flagged True under drop_contaminants_only and False under the default
+        RLAGN-sample selection, which is the whole reason the mode exists.
+        """
+        default_cp = cutout_preprocessor_factory(drop_contaminants_only=False)
+        contaminant_cp = cutout_preprocessor_factory(drop_contaminants_only=True)
+
+        default_cat, contaminant_cat = self._mixed_catalogue(), self._mixed_catalogue()
+        default_cp._compute_vectorised_flags(default_cat.dataset, default_cat.cat_info)
+        contaminant_cp._compute_vectorised_flags(contaminant_cat.dataset, contaminant_cat.cat_info)
+
+        # The classifiable RLAGN survives either way...
+        assert bool(default_cat.dataset.loc[0, 'rlagn']) is True
+        assert bool(contaminant_cat.dataset.loc[0, 'rlagn']) is True
+        # ...but the source that cannot be classified is only kept when we're removing contaminants alone.
+        assert bool(default_cat.dataset.loc[1, 'rlagn']) is False
+        assert bool(contaminant_cat.dataset.loc[1, 'rlagn']) is True
+
+    def test_vectorised_and_iterative_agree_in_contaminant_mode(self, cutout_preprocessor_factory):
+        """Test that both flag-computation paths dispatch to the same selection, so they can't drift apart."""
+        cp = cutout_preprocessor_factory(drop_contaminants_only=True)
+        vectorised_cat, iterative_cat = self._mixed_catalogue(), self._mixed_catalogue()
+
+        cp._compute_vectorised_flags(vectorised_cat.dataset, vectorised_cat.cat_info)
+        cp._compute_iterative_flags(iterative_cat.dataset, iterative_cat.cat_info)
+
+        np.testing.assert_array_equal(vectorised_cat.dataset['rlagn'].values,
+                                      iterative_cat.dataset['rlagn'].values)
+
+    def test_matches_select_non_contaminants_directly(self, cutout_preprocessor_factory):
+        """Test that the flags written match calling select_non_contaminants with the same arrays/units."""
+        cp = cutout_preprocessor_factory(drop_contaminants_only=True)
+        cat = self._mixed_catalogue()
+        cp._compute_vectorised_flags(cat.dataset, cat.cat_info)
+
+        expected = select_non_contaminants(
+            np.array([r['mag_w1'] for r in cat.cat_info]),
+            np.array([r['mag_w2'] for r in cat.cat_info]),
+            np.array([r['mag_w3'] for r in cat.cat_info]),
+            np.array([r['magerr_w3'] for r in cat.cat_info]),
+            np.array([r['L_144'] for r in cat.cat_info]),
+            np.array([r['z_best'] for r in cat.cat_info]),
+            np.array([r['Total_flux'] / 1000 for r in cat.cat_info]),  # convert from mJy to Jy
+            cosmo=cp.cosmo)
+
+        np.testing.assert_array_equal(cat.dataset['rlagn'].values, expected)

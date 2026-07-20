@@ -11,7 +11,7 @@ from astropy.cosmology import FlatLambdaCDM
 from astropy.io import fits
 from tqdm import tqdm
 
-from ..rlf.agn_selection import select_rlagn
+from ..rlf.agn_selection import select_non_contaminants, select_rlagn
 from ..utils import data_utils as du
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
@@ -27,7 +27,8 @@ class CutoutPreprocessor:
                  snr_threshold: float = 15,
                  edge_max_threshold: float = 0.8,
                  peak_flux_threshold: float = 500,
-                 exclusive: bool = False):
+                 exclusive: bool = False,
+                 drop_contaminants_only: bool = False):
         """
         A class that takes cutouts of resolved sources from the Hardcastle 2023 dataset and applies pre-processing steps
         to select images suitable for training the diffusion model on based on a range of criteria.
@@ -41,7 +42,16 @@ class CutoutPreprocessor:
         peak_flux_threshold : float, optional
             The maximum peak flux threshold for selecting images, by default 500 mJy/beam.
         exclusive : bool, optional
-            Whether to use exclusive criteria for RLAGN selection, by default False
+            Whether to use exclusive criteria for RLAGN selection, by default False. Ignored when
+            `drop_contaminants_only` is True.
+        drop_contaminants_only : bool, optional
+            Selects on "is this source NOT a known contaminant?" (agn_selection.select_non_contaminants) rather than
+            "is this source in the H25 RLAGN sample?" (agn_selection.select_rlagn), by default False. The RLAGN-sample
+            question requires a source to pass H25's sample gate - total flux > 1.1 mJy, z > 0.01, and finite WISE
+            magnitudes and luminosity - before it can be classified, so every source without a WISE cross-match or a
+            redshift is dropped. That is correct for the luminosity function but discards a large, non-random fraction
+            of the images when building a training set, so this mode instead removes only the sources positively
+            identified as SFG or RQQ and keeps everything it cannot classify.
         """
         self.logger = get_logger('CutoutPreprocessor', LoggingLevels.DEBUG.value)
 
@@ -49,6 +59,7 @@ class CutoutPreprocessor:
         self.edge_max_threshold = edge_max_threshold
         self.peak_flux_threshold = peak_flux_threshold
         self.exclusive = exclusive
+        self.drop_contaminants_only = drop_contaminants_only
 
         self.num_counts = 314969
 
@@ -286,6 +297,7 @@ class CutoutPreprocessor:
         """
         return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
 
+
     def _calculate_snr_single(self,
                              noise_level: float,
                              peak_flux: float) -> float:
@@ -368,6 +380,48 @@ class CutoutPreprocessor:
         return edge_max / image.max()
 
 
+    def _select_sources(self,
+                        wise1_mag: np.ndarray | float,
+                        wise2_mag: np.ndarray | float,
+                        wise3_mag: np.ndarray | float,
+                        wise3_magerr: np.ndarray | float,
+                        luminosities: np.ndarray | float,
+                        redshifts: np.ndarray | float,
+                        tot_fluxes: np.ndarray | float) -> np.ndarray:
+        """
+        Apply the configured source selection, returning the boolean keep-mask written to the dataset's 'rlagn' column.
+
+        Shared by both the vectorised and iterative flag paths so the two can never drift apart on which selection
+        they apply. See the `drop_contaminants_only` parameter on __init__ for what the two selections mean.
+
+        Parameters
+        ----------
+        wise1_mag, wise2_mag, wise3_mag : np.ndarray or float
+            The WISE W1/W2/W3 magnitudes.
+        wise3_magerr : np.ndarray or float
+            The errors in the WISE W3 magnitudes.
+        luminosities : np.ndarray or float
+            The luminosities of the sources, in W/Hz.
+        redshifts : np.ndarray or float
+            The redshifts of the sources.
+        tot_fluxes : np.ndarray or float
+            The total fluxes of the sources, in Jy.
+
+        Returns
+        -------
+        np.ndarray
+            A boolean mask of the sources to keep.
+        """
+        if self.drop_contaminants_only:
+            return select_non_contaminants(wise1_mag, wise2_mag, wise3_mag, wise3_magerr,
+                                           luminosities, redshifts, tot_fluxes, cosmo=self.cosmo)
+
+        # select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
+        return select_rlagn(wise1_mag, wise2_mag, wise3_mag, wise3_magerr,
+                            luminosities, redshifts, tot_fluxes,
+                            cosmo=self.cosmo, exclusive=self.exclusive)[0]
+
+
     # ---------- MAIN PROCESSING ----------
     def _compute_vectorised_flags(self,
                                   dataset: pd.DataFrame,
@@ -428,19 +482,20 @@ class CutoutPreprocessor:
         # Vectorised RLAGN selection using catalogue information
         self.logger.info("Creating vectorised flags for RLAGN selection...")
         start_time = time.time()
+        total_fluxes = np.array([info['Total_flux'] for info in cat_info])[valid_mask] / 1000  # convert from mJy to Jy
+        wise_1_mag = np.array([info['mag_w1'] for info in cat_info])[valid_mask]
         wise_2_mag = np.array([info['mag_w2'] for info in cat_info])[valid_mask]
         wise_3_mag = np.array([info['mag_w3'] for info in cat_info])[valid_mask]
         wise_3_magerr = np.array([info['magerr_w3'] for info in cat_info])[valid_mask]
         luminosities = np.array([info['L_144'] for info in cat_info])[valid_mask]
         redshifts = np.array([info['z_best'] for info in cat_info])[valid_mask]
-        rlagn_mask = select_rlagn(wise_2_mag,
-                                  wise_3_mag,
-                                  wise_3_magerr,
-                                  luminosities,
-                                  redshifts,
-                                  global_max*1000,
-                                  cosmo=self.cosmo,
-                                  exclusive=self.exclusive)[0]
+        rlagn_mask = self._select_sources(wise_1_mag,
+                                          wise_2_mag,
+                                          wise_3_mag,
+                                          wise_3_magerr,
+                                          luminosities,
+                                          redshifts,
+                                          total_fluxes)  # wants Jy
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
@@ -476,8 +531,8 @@ class CutoutPreprocessor:
         # Get indices to iterate over excluding broken and incomplete images
         valid_indices = dataset.index[~dataset['broken'] & ~dataset['incomplete']]
 
-        for idx in tqdm(valid_indices, desc="Computing flags for each image in the dataset"):
-            img = dataset.at[idx, 'pixel_values']
+        for idx in tqdm(valid_indices, desc="Computing flags for each image in the dataset", mininterval=1.0):
+            img: np.ndarray = dataset.at[idx, 'pixel_values']
             source = cat_info[idx]
 
             size_list.append(source['LAS'])
@@ -487,15 +542,14 @@ class CutoutPreprocessor:
             peak_flux_list.append(peak_flux)
 
             edge_max_list.append(self._calculate_edge_max_single(img))
-            # _select_rlagn handles missing WISE/luminosity/redshift data itself, respecting self.exclusive
-            rlagn_list.append(select_rlagn(source['mag_w2'],
-                                           source['mag_w3'],
-                                           source['magerr_w3'],
-                                           source['L_144'],
-                                           source['z_best'],
-                                           peak_flux,
-                                           cosmo=self.cosmo,
-                                           exclusive=self.exclusive)[0])
+            total_flux = source['Total_flux'] / 1000  # convert from mJy to Jy
+            rlagn_list.append(self._select_sources(source['mag_w1'],
+                                                   source['mag_w2'],
+                                                   source['mag_w3'],
+                                                   source['magerr_w3'],
+                                                   source['L_144'],
+                                                   source['z_best'],
+                                                   total_flux)[0])  # wants Jy
 
         # Put the flags into the dataset
         dataset.loc[valid_indices, 'size'] = size_list
@@ -535,10 +589,15 @@ class CutoutPreprocessor:
                 output_file_path = paths.DATASET_PATH_FITS
 
         if output_file_path == "default":
-            if save_hdf5:
-                output_file_path = paths.DATASET_PARENT / f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{'exclusive' if self.exclusive else 'inclusive'}.h5"
+            # The selection tag has to distinguish all three modes, or two runs differing only in selection would
+            # silently overwrite each other's dataset.
+            if self.drop_contaminants_only:
+                selection_tag = 'noncontaminant'
             else:
-                output_file_path = paths.DATASET_PARENT / f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{'exclusive' if self.exclusive else 'inclusive'}.fits"
+                selection_tag = 'exclusive' if self.exclusive else 'inclusive'
+            suffix = 'h5' if save_hdf5 else 'fits'
+            output_file_path = paths.DATASET_PARENT / \
+                f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{selection_tag}.{suffix}"
 
         # Load the initial dataset with pixel values
         dataset, cat_info, cat_columns = self._load_initial_dataset(catalogue_path)
@@ -655,10 +714,19 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--exclusive",
-        help="Whether to apply the RLAGN selection exclusively (i.e., only sources which are likely RLAGNs are "
-        "included) or inclusively (i.e., only sources with data showing they are likely not RLAGNs are excluded). "
-        "Default False (inclusive).",
+        help="Whether to apply the RLAGN selection exclusively (i.e., only sources which have proper W3 detections are "
+        "included) or inclusively (i.e., including sources with insufficient W3 detection data). Default False "
+        "(inclusive). Only applicable if --drop_contaminants_only is not True, which it is by default.",
         action='store_true'
+    )
+    parser.add_argument(
+        "--drop_contaminants_only",
+        help="Keep every source except those positively identified as an SFG or RQQ, instead of keeping only sources "
+        "confirmed to be in the H25 RLAGN sample. This is in the interest of some level of quality control while "
+        "including enough images to build a training dataset. If False, defaults to the H25 RLAGN sample selection "
+        "controlled by --exclusive. Default True.",
+        action='store_true',
+        default=True
     )
     return parser
 
@@ -669,7 +737,8 @@ if __name__ == "__main__":
 
     preprocessor = CutoutPreprocessor(snr_threshold=args.snr_threshold,
                                       edge_max_threshold=args.edge_max_threshold,
-                                      exclusive=args.exclusive)
+                                      exclusive=args.exclusive,
+                                      drop_contaminants_only=args.drop_contaminants_only)
     preprocessor.apply_preprocessing(vectorised=args.vectorised,
                                      save_hdf5=not args.save_fits,
                                      catalogue_path=args.catalogue_path,

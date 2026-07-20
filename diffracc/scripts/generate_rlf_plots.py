@@ -1,3 +1,9 @@
+"""
+A script to generate RLF plots using the RLF class and catalogue information
+.
+This script reads the Hardcastle catalogue, applies a flux cut, and generates RLF plots using both the Page & Carrera
+2000 method and the 1/Vmax method. The resulting plots are saved as 'rlfs.png' and displayed to the user.
+"""
 import argparse
 import configparser
 
@@ -22,10 +28,8 @@ def main(args):
     args : argparse.Namespace
         Command-line arguments containing flux cut and plot selection options.
     """
-    logger = get_logger("RLF Main", LoggingLevels.INFO.value)
+    logger = get_logger("Generate RLF Plots", LoggingLevels.INFO.value)
     plt.rcParams['font.size'] = 18
-
-    flux_cut_jy = args.flux_cut_jy
 
     # Read parameters from the config.ini file
     config = configparser.ConfigParser()
@@ -39,11 +43,10 @@ def main(args):
     cosmo = astropy.cosmology.FlatLambdaCDM(h * 100 * u.km / u.s / u.Mpc, Tcmb0=Tcmb0 * u.K, Om0=Om0)
 
     redshifts, fluxes, luminosities, resolved = get_catalogue_info(cosmo,
-                                                                   flux_cut_jy,
                                                                    args.plot_rlagn_selection_contour)
 
-    rlf0 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=flux_cut_jy)
-    rlf1 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0, flux_cut_jy=flux_cut_jy, vmax_method=True)
+    rlf0 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0)
+    rlf1 = RLF(fluxes, redshifts, luminosities, resolved, cosmo, bias=0, vmax_method=True)
     rlfs = [rlf0, rlf1]
 
     fig, axes = plt.subplots(ncols=2, figsize=(20, 10))
@@ -59,7 +62,7 @@ def main(args):
         rlf.calculate_rlf(plot_rlf=False)
         rlf.plot_rlf(title, colors, ax, draw_ylabel=draw_ylabel)
 
-    plt.savefig('rlfs_vmax.png')
+    plt.savefig('rlfs.png')
     plt.show()
 
     logger.info('done')
@@ -67,8 +70,6 @@ def main(args):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser(description='Generate RLF plots.')
-    parser.add_argument('--flux_cut_jy', type=float, default=1.1e-3,
-                        help='Flux cut in Jy (default: 1.1e-3)')
     parser.add_argument('--plot_rlagn_selection_contour', action='store_true',
                         help='Plot RLAGN selection contour (default: False)')
 

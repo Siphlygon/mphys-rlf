@@ -7,6 +7,7 @@ from astropy.io import fits
 from tqdm import tqdm
 
 from ..utils import paths
+from ..utils.data_utils import Source
 from ..utils.logger import get_logger
 
 CATALOGUES = MappingProxyType({
@@ -23,31 +24,27 @@ CATALOGUES = MappingProxyType({
         "url": "https://lofar-surveys.org/public/DR2/AGN_selection/agn-v1.1.fits"
     }
 })
+DESIRED_COLUMNS = [s.value for s in Source]
 
-DESIRED_COLUMNS = [
-    "RA",
-    "DEC",
-    "Total_flux",
-    "Peak_flux",
-    "DC_Maj",
-    "Resolved",
-    "Isl_rms",
-    "LAS",
-    "z_best",
-    "L_144",
-    "mag_w2",
-    "mag_w3",
-    "magerr_w3"
-]
 
 class CatalogueDownloader:
     """
     A class to download and extract certain information from the Hardcastle catalogue FITS file. It provides methods to
     download the catalogue, load it, extract positions, and write those positions to a file.
     """
-    def __init__(self):
-        # Set up logging
+    def __init__(self, do_logging = True):
+        """
+        Initialises the CatalogueDownloader class, setting up a logger for logging messages. If do_logging is set to
+        False, logging will be disabled.
+
+        Parameters
+        ----------
+        do_logging : bool, optional
+            Whether to enable logging, by default True. If set to False, logging will be disabled.
+        """
         self.logger = get_logger("CatalogueDownloader")
+        if not do_logging:
+            self.logger.disabled = True
 
 
     def _create_stripped_catalogue(self,

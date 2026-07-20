@@ -1,31 +1,12 @@
-from enum import Enum
 from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
 
 from ..utils import paths
+from ..utils.data_utils import Source
 from ..utils.logger import LoggingLevels, get_logger
 from .catalogue_downloader import CATALOGUES, CatalogueDownloader
-
-
-class Source(Enum):
-    """
-    An enum to represent the different properties we want to extract from the Hardcastle catalogue. Column headers can
-    be found in Hardcastle et al. (2023) but this is here for self-documentation.
-    """
-    RA = "RA"   # Radio Right Ascension in degrees
-    DEC = "DEC"   # Radio Declination in degrees
-    TotalFlux = "Total_flux"   # Total flux density at 144 MHz in mJy
-    PeakFlux = "Peak_flux"   # Peak flux density at 144 MHz in mJy/beam
-    AngSize = "LAS"   # Largest angular size in arcseconds
-    Luminosity = "L_144"    # Luminosity at 144 MHz in W/Hz for alpha=0.7
-    Redshift = "z_best"    # Best redshift (spectroscopic if available, otherwise photometric)
-    RMS = "Isl_rms"    # RMS noise in the island containing the source in mJy/beam
-    WISE3Mag = "mag_w3" # magnitude in the wise band 3
-    WISE3MagErr = "magerr_w3" # magnitude error in the wise band 3, or blank for upper lim
-    WISE2Mag = "mag_w2" # magnitude in the wise band 2
-    Resolved = "Resolved" # Whether the source is resolved (True) or not (False)
 
 
 class HardcastleCatalogue:
@@ -61,7 +42,6 @@ class HardcastleCatalogue:
         if cat not in CATALOGUES:
             raise NotImplementedError(
                 f"Catalogue {cat} is not supported. Supported catalogues: {list(CATALOGUES.keys())}")
-
         self.catalogue_data = self._load_hardcastle_catalogue()
 
 
@@ -69,9 +49,11 @@ class HardcastleCatalogue:
                                    cat: str = "hardcastle2023",
                                    file_path: Path = paths.STRIPPED_CATALOGUE_PATH) -> fits.FITS_rec:
         """
-        Loads the Hardcastle catalogue from a FITS file and filters for resolved items. This turns the ~4.1mil items
-        from the LoTSS-DR2 release w/ optical sources to 314,769 values. Note that this does not get pixel value for the
-        images.
+        Loads the Hardcastle catalogue from a FITS file.
+        
+        Optionally filters for resolved sources only (should likely only be appropriate for 'hardcastle2023'), which
+        turns the ~4.1mil items from the Hardcastle catalogue to 314,969 values. Note that this does not get pixel value
+        for the images.
 
         Parameters
         ----------

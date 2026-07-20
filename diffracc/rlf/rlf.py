@@ -22,6 +22,9 @@ from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from .rlf_constants import colors, shimwell_data, z_from_v
 
+# flux cutoff for the RLF calculation, below which sources are considered incomplete
+# this should not be changed if you wish to compare with Hardcastle et al. (2025) results
+FLUX_CUTOFF_JY = 1.1e-3  # Jy
 
 class RLF:
     """
@@ -37,7 +40,6 @@ class RLF:
                  resolved: np.ndarray,
                  cosmo : astropy.cosmology.FlatLambdaCDM,
                  bias: float = 0,
-                 flux_cut_jy: float = 1.1e-3,
                  vmax_method: bool = False,
                  use_shimwell: bool = True,
                  completeness_path: str | Path | None = None,
@@ -60,8 +62,6 @@ class RLF:
             The cosmology object for distance calculations
         bias : float, optional
             The bias factor for the RLF calculation, by default 0
-        flux_cut_jy : float, optional
-            The flux cut in Jy, by default 1.1e-3
         vmax_method : bool, optional
             Whether to use the 1/Vmax method, by default False
         use_shimwell : bool, optional
@@ -77,7 +77,6 @@ class RLF:
         # init parameters
         self.vmax_method = vmax_method
         self.bias = bias
-        self.flux_cut_jy = flux_cut_jy
         self.fluxes = fluxes
         self.redshifts = redshifts
         self.luminosities = luminosities
@@ -189,20 +188,20 @@ class RLF:
                 completeness = np.interp(integ_fluxes, shimwell_data[0] / 1000, shimwell_data[1])
             else:
                 completeness = np.ones_like(integ_fluxes)
-            return np.where(integ_fluxes > self.flux_cut_jy, completeness, 0)
+            return np.where(integ_fluxes > FLUX_CUTOFF_JY, completeness, 0)
 
         # Otherwise fall back to evluating both resolved and unresolved completeness for each source, and returning the
         # appropriate value based on the resolved array.
         func_completeness = self.completeness_fit.evaluate(integ_fluxes * 1000, s0_shift_mjy=self.bias)
-        resolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, func_completeness, 0)
+        resolved_completeness = np.where(integ_fluxes > FLUX_CUTOFF_JY, func_completeness, 0)
 
         # Use Shimwell et al. (2023) completeness for unresolvedd sources if use_shimwell is True, otherwise use a step
         # function at the flux_cut_jy threshold.
         if self.use_shimwell:
             shimwell_completeness = np.interp(integ_fluxes, shimwell_data[0] / 1000, shimwell_data[1])
-            unresolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, shimwell_completeness, 0)
+            unresolved_completeness = np.where(integ_fluxes > FLUX_CUTOFF_JY, shimwell_completeness, 0)
         else:
-            unresolved_completeness = np.where(integ_fluxes > self.flux_cut_jy, 1, 0)
+            unresolved_completeness = np.where(integ_fluxes > FLUX_CUTOFF_JY, 1, 0)
 
         return np.where(resolved, resolved_completeness, unresolved_completeness)
 
@@ -459,7 +458,7 @@ class RLF:
                 self.logger.error(f'{name.capitalize()} bin {index} had {counts[index]} sources but a 0 bin integral')
                 max_flux = self.flux_from_coordinate(v_min, l_maxs[0, index])
                 min_flux = self.flux_from_coordinate(v_max, l_mins[0, index])
-                self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {self.flux_cut_jy}')
+                self.logger.error(f'Min flux in bin {min_flux}, max flux in bin {max_flux}, cutoff {FLUX_CUTOFF_JY}')
             else:
                 self.logger.error(f'{indices.shape[0]} {name} bins had sources but a 0 bin integral, indices {indices}')
 

@@ -127,7 +127,8 @@ def mag_to_flux_w3(mag: np.ndarray) -> np.ndarray:
     """
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
     F_v0 = 31.674
-    return F_v0 * 10**(-mag / 2.5)
+    zero_point_offset = 5.174  # the zero-point offset for the WISE 3 band
+    return F_v0 * 10**(-(mag - zero_point_offset) / 2.5)
 
 
 def mag_to_flux_w2(mag: np.ndarray) -> np.ndarray:
@@ -146,7 +147,8 @@ def mag_to_flux_w2(mag: np.ndarray) -> np.ndarray:
     """
     # https://irsa.ipac.caltech.edu/data/WISE/docs/release/All-Sky/expsup/sec4_4h.html
     F_v0 = 171.787
-    return F_v0 * 10**(-mag / 2.5)
+    zero_point_offset = 3.339  # the zero-point offset for the WISE 2 band
+    return F_v0 * 10**(-(mag - zero_point_offset) / 2.5)
 
 
 def k_corr_factor(redshift: np.ndarray,

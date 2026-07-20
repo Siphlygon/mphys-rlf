@@ -16,17 +16,11 @@ class TestBuildArgParser:
     """Unit tests for the _build_arg_parser function."""
 
     def test_defaults(self):
-        """Test that the default values for flux_cut_jy and plot_rlagn_selection_contour are set correctly."""
+        """Test that plot_rlagn_selection_contour defaults to False. (The flux cut is no longer a CLI arg - it is the
+        fixed FLUX_CUTOFF_JY = 1.1 mJy constant in the RLF module.)"""
         parser = gp._build_arg_parser()
         args = parser.parse_args([])
-        assert args.flux_cut_jy == pytest.approx(1.1e-3)
         assert args.plot_rlagn_selection_contour is False
-
-    def test_custom_flux_cut(self):
-        """Test that a custom flux_cut_jy value is correctly parsed."""
-        parser = gp._build_arg_parser()
-        args = parser.parse_args(["--flux_cut_jy", "2.5e-3"])
-        assert args.flux_cut_jy == pytest.approx(2.5e-3)
 
     def test_plot_rlagn_selection_contour_flag(self):
         """Test that the --plot_rlagn_selection_contour flag is correctly parsed."""
@@ -40,14 +34,13 @@ class _FakeRLF:
     instances = []
 
     def __init__(self, fluxes, redshifts, luminosities, resolved, cosmo,
-                bias=0, flux_cut_jy=1.1e-3, vmax_method=False):
+                bias=0, vmax_method=False):
         self.fluxes = fluxes
         self.redshifts = redshifts
         self.luminosities = luminosities
         self.resolved = resolved
         self.cosmo = cosmo
         self.bias = bias
-        self.flux_cut_jy = flux_cut_jy
         self.vmax_method = vmax_method
         self.calculate_rlf_calls = []
         self.plot_rlf_calls = []
@@ -90,7 +83,7 @@ def patched_main_deps(monkeypatch, tmp_path, cosmology_config_path):
         rng.integers(0, 2, n).astype(bool),  # resolved
     )
     monkeypatch.setattr(gp, "get_catalogue_info",
-                        lambda cosmo, flux_cut_jy, plot_rlagn_selection_contour=False: catalogue_info)
+                        lambda cosmo, plot_rlagn_selection_contour=False: catalogue_info)
     monkeypatch.setattr(gp, "RLF", _FakeRLF)
     monkeypatch.setattr(paths, "PROGRAM_CONFIG", cosmology_config_path)
     monkeypatch.chdir(tmp_path)
@@ -102,29 +95,25 @@ class TestMain:
 
     def _args(self, **overrides):
         """Helper function to create an argparse.Namespace with default values, overridden by any provided arguments."""
-        defaults = dict(flux_cut_jy=1.1e-3, plot_rlagn_selection_contour=False)
+        defaults = dict(plot_rlagn_selection_contour=False)
         defaults.update(overrides)
         return __import__("argparse").Namespace(**defaults)
 
-    def test_calls_get_catalogue_info_with_flux_cut_and_contour_flag(self, patched_main_deps, monkeypatch):
-        """
-        Test that main() calls get_catalogue_info with the correct flux_cut_jy and plot_rlagn_selection_contour
-        arguments.
-        """
+    def test_calls_get_catalogue_info_with_contour_flag(self, patched_main_deps, monkeypatch):
+        """Test that main() forwards the plot_rlagn_selection_contour flag to get_catalogue_info."""
         calls = []
         monkeypatch.setattr(gp, "get_catalogue_info",
-                            lambda cosmo, flux_cut_jy, plot_rlagn_selection_contour=False:
-                            (calls.append((flux_cut_jy, plot_rlagn_selection_contour)) or patched_main_deps))
-        gp.main(self._args(flux_cut_jy=2.0e-3, plot_rlagn_selection_contour=True))
-        assert calls == [(2.0e-3, True)]
+                            lambda cosmo, plot_rlagn_selection_contour=False:
+                            (calls.append(plot_rlagn_selection_contour) or patched_main_deps))
+        gp.main(self._args(plot_rlagn_selection_contour=True))
+        assert calls == [True]
 
-    def test_constructs_two_rlf_instances_with_zero_bias_and_matching_flux_cut(self, patched_main_deps):
-        """Test that main() constructs two RLF instances with bias=0 and the correct flux_cut_jy."""
-        gp.main(self._args(flux_cut_jy=1.1e-3))
+    def test_constructs_two_rlf_instances_with_zero_bias(self, patched_main_deps):
+        """Test that main() constructs two RLF instances, both with bias=0."""
+        gp.main(self._args())
         assert len(_FakeRLF.instances) == 2
         for rlf in _FakeRLF.instances:
             assert rlf.bias == 0
-            assert rlf.flux_cut_jy == pytest.approx(1.1e-3)
 
     def test_only_the_second_rlf_instance_uses_vmax_method(self, patched_main_deps):
         """Test that only the second RLF instance is constructed with vmax_method=True."""
@@ -148,7 +137,7 @@ class TestMain:
     def test_saves_figure_to_expected_filename(self, patched_main_deps, tmp_path):
         """Test that main() saves the figure to 'rlfs_vmax.png' in the current working directory."""
         gp.main(self._args())
-        assert (tmp_path / "rlfs_vmax.png").exists()
+        assert (tmp_path / "rlfs.png").exists()
 
     def test_resolved_passed_to_rlf_matches_get_catalogue_info(self, patched_main_deps):
         """Test that the resolved array passed to RLF instances matches the one returned by get_catalogue_info."""

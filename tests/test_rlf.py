@@ -48,13 +48,13 @@ class TestGetCompleteness:
     
     def test_resolved_source_below_flux_cut_is_zero(self, rlf_factory):
         """Test that a resolved source below the flux cut returns a completeness of 0.0."""
-        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, flux_cut_jy=1.1e-3)
+        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL)
         completeness = rlf._get_completeness(np.array([1e-4]), resolved=np.array([True]))
         assert completeness[0] == 0.0
 
     def test_resolved_source_above_flux_cut_matches_sigmoid(self, rlf_factory):
         """Test that a resolved source above the flux cut returns the completeness fit evaluated at that flux."""
-        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, flux_cut_jy=1.1e-3, bias=0)
+        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, bias=0)
         flux = 5e-3  # 5 mJy, above the cut
         completeness = rlf._get_completeness(np.array([flux]), resolved=np.array([True]))
         # The fixture fit is a `sigmoid` fitted against log10(mJy); _get_completeness hands it flux in mJy and the fit
@@ -76,7 +76,7 @@ class TestGetCompleteness:
         Test that an unresolved source above the flux cut returns a completeness matching the Shimwell et al. (2017)
         completeness curve by default.
         """
-        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, flux_cut_jy=1.1e-3, use_shimwell=True)
+        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, use_shimwell=True)
         flux = shimwell_data[0, 18] / 1000  # 1.25 mJy, above the 1.1 mJy default flux cut
         completeness = rlf._get_completeness(np.array([flux]), resolved=np.array([False]))
         assert completeness[0] == pytest.approx(shimwell_data[1, 18])
@@ -86,7 +86,7 @@ class TestGetCompleteness:
         Test that an unresolved source above the flux cut returns a completeness of 1.0 when the Shimwell completeness
         curve is disabled.
         """
-        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, flux_cut_jy=1.1e-3, use_shimwell=False)
+        rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL, use_shimwell=False)
         below = rlf._get_completeness(np.array([1e-4]), resolved=np.array([False]))[0]
         above = rlf._get_completeness(np.array([5e-3]), resolved=np.array([False]))[0]
         assert below == 0.0
@@ -104,10 +104,12 @@ class TestGetCompleteness:
 
 
 class TestInterpolation:
-    """Tests that the z_from_v interpolation method returns expected values for known inputs."""
+    """Tests that the interpolation method returns expected values for known inputs."""
 
     def test_luminosity_distance_interpolation_matches_cosmo(self, rlf_factory):
-        """Test that the luminosity distance interpolation matches the cosmology's luminosity distance at known redshifts."""
+        """
+        Test that the luminosity distance interpolation matches the cosmology's luminosity distance at known redshifts.
+        """
         rlf = rlf_factory(EMPTY, EMPTY, EMPTY, EMPTY_BOOL)
         for z in np.linspace(0.01, 1.0, 10):
             expected_dl = rlf.cosmo.luminosity_distance(z).to(u.m).value
