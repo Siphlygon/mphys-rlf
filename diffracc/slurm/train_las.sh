@@ -7,6 +7,7 @@
 #SBATCH --no-requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
+#SBATCH --cpus-per-task=16
 #SBATCH --nodelist=compute-0-9
 #SBATCH --exclude=compute-0-6,compute-0-1,compute-0-14,compute-0-15,compute-0-17
 
@@ -40,6 +41,10 @@ export MODEL_NAME="snr15_inclusive_las"
 export USE_TRANSFORMS='TRUE'
 export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
 export USE_LAS_VALUES='TRUE'
+
+# Data-loading worker processes per rank. The default of 1 starves the GPU; with --cpus-per-task=16 there is ample
+# headroom for 4 per rank across the 2 ranks (plus their validation loaders).
+export DATALOADER_WORKERS=4
 
 # To resume a crashed/interrupted run instead of starting fresh, uncomment the next line. Picks up from
 # model_results/$MODEL_NAME/parameters_$MODEL_NAME.pt - if that directory was ever renamed/moved, run
