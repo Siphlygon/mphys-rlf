@@ -572,7 +572,8 @@ class CutoutPreprocessor:
                             vectorised: bool = False,
                             save_hdf5: bool = True,
                             catalogue_path: Path = paths.STRIPPED_CATALOGUE_PATH,
-                            output_file_path: Path | str | None = None):
+                            output_file_path: Path | str | None = None,
+                            save_context: bool = True):
         """
         Applies the pre-processing steps to the Hardcastle dataset, filtering out images that do not meet the specified
         criteria and saving the cleaned dataset to a specified file format.
@@ -605,7 +606,7 @@ class CutoutPreprocessor:
                 selection_tag = 'exclusive' if self.exclusive else 'inclusive'
             suffix = 'h5' if save_hdf5 else 'fits'
             output_file_path = paths.DATASET_PARENT / \
-                f"snr_{self.snr_threshold}_peak_{self.peak_flux_threshold}_{selection_tag}.{suffix}"
+                f"snr_{int(self.snr_threshold)}_peak_{int(self.peak_flux_threshold)}_{selection_tag}.{suffix}"
 
         # Load the initial dataset with pixel values
         dataset, cat_info, cat_columns = self._load_initial_dataset(catalogue_path)
@@ -653,6 +654,20 @@ class CutoutPreprocessor:
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
         self.logger.info(f"Total number of sources removed: {total}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
+
+        if save_context:
+            # Save the number of sources removed at each step to a text file for reference
+            context_file_path = Path(output_file_path).with_suffix('.txt')
+            with open(context_file_path, 'w', encoding='utf-8') as f:
+                f.write(f"Number of sources removed as broken/missing: {num_broken}\n")
+                f.write(f"Number of sources removed as incomplete: {num_incomplete}\n")
+                f.write(f"Number of sources removed as too large: {num_too_large}\n")
+                f.write(f"Number of sources removed as low S/N: {num_low_snr}\n")
+                f.write(f"Number of sources removed as edge max: {num_edge_max}\n")
+                f.write(f"Number of sources removed as high peak flux: {num_peak_flux}\n")
+                f.write(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}\n")
+                f.write(f"Total number of sources removed: {total}\n")
+                f.write(f"Number of sources remaining in clean dataset: {len(clean_dataset)}\n")
 
         # Filter the catalogue information to only include the sources in the clean dataset
         indices = clean_dataset["index"].array
