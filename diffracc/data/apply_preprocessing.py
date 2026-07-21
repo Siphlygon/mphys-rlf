@@ -101,6 +101,10 @@ class CutoutPreprocessor:
             cat_info = hdul[1].data
             cat_columns = hdul[1].columns
 
+            # Filter for resolved sources
+            cat_info = cat_info[cat_info['Resolved']]
+            self.logger.debug(f"Loaded {len(cat_info)} resolved sources from the catalogue.")
+
         return cat_info, cat_columns
 
 
@@ -120,6 +124,7 @@ class CutoutPreprocessor:
         """
         with h5py.File(catalogue_path, 'r') as h5file:
             cat_info: np.ndarray = h5file['cat_info'][:]
+            self.logger.debug(f"Loaded {len(cat_info)} resolved sources from the HDF5 catalogue.")
 
         return cat_info
 
@@ -149,6 +154,7 @@ class CutoutPreprocessor:
         indices = indices.astype(np.int32)
 
         # Check indices to see any missing cutout images
+        self.logger.debug(f"Checking for missing cutout images in the range 0 to {self.num_counts - 1}...")
         true_cutouts = set(range(self.num_counts))
         missing_cutouts = true_cutouts - set(indices)
 
@@ -271,7 +277,6 @@ class CutoutPreprocessor:
         # Now load the cutout images and build the dataset DataFrame
         images = self._load_cutout_images(folder_path=paths.CUTOUTS_PATH)
 
-
         return self._build_dataframe(images), cat_info, cat_columns
 
 
@@ -391,8 +396,8 @@ class CutoutPreprocessor:
         """
         Apply the configured source selection, returning the boolean keep-mask written to the dataset's 'rlagn' column.
 
-        Shared by both the vectorised and iterative flag paths so the two can never drift apart on which selection
-        they apply. See the `drop_contaminants_only` parameter on __init__ for what the two selections mean.
+        Shared by both the vectorised and iterative flag paths so the two can never drift apart on which selection they
+        apply. See the `drop_contaminants_only` parameter on __init__ for what the two selections mean.
 
         Parameters
         ----------
@@ -440,6 +445,9 @@ class CutoutPreprocessor:
         cat_info : np.ndarray | list[tuple]
             The catalogue information for each source.
         """
+        assert dataset.shape[0] == cat_info.shape[0], (
+            "Dataset and catalogue information must have the same number of entries.")
+
         # Before we can do vectorise check, need to filter out broken and incomplete images
         self.logger.info("Building image lists for vectorised computation...")
         valid_mask = (~dataset['broken']) & (~dataset['incomplete'])
@@ -689,25 +697,25 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         action='store_true'
     )
     parser.add_argument(
-        "--catalogue_path",
+        "--catalogue-path",
         help=f"The path to the catalogue file, as a .h5 or .fits file. Default {paths.STRIPPED_CATALOGUE_PATH}",
         type=Path,
         default=paths.STRIPPED_CATALOGUE_PATH
     )
     parser.add_argument(
-        "--output_file_path",
+        "--output-file-path",
         help=f"The path to save the cleaned dataset file, as a .h5 or .fits file. Default {paths.DATASET_PATH_H5}",
         type=Path,
         default=None
     )
     parser.add_argument(
-        "--snr_threshold",
+        "--snr-threshold",
         help="The S/N threshold to apply when filtering the dataset. Default 15.",
         type=float,
         default=15
     )
     parser.add_argument(
-        "--edge_max_threshold",
+        "--edge-max-threshold",
         help="The edge max threshold to apply when filtering the dataset. Default 0.8.",
         type=float,
         default=0.8
@@ -716,11 +724,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "--exclusive",
         help="Whether to apply the RLAGN selection exclusively (i.e., only sources which have proper W3 detections are "
         "included) or inclusively (i.e., including sources with insufficient W3 detection data). Default False "
-        "(inclusive). Only applicable if --drop_contaminants_only is not True, which it is by default.",
+        "(inclusive). Only applicable if --drop-contaminants-only is not True, which it is by default.",
         action='store_true'
     )
     parser.add_argument(
-        "--drop_contaminants_only",
+        "--drop-contaminants-only",
         help="Keep every source except those positively identified as an SFG or RQQ, instead of keeping only sources "
         "confirmed to be in the H25 RLAGN sample. This is in the interest of some level of quality control while "
         "including enough images to build a training dataset. If False, defaults to the H25 RLAGN sample selection "
