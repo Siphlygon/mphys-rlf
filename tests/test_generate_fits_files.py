@@ -51,21 +51,53 @@ class _FakeSampler:
         self.flux_transform = flux_transform
         self.get_fpeak_calls = []
         self.quick_sample_calls = []
+        # read by _load_sampling_model when placing the model on a GPU
+        self.settings = {"n_devices": 1}
         _FakeSampler.instances.append(self)
 
     def get_fpeak_model_dist(self, train_set_path, max_vals=None):
-        """Return a dummy function for the peak flux model distribution."""
+        """Helper function to return a dummy function for the peak flux model distribution."""
         self.get_fpeak_calls.append((train_set_path, max_vals))
         return lambda n: np.full(n, 0.5)
 
-    def quick_sample(self, model_name, context=None, n_samples=None, distribute_model=None):
-        """Return a dummy array of samples with shape (batch, T, C, H, W), matching Sampler.quick_sample's real
-        numpy.ndarray return type."""
-        self.quick_sample_calls.append((model_name, context, n_samples, distribute_model))
+    def quick_sample(self, model_name, model=None, context=None, n_samples=None, distribute_model=None):
+        """
+        Helper function to return a dummy array of samples with shape (batch, T, C, H, W), matching
+        Sampler.quick_sample's real numpy.ndarray return type.
+        """
+        self.quick_sample_calls.append((model_name, model, context, n_samples, distribute_model))
         batch = context.shape[0]
         # shape (batch, T, C, H, W); sample() reads samples[i, -1, 0, :, :] - each image has internal variation
         # (0..63) offset per-sample so im_max != im_min for the 0-1 scaling branch, and images are distinguishable.
         return np.stack([np.arange(64, dtype=np.float32).reshape(1, 1, 8, 8) + i * 1000 for i in range(batch)])
+
+
+class _FakeModelConfig:
+    """Stand-in for ModelConfig - sample() only reads the trained model's `context` column list off it."""
+
+    def __init__(self, context):
+        self.context = context
+
+
+class _FakeModel:
+    """
+    Stand-in for the loaded torch model - sample() only loads it, calls .eval(), and hands it to quick_sample.
+    `load_calls` records every load so the once-per-run hoist can be asserted, and `context` sets the context columns
+    the fake model reports having been trained on.
+    """
+    load_calls = []
+    context = ["max_values_tr"]
+
+    @classmethod
+    def load(cls, model_name, *args, return_config=False, **kwargs):
+        """Stand-in for model_utils.load_model, including its (model, config) return_config form."""
+        cls.load_calls.append(model_name)
+        model = cls()
+        return (model, _FakeModelConfig(cls.context)) if return_config else model
+
+    def eval(self):
+        """nn.Module.eval() returns self, so mirror that - _load_sampling_model returns the result directly."""
+        return self
 
 
 class _FakeImageAnalyzer:
@@ -87,9 +119,13 @@ def _clear_fake_instances():
     """Clear the instances of _FakeSampler and _FakeImageAnalyzer before and after each test to ensure isolation."""
     _FakeSampler.instances = []
     _FakeImageAnalyzer.instances = []
+    _FakeModel.load_calls = []
+    _FakeModel.context = ["max_values_tr"]
     yield
     _FakeSampler.instances = []
     _FakeImageAnalyzer.instances = []
+    _FakeModel.load_calls = []
+    _FakeModel.context = ["max_values_tr"]
 
 
 @pytest.fixture
@@ -100,6 +136,7 @@ def patched_sample_deps(monkeypatch, tmp_path, np_array_parent):
     """
     monkeypatch.setattr(gff, "ImageAnalyzer", _FakeImageAnalyzer)
     monkeypatch.setattr(gff.sampler, "Sampler", _FakeSampler)
+    monkeypatch.setattr(gff.model_utils, "load_model", _FakeModel.load)
     monkeypatch.setattr(paths, "FITS_PARENT", tmp_path / "fits")
     # a valid, strictly-positive maxvals file so PeakFluxPowerTransformer's box-cox fit succeeds
     (np_array_parent / "generated").mkdir(parents=True, exist_ok=True)
@@ -136,11 +173,58 @@ class TestSample:
         """Test that sample() logs and returns early when n_samples_to_generate <= 0, without calling quick_sample()."""
         gff.sample(_base_args(n_samples=0))
         assert _FakeSampler.instances[0].quick_sample_calls == []
+        # the early return comes before the model load, so an already-full bin costs nothing
+        assert _FakeModel.load_calls == []
+
+    def test_model_is_loaded_once_and_reused_across_batches(self, patched_sample_deps):
+        """
+        Test that the model is loaded once and the same instance is passed to every quick_sample call. Passing
+        model=None instead would make quick_sample re-read the parameter file from disk on every batch.
+        """
+        gff.sample(_base_args(n_samples=6, batch_size=2))
+
+        assert _FakeModel.load_calls == ["LOFAR_model"]
+        models = [model for _, model, _, _, _ in _FakeSampler.instances[0].quick_sample_calls]
+        assert len(models) == 3
+        assert all(model is models[0] for model in models)
+
+    def test_las_enabled_against_non_las_model_raises(self, patched_sample_deps, las_train_h5):
+        """
+        Test that prompting a 1-context (peak-flux-only) model with LAS conditioning fails up front, rather than
+        reaching the UNet with a context of the wrong width.
+        """
+        _FakeModel.context = ["max_values_tr"]
+        with pytest.raises(ValueError, match="context value"):
+            gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=True,
+                                  train_data_path=str(las_train_h5)))
+
+    def test_las_disabled_against_las_model_raises(self, patched_sample_deps):
+        """
+        Test the converse: a model trained with LAS conditioning cannot be sampled from a config that only prompts with
+        peak flux. This is the config.ini section that omits LAS_CONDITIONING_ENABLED by mistake.
+        """
+        _FakeModel.context = ["max_values_tr", "las_values_tr"]
+        with pytest.raises(ValueError, match="context value"):
+            gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=False))
+
+    def test_model_without_recorded_context_skips_the_check(self, patched_sample_deps):
+        """Test that a model whose config records no context columns still samples, rather than failing the check."""
+        _FakeModel.context = None
+        gff.sample(_base_args(n_samples=1, batch_size=1))
+        assert len(_FakeImageAnalyzer.instances[0].save_calls) == 1
+
+    def test_does_not_ask_quick_sample_to_place_the_model(self, patched_sample_deps):
+        """
+        Test that quick_sample is called with distribute_model=False. sample() has already placed the model, and a
+        truthy value here would make quick_sample move it back to the CPU after every batch.
+        """
+        gff.sample(_base_args(n_samples=2, batch_size=1))
+        assert [call[-1] for call in _FakeSampler.instances[0].quick_sample_calls] == [False, False]
 
     def test_unknown_distribution_raises_value_error(self):
         """
-        Test that constructing SampleArgs with an unknown distribution raises ValueError - sample() itself
-        trusts args.distribution is already valid and no longer re-checks it.
+        Test that constructing SampleArgs with an unknown distribution raises ValueError - sample() itself trusts
+        args.distribution is already valid and no longer re-checks it.
         """
         with pytest.raises(ValueError):
             _base_args(distribution="not_a_real_distribution")
@@ -174,6 +258,7 @@ class TestSample:
 
     def test_las_conditioning_adds_lasize_kwarg(self, patched_sample_deps, las_train_h5):
         """Test that sample() adds the LASIZE keyword argument when las_conditioning_enabled is True."""
+        _FakeModel.context = ["max_values_tr", "las_values_tr"]
         gff.sample(_base_args(n_samples=1, batch_size=1, las_conditioning_enabled=True,
                               train_data_path=str(las_train_h5)))
         image, postfix, kwargs = _FakeImageAnalyzer.instances[0].save_calls[0]
@@ -185,13 +270,14 @@ class TestSample:
         Test that the LASIZE header stays in physical arcsec while the model context gets the standardised
         (power-transformed, ~N(0,1)) LAS value - the space the model was trained on.
         """
+        _FakeModel.context = ["max_values_tr", "las_values_tr"]
         gff.sample(_base_args(n_samples=8, batch_size=8, las_conditioning_enabled=True,
                               train_data_path=str(las_train_h5)))
 
         header_las = np.array([kwargs["LASIZE"] for _, _, kwargs in _FakeImageAnalyzer.instances[0].save_calls])
         assert ((header_las >= 6) & (header_las <= 120)).all()
 
-        _, context, _, _ = _FakeSampler.instances[0].quick_sample_calls[0]
+        _, _, context, _, _ = _FakeSampler.instances[0].quick_sample_calls[0]
         context_las = context.numpy()[:, 1]
         # standardised values live on a ~N(0,1) scale, nothing like raw arcsec
         assert np.abs(context_las).max() < 6
@@ -204,8 +290,8 @@ class TestSample:
 
     def test_flux_transform_from_model_config_reaches_sampler(self, patched_sample_deps, monkeypatch, tmp_path):
         """
-        Test that a flux transform recorded in the trained model's saved config is passed to the Sampler, so
-        samples are inverted back to physical Jy/beam.
+        Test that a flux transform recorded in the trained model's saved config is passed to the Sampler, so samples are
+        inverted back to physical Jy/beam.
         """
         transform_dict = {"name": "GlobalAsinhScale", "beta": 3.36e-4, "k": 0.658}
         model_dir = tmp_path / "model_results" / "LOFAR_model"
