@@ -19,8 +19,8 @@ import torch
 from sklearn.preprocessing import PowerTransformer
 
 from ..analysis.image_analyzer import ImageAnalyzer, RecursiveFileAnalyzer
-from ..model import sampler
-from ..utils import paths
+from ..model import model_utils, sampler
+from ..utils import device_utils, paths
 from ..utils.distributed import DistributedUtils
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.power_transform import PeakFluxPowerTransformer
@@ -225,6 +225,10 @@ def _get_las_transformer(train_data_path: str) -> PowerTransformer:
     PowerTransformer
         The fitted transformer; use ``.transform`` to map physical LAS values into the model's context space
     """
+    # Logged either side of the open: on NFS without HDF5_USE_FILE_LOCKING=FALSE this call blocks on the file lock
+    # indefinitely, and without these lines the run just stops silently after the PeakFluxPowerTransformer fit.
+    logger = get_logger(__name__)
+    logger.info('Fitting LAS standardisation transform from %s ...', train_data_path)
     with h5py.File(train_data_path, "r") as f:
         # float32 first to match the values training saw (set_las_values), then float64 so sklearn fits at the
         # same precision it uses for training's torch-tensor input - this makes the fitted lambdas identical
@@ -232,6 +236,7 @@ def _get_las_transformer(train_data_path: str) -> PowerTransformer:
     method = "yeo-johnson" if (las_values <= 0).any() else "box-cox"
     pt = PowerTransformer(method=method)
     pt.fit(las_values.reshape(-1, 1))
+    logger.info('Fitted LAS standardisation transform on %i values (method=%s)', las_values.size, method)
     return pt
 
 
@@ -262,6 +267,73 @@ def _get_model_flux_transform(model_name: str) -> dict | None:
         logger.warning("No flux transform recorded in %s; samples will be saved in the model's raw output space.",
                        config_file)
     return flux_transform
+
+
+def _check_context_matches_model(model_config, args: SampleArgs) -> None:
+    """
+    Check that the number of context values this run will prompt with matches the number the model was trained on.
+
+    The saved config records the context columns the model was trained with, e.g. ``["max_values_tr"]`` for a peak-flux
+    only model and ``["max_values_tr", "las_values_tr"]`` when LAS conditioning was used. ``sample()`` builds a context
+    of width 1 or 2 from ``las_conditioning_enabled``, so a config.ini section whose ``LAS_CONDITIONING_ENABLED``
+    disagrees with the model prompts it with the wrong number of conditioning values. Failing here turns that into an
+    immediate, actionable error rather than a shape mismatch deep inside the UNet.
+
+    Parameters
+    ----------
+    model_config : ModelConfig
+        The trained model's saved config
+    args : SampleArgs
+        The arguments controlling sampling
+
+    Raises
+    ------
+    ValueError
+        If the model's context width and args.las_conditioning_enabled disagree
+    """
+    logger = get_logger(__name__)
+    context = getattr(model_config, "context", None)
+    if not context:
+        logger.warning("Model %r records no context columns; skipping the context-width check.", args.model_name)
+        return
+
+    expected = 2 if args.las_conditioning_enabled else 1
+    if len(context) != expected:
+        raise ValueError(
+            f"Model {args.model_name!r} was trained with {len(context)} context value(s) {list(context)}, but this "
+            f"config prompts with {expected} (las_conditioning_enabled={args.las_conditioning_enabled}). Set "
+            f"LAS_CONDITIONING_ENABLED={'True' if len(context) == 2 else 'False'} in this config.ini section "
+            f"(and TRAIN_DATA_PATH too, if enabling it)."
+        )
+
+
+def _load_sampling_model(args: SampleArgs, model_sampler: sampler.Sampler) -> torch.nn.Module:
+    """
+    Load the trained model once and place it on its device, so the sampling loop can reuse a single resident model.
+
+    ``Sampler.quick_sample`` loads the model itself when passed ``model=None``, and moves it back to the CPU afterwards
+    when it did the placement. Calling it per batch therefore repeats load_model -> torch.load -> ``.to(cuda)`` on every
+    iteration - dozens of redundant reads of the parameter file for a single bin. This function loads the model once,
+    and passes it to ``quick_sample`` with ``distribute_model=False`` so it doesn't move it back to the CPU after each
+    batch.
+
+    Parameters
+    ----------
+    args : SampleArgs
+        The arguments controlling sampling; ``model_name`` selects the model and ``use_cpu`` suppresses GPU placement
+    model_sampler : sampler.Sampler
+        The sampler whose device settings the placement should match
+
+    Returns
+    -------
+    torch.nn.Module
+        The loaded model, placed and in eval mode, ready to be passed to ``quick_sample(model=...)``
+    """
+    model, model_config = model_utils.load_model(args.model_name, return_config=True)
+    _check_context_matches_model(model_config, args)
+    if not args.use_cpu:
+        model, _ = device_utils.distribute_model(model, model_sampler.settings["n_devices"])
+    return model.eval()
 
 
 def _normalise_image(image: np.ndarray) -> np.ndarray:
@@ -378,6 +450,9 @@ def sample(args: SampleArgs):
             "las_conditioning_enabled requires train_data_path, to fit the LAS standardisation transform"
         las_transformer = _get_las_transformer(args.train_data_path)
 
+    # Loaded once, after the nothing-to-do early return above, and reused for every batch below
+    model = _load_sampling_model(args, model_sampler)
+
     # Generate/Sample the samples
     sample_generated_count = 0
     sample_index = bin_start
@@ -397,10 +472,13 @@ def sample(args: SampleArgs):
             context = np.concatenate((context, las_standardised), axis=1)
             header_context = np.concatenate((header_context, las_physical[:, np.newaxis]), axis=1)
 
+        # distribute_model=False because the model is already loaded and placed - it also stops quick_sample
+        # moving the model back to the CPU after each batch
         samples = model_sampler.quick_sample(f"{args.model_name}",
+                                             model=model,
                                              context=torch.from_numpy(context),
                                              n_samples=batch_size,
-                                             distribute_model=not args.use_cpu)
+                                             distribute_model=False)
         sample_generated_count += batch_size
 
         for i in range(samples.shape[0]):

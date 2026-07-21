@@ -14,10 +14,10 @@ from diffracc.rlf.agn_selection import select_non_contaminants, select_rlagn
 
 class TestCalculateSNR:
     """
-    Tests that CutoutPreprocessor._calculate_snr_vectorised and _calculate_snr_single produce the same results
-    for the same inputs, and that they handle zero-noise cases correctly.
+    Tests that CutoutPreprocessor._calculate_snr_vectorised and _calculate_snr_single produce the same results for the
+    same inputs, and that they handle zero-noise cases correctly.
     """
-    
+
     def test_vectorised_matches_single_for_nonzero_noise(self, cutout_preprocessor_factory):
         """Test that the vectorised S/N calculation matches the single-value calculation for non-zero noise values."""
         cp = cutout_preprocessor_factory()
@@ -191,6 +191,23 @@ class TestComputeFlags:
         assert cat.dataset.loc[1, 'S/N'] == 0.0
         # the valid row was still processed
         assert cat.dataset.loc[0, 'edge_max'] == pytest.approx(0.1)
+
+    def test_vectorised_skips_broken_images_too(self, cutout_preprocessor_factory):
+        """
+        The vectorised counterpart of the test above. Every intermediate array in _compute_vectorised_flags is
+        restricted to the valid rows, so a single broken image used to make the per-row results the wrong length to
+        write back - this is the case that never arises when all images are valid.
+        """
+        cp = cutout_preprocessor_factory()
+        cat = _SyntheticCatalogue()
+        cat.dataset.loc[1, 'broken'] = True
+
+        cp._compute_vectorised_flags(cat.dataset, cat.cat_info)
+
+        assert cat.dataset.loc[1, 'edge_max'] == 0.0
+        assert cat.dataset.loc[1, 'S/N'] == 0.0
+        assert cat.dataset.loc[0, 'edge_max'] == pytest.approx(0.1)
+        assert cat.dataset.loc[0, 'S/N'] == pytest.approx(20000.0)
 
 
 class TestDropContaminantsOnlyMode:
