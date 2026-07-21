@@ -1,5 +1,5 @@
 {
-    "model_name": "LOFAR_asinh",
+    "model_name": "LOFAR_raw_naive",
     "model_type": "EDMPrecond",
     "image_size": 80,
     "image_channels": 1,
@@ -21,7 +21,7 @@
     "learning_rate": 2e-05,
     "ema_rate": 0.9999,
     "sigma_data": 0.5,
-    "sigma_min": 0.05,
+    "sigma_min": 0.002,
     "sigma_max": 80,
     "p_mean": -2.5,
     "p_std": 1.8,
