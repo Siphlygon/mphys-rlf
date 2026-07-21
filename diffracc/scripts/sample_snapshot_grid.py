@@ -90,12 +90,13 @@ def _load_model(model_dir: Path, snapshot_path: Path, key: str) -> tuple[torch.n
         key = "model"
 
     state_dict = checkpoint[key]
-    # The EMA (AveragedModel) state dict prefixes every parameter with "module." (from DataParallel/DDP wrapping)
-    # when saved from a wrapped model; strip the prefix where present so it loads into the bare model. A dict
-    # saved unwrapped already has no prefix, so leave those keys as-is rather than filtering them out - the same
-    # fix as diffracc.model.model_utils.load_parameters, which has the identical bug.
+    # An AveragedModel (EMA / power-EMA) state dict wraps the real model as "module.*" and adds its own
+    # "n_averaged" step counter, which the bare model has no slot for. Strip the prefix where present so the
+    # weights load, and drop the counter. A dict saved unwrapped already has no prefix, so leave those keys
+    # as-is rather than filtering them out - the same fix as diffracc.model.model_utils.load_parameters.
     if key != "model":
-        state_dict = {(k[len("module."):] if k.startswith("module.") else k): v for k, v in state_dict.items()}
+        state_dict = {(k[len("module."):] if k.startswith("module.") else k): v
+                      for k, v in state_dict.items() if k != "n_averaged"}
 
     model.load_state_dict(state_dict)
     return model.eval(), config

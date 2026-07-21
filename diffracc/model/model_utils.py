@@ -140,14 +140,16 @@ def load_parameters(
     # Import model weights from file
     state_dict = torch.load(path, map_location="cpu")[key]
 
-    # If necessary, remove 'module.' from keys (e.g. for ema model). State dicts saved from a DataParallel/DDP-
-    # wrapped model have every key prefixed with 'module.'; state dicts saved unwrapped (the common case for an
-    # EMA model kept as a separate, portable copy) don't. Strip the prefix only where present, rather than
-    # filtering to just the prefixed keys - the latter would silently drop every key of an unwrapped state dict.
+    # If necessary, remove 'module.' from keys (e.g. for ema model). An AveragedModel (or a DataParallel/DDP-
+    # wrapped model) prefixes every key with 'module.' and, in the AveragedModel case, adds its own 'n_averaged'
+    # step counter that the bare model has no slot for; strip the prefix and drop the counter. State dicts saved
+    # unwrapped have no prefix, so strip only where present rather than filtering to just the prefixed keys -
+    # the latter would silently drop every key of an unwrapped state dict.
     if key != "model":
         state_dict = {
             (k[len("module."):] if k.startswith("module.") else k): v
             for k, v in state_dict.items()
+            if k != "n_averaged"
         }
 
     # Load weights into model
