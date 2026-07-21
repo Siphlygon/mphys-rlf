@@ -46,9 +46,7 @@ if __name__ == "__main__":
     assert specific_config['train_data_path'] is not None, "(currently) train_data_path must be specified in the config"
     train_data_path = specific_config['train_data_path']
 
-    # if train_data_path is paths.LOFAR_DATA_PATH, we also want to make sure to update the dataset subdir
     logger.info("Starting to write maxvals for training data")
-    write_maxvals_of_h5_to_file(paths.NP_ARRAY_PARENT / 'dataset' / paths.MAXVALS, train_data_path)
     write_maxvals_of_h5_to_file(paths.NP_ARRAY_PARENT / specific_config['generated_subdir'] / paths.MAXVALS,
                                 train_data_path)
     logger.info("Finished writing maxvals for training data")
