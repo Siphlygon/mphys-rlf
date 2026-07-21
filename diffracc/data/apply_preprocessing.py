@@ -300,7 +300,10 @@ class CutoutPreprocessor:
         np.ndarray
             The S/N ratios for the images, or -1 where the noise level is zero.
         """
-        return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
+        # np.where evaluates both branches, so the zero-noise entries still divide before being discarded - suppress
+        # the resulting warning rather than letting it surface as a spurious divide-by-zero from a handled case.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
 
 
     def _calculate_snr_single(self,
@@ -445,7 +448,9 @@ class CutoutPreprocessor:
         cat_info : np.ndarray | list[tuple]
             The catalogue information for each source.
         """
-        assert dataset.shape[0] == cat_info.shape[0], (
+        # len() rather than .shape[0]: cat_info is a plain list when it comes from an HDF5 catalogue or a caller
+        # building records by hand, and only a FITS_rec/ndarray has .shape.
+        assert dataset.shape[0] == len(cat_info), (
             "Dataset and catalogue information must have the same number of entries.")
 
         # Before we can do vectorise check, need to filter out broken and incomplete images
@@ -484,7 +489,11 @@ class CutoutPreprocessor:
         noise_levels = np.array([info['Isl_rms'] for info in cat_info])[valid_mask]
         # peak_fluxes = np.array([info['Peak_flux'] for info in cat_info])[valid_mask]
         peak_fluxes = images.max(axis=(1, 2)) * 1000 # convert from Jy/beam to mJy/beam
-        snr_list = np.where(valid_mask, self._calculate_snr_vectorised(noise_levels, peak_fluxes), -99)
+        # No np.where(valid_mask, ...) here: every array in this block is already restricted to the valid rows, so
+        # mixing in the full-length mask would broadcast a length-n_valid result against length-n_total and blow up
+        # as soon as a single image is broken or incomplete. Invalid rows keep the defaults _build_dataframe set,
+        # which is what the iterative path leaves them at too.
+        snr_list = self._calculate_snr_vectorised(noise_levels, peak_fluxes)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
         # Vectorised RLAGN selection using catalogue information
