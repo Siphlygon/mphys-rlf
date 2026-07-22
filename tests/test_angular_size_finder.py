@@ -1,12 +1,15 @@
 """
 Unit tests for diffracc/completeness/angular_size_finder.py.
 
-MakeShape/_ellipse geometry is tested directly with hand-computable expected values (ellipse area = pi*a*b, a
-single-component shape's length = 2*semi-major-axis). AngularSizeFinder's pure logic (_filter_components,
-_fit_shape_and_estimate_size) is tested via AngularSizeFinder.__new__(...) to bypass __init__ (which only sets up
-an unused RecursiveFileAnalyzer for these methods), and _extract_component_data/estimate_angular_sizes's cache
-branch are tested against small real files in tmp_path rather than the real catalogue.
+MakeShape owns the shape geometry, so its helpers (MakeShape._ellipse_polygon, MakeShape._furthest_pair) and its
+stateless size entry point (MakeShape.estimate_size) are tested directly with hand-computable expected values (ellipse
+area = pi*a*b, a single-component shape's length = 2*semi-major-axis). AngularSizeFinder's logic is tested on ordinary
+instances - __init__ is cheap (it only stores a path and builds an unused RecursiveFileAnalyzer), so there is no need
+to bypass it. _extract_component_data and estimate_angular_sizes's cache branch are tested against small real files in
+tmp_path rather than the real catalogue.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,61 +18,54 @@ from astropy.io import fits
 from diffracc.completeness.angular_size_finder import AngularSizeFinder, MakeShape
 
 
-@pytest.fixture
-def trivial_shape():
-    """A MakeShape built from a throwaway single-row component, used only to call its instance methods directly."""
-    clist = pd.DataFrame([{'RA': 0.0, 'DEC': 0.0, 'DC_Maj': 0.001, 'DC_Min': 0.0005, 'PA': 0.0}])
-    return MakeShape(clist)
-
-
 class TestEllipse:
     """
-    Tests that MakeShape._ellipse produces a polygon with the expected area, centroid, and independence of position
-    angle.
+    Tests that MakeShape._ellipse_polygon produces a polygon with the expected area, centroid, and independence of
+    position angle.
     """
 
-    def test_area_matches_pi_a_b(self, trivial_shape):
-        """Test that the area of the polygon returned by _ellipse matches the analytic ellipse area formula pi*a*b."""
+    def test_area_matches_pi_a_b(self):
+        """Test that the area of the polygon returned by _ellipse_polygon matches the analytic area formula pi*a*b."""
         a, b = 10.0, 4.0
-        poly = trivial_shape._ellipse(0.0, 0.0, a, b, pa=0.0, n=400)
+        poly = MakeShape._ellipse_polygon(0.0, 0.0, a, b, pa=0.0, n=400)
         assert poly.area == pytest.approx(np.pi * a * b, rel=1e-3)
 
-    def test_centered_at_x0_y0_regardless_of_position_angle(self, trivial_shape):
-        """Test that the centroid of the polygon returned by _ellipse is at (x0, y0) regardless of position angle."""
-        poly = trivial_shape._ellipse(5.0, -3.0, 10.0, 4.0, pa=30.0, n=400)
+    def test_centered_at_x0_y0_regardless_of_position_angle(self):
+        """Test that the centroid of the polygon returned by _ellipse_polygon is at (x0, y0) regardless of PA."""
+        poly = MakeShape._ellipse_polygon(5.0, -3.0, 10.0, 4.0, pa=30.0, n=400)
         centroid = poly.centroid
         assert centroid.x == pytest.approx(5.0, abs=1e-6)
         assert centroid.y == pytest.approx(-3.0, abs=1e-6)
 
-    def test_area_independent_of_position_angle(self, trivial_shape):
+    def test_area_independent_of_position_angle(self):
         """
-        Test that the area of the polygon returned by _ellipse is independent of position angle. If the area changes
-        with PA, the ellipse is being distorted by the rotation.
+        Test that the area of the polygon returned by _ellipse_polygon is independent of position angle. If the area
+        changes with PA, the ellipse is being distorted by the rotation.
         """
         a, b = 8.0, 3.0
-        areas = [trivial_shape._ellipse(0, 0, a, b, pa=pa, n=400).area for pa in (0, 45, 90, 137)]
+        areas = [MakeShape._ellipse_polygon(0, 0, a, b, pa=pa, n=400).area for pa in (0, 45, 90, 137)]
         for area in areas:
             assert area == pytest.approx(np.pi * a * b, rel=1e-3)
 
 
 class TestFindFurthestPoints:
     """
-    Tests that MakeShape._find_furthest_points correctly identifies the two points in a set that are furthest apart.
+    Tests that MakeShape._furthest_pair correctly identifies the two points in a set that are furthest apart.
     """
 
-    def test_max_distance_pair_in_unit_square(self, trivial_shape):
+    def test_max_distance_pair_in_unit_square(self):
         """
         Test that the two furthest points in a unit square are the two diagonal corners, with a squared distance of 2.
         """
         points = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
-        best_coords, mdist2 = trivial_shape._find_furthest_points(points)
+        best_coords, mdist2 = MakeShape._furthest_pair(points)
         assert mdist2 == pytest.approx(2.0)  # the two diagonal corners
 
-    def test_empty_points_returns_zero_without_raising(self, trivial_shape):
+    def test_empty_points_returns_zero_without_raising(self):
         """
-        Test that _find_furthest_points returns ((0,0),(0,0)), 0 for an empty input array instead of raising an error.
+        Test that _furthest_pair returns ((0,0),(0,0)), 0 for an empty input array instead of raising an error.
         """
-        best_coords, mdist2 = trivial_shape._find_furthest_points(np.empty((0, 2)))
+        best_coords, mdist2 = MakeShape._furthest_pair(np.empty((0, 2)))
         assert best_coords == ((0, 0), (0, 0))
         assert mdist2 == 0
 
@@ -115,9 +111,7 @@ class TestFilterComponents:
     @pytest.fixture
     def finder(self):
         """Fixture that returns an AngularSizeFinder instance with a flux threshold set for testing."""
-        finder = AngularSizeFinder.__new__(AngularSizeFinder)
-        finder.flux_threshold = 0.95
-        return finder
+        return AngularSizeFinder(root_dir=Path("unused"), flux_threshold=0.95)
 
     def test_keeps_components_until_flux_threshold_reached(self, finder):
         """Test that _filter_components keeps the brightest components until the flux threshold is reached."""
@@ -145,32 +139,27 @@ class TestFilterComponents:
             finder._filter_components([(0.0, 0, 0, 0, 0, 0), (0.0, 0, 0, 0, 0, 0)])
 
 
-class TestFitShapeAndEstimateSize:
+class TestEstimateSize:
     """
-    Tests that AngularSizeFinder._fit_shape_and_estimate_size correctly estimates the angular size from components.
+    Tests that MakeShape.estimate_size (the stateless size entry point) estimates the angular size from components.
     """
 
-    @pytest.fixture
-    def finder(self):
-        """Fixture that returns an AngularSizeFinder instance for testing _fit_shape_and_estimate_size."""
-        return AngularSizeFinder.__new__(AngularSizeFinder)
-
-    def test_matches_makeshape_length_for_given_components(self, finder):
+    def test_matches_makeshape_length_for_given_components(self):
         """
-        Test that _fit_shape_and_estimate_size returns the same length as MakeShape.length() for the given components.
+        Test that estimate_size returns the same buffered length as MakeShape(...).length() for the given components.
         """
         dc_maj_deg, dc_min_deg = 0.01, 0.005
         components = [(10.0, 10.0, 20.0, dc_maj_deg, dc_min_deg, 0.0)]
 
-        size = finder._fit_shape_and_estimate_size(components)
+        size = MakeShape.estimate_size(components)
 
         expected = 2 * (dc_maj_deg * 3600 + 0.1)
         assert size == pytest.approx(expected, rel=1e-3)
 
-    def test_raises_on_empty_components(self, finder):
-        """Test that _fit_shape_and_estimate_size raises an AssertionError when given an empty list of components."""
+    def test_raises_on_empty_components(self):
+        """Test that estimate_size raises an AssertionError when given an empty list of components."""
         with pytest.raises(AssertionError):
-            finder._fit_shape_and_estimate_size([])
+            MakeShape.estimate_size([])
 
 
 class TestExtractComponentData:
@@ -191,8 +180,7 @@ class TestExtractComponentData:
 
     def test_reads_and_filters_components_from_fits_file(self, tmp_path):
         """Test that _extract_component_data reads a FITS file and filters components to reach the flux threshold."""
-        finder = AngularSizeFinder.__new__(AngularSizeFinder)
-        finder.flux_threshold = 0.95
+        finder = AngularSizeFinder(root_dir=tmp_path, flux_threshold=0.95)
         fits_path = tmp_path / "source_1.fits"
         self._write_component_fits(
             fits_path,
@@ -284,13 +272,14 @@ class TestEstimateAngularSizesFullPipeline:
 class TestMakeShapePlot:
     """Smoke test for MakeShape.plot() - forced onto the Agg backend so it never opens a real window."""
 
-    def test_runs_without_error(self, monkeypatch, trivial_shape):
+    def test_runs_without_error(self, monkeypatch):
         """Test that MakeShape.plot() runs without error on the Agg backend."""
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
+        clist = pd.DataFrame([{'RA': 0.0, 'DEC': 0.0, 'DC_Maj': 0.001, 'DC_Min': 0.0005, 'PA': 0.0}])
         try:
-            trivial_shape.plot()
+            MakeShape(clist).plot()
         finally:
             plt.close("all")

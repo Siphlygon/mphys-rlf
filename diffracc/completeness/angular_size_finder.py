@@ -396,13 +396,14 @@ class MakeShape():
 class AngularSizeFinder:
     """
     A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
-    extracted from PyBDSF catalogue FITS files. It owns the pipeline (reading, flux-filtering) and delegates the shape
-    geometry to ``MakeShape``.
+    extracted from PyBDSF catalogue FITS files. It owns the pipeline (reading, flux-filtering, per-source conventions,
+    and serial/parallel dispatch) and delegates the shape geometry to ``MakeShape``.
     """
     def __init__(self,
                  root_dir: Path = paths.STORAGE_PARENT / "diffracc/completeness/retrained_loguniform_catalogs",
                  flux_threshold: float = 0.95,
-                 n_points: int = MakeShape.DEFAULT_ELLIPSE_POINTS):
+                 n_points: int = MakeShape.DEFAULT_ELLIPSE_POINTS,
+                 num_processes: int = 1):
         """
         This class processes PyBDSF catalogue FITS files containing Gaussian component data for radio sources, filters
         the components based on total flux, and estimates the angular size of the sources by creating a shape from the
@@ -419,6 +420,9 @@ class AngularSizeFinder:
         n_points : int, optional
             The number of points used to sample each component ellipse's boundary when estimating sizes, by default
             ``MakeShape.DEFAULT_ELLIPSE_POINTS``.
+        num_processes : int, optional
+            The number of worker processes to use for the (CPU-bound, per-source-independent) size-estimation step, by
+            default 1 (serial). Values > 1 dispatch the estimation across a ``ProcessPoolExecutor``.
         """
         self.logger = get_logger("AngularSizeFinder", LoggingLevels.INFO.value)
         self.root_dir = root_dir
@@ -429,6 +433,7 @@ class AngularSizeFinder:
         self.flux_threshold = flux_threshold
 
         self.n_points = n_points
+        self.num_processes = num_processes
 
         self.rfa = RecursiveFileAnalyzer(self.root_dir)
 
@@ -503,31 +508,65 @@ class AngularSizeFinder:
         return filtered_components
 
 
-    def _fit_shape_and_estimate_size(self, components: list[tuple]) -> float:
+    @staticmethod
+    def _size_worker(components: list[tuple] | None, n: int) -> float:
         """
-        Create a shape representing the source from the filtered components and estimate the angular size of the source
-        based on this shape.
+        Estimate one source's angular size (arcseconds), applying the pipeline's per-source conventions and delegating
+        the geometry to ``MakeShape``. A staticmethod so it can be pickled and dispatched to a ``ProcessPoolExecutor``.
 
         Parameters
         ----------
-        components : list[tuple]
-            A list of tuples representing the filtered components, where each tuple contains the total flux, RA, DEC,
-            major axis, minor axis, and position angle of a component.
-        
+        components : list[tuple] | None
+            The filtered components, each a ``(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)`` tuple. ``None`` (a failed file
+            read that ``RecursiveFileAnalyzer`` turned into ``None``) yields ``NaN`` rather than crashing the whole run.
+        n : int
+            Number of boundary points per ellipse.
+
         Returns
         -------
         float
-            The estimated angular size of the source in arcseconds, calculated as the maximum distance between any two
-            points on the convex hull of the combined shape formed by the components.
+            The estimated angular size in arcseconds, or ``NaN`` if ``components`` is ``None``.
         """
-        assert components, "No components to create shape from. Check the filtering step and the input data."
+        if components is None:
+            return float("nan")
 
-        # Create a shape representing the source from the filtered components by taking the union of ellipses
-        # representing each component, where the ellipses are defined by the major and minor axes and position angle of
-        # the components. The angular size is estimated as the maximum distance between any two points on the convex
-        # hull of the combined shape.
-        shape = MakeShape(pd.DataFrame(components, columns=['Total_flux', 'RA', 'DEC', 'DC_Maj', 'DC_Min', 'PA']))
-        return shape.length()
+        comp = np.asarray(components, dtype=float)
+
+        # A single surviving component: return twice the (unbuffered) major axis directly. This is a pipeline
+        # convention that deliberately skips the ellipse-buffer path MakeShape uses for multi-component shapes.
+        if len(comp) == 1:
+            return 2 * comp[0, 3] * 3600
+
+        return MakeShape.estimate_size(comp, n)
+
+
+    def _estimate_sizes(self, components_list) -> list[float]:
+        """
+        Estimate the angular size for every source's component list, serially or across a process pool.
+
+        Parameters
+        ----------
+        components_list : Sequence
+            The per-source filtered component lists (as produced by ``_extract_component_data`` via the file pipeline).
+
+        Returns
+        -------
+        list[float]
+            The estimated angular sizes in arcseconds, one per source, in the same order as ``components_list``.
+        """
+        worker = partial(self._size_worker, n=self.n_points)
+
+        # Each source is independent and the work is CPU-bound pure numpy/scipy, so it parallelises cleanly. The
+        # chunksize amortises the per-task dispatch overhead over many small sources.
+        if self.num_processes and self.num_processes > 1:
+            self.logger.info(f"Estimating angular sizes across {self.num_processes} processes")
+            with ProcessPoolExecutor(max_workers=self.num_processes) as executor:
+                return list(tqdm(executor.map(worker, components_list, chunksize=64),
+                                 total=len(components_list),
+                                 desc="Estimating angular sizes", mininterval=1.0))
+
+        return [worker(components)
+                for components in tqdm(components_list, desc="Estimating angular sizes", mininterval=1.0)]
 
 
     # ---------- RUNNING THE PIPELINE ----------
@@ -580,13 +619,7 @@ class AngularSizeFinder:
         )
 
         # Estimate the angular size of each image based on the component data
-        ang_sizes = []
-        for components in tqdm(components_list, desc="Estimating angular sizes", mininterval=1.0):
-            # If there's only one component, either originally or after filtering, return a size based on DC_Maj
-            if len(components) == 1:
-                ang_sizes.append(2 * components[0][3] * 3600)
-            else:
-                ang_sizes.append(self._fit_shape_and_estimate_size(components))
+        ang_sizes = self._estimate_sizes(components_list)
 
         # Save the estimated angular sizes to a CSV file if an output file name is provided
         if output_file:
@@ -624,6 +657,8 @@ def build_arg_parser():
     parser.add_argument("--num-points", type=int, default=MakeShape.DEFAULT_ELLIPSE_POINTS,
                         help="Number of points used to sample each component ellipse's boundary. Default is "
                              f"{MakeShape.DEFAULT_ELLIPSE_POINTS}.")
+    parser.add_argument("--num-processes", type=int, default=1,
+                        help="Number of worker processes for the size-estimation step. Default is 1 (serial).")
 
     return parser
 
@@ -637,7 +672,7 @@ if __name__ == "__main__":
     root = args.root_dir if args.root_dir else _default_root
 
     asf = AngularSizeFinder(root, flux_threshold=args.flux_threshold,
-                            n_points=args.num_points)
+                            n_points=args.num_points, num_processes=args.num_processes)
     indices, sizes = asf.estimate_angular_sizes(output_file=args.output_file)
 
     # Check for estimated angular sizes that are above the outlier threshold - "outliers"
