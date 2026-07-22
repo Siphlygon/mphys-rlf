@@ -1,12 +1,22 @@
 """
-This module contains the AngularSizeFinder class, which is used to estimate the angular size of a set of radio galaxy
-images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files. The class processes the
-FITS files, filters the components based on total flux to remove any present noise islands, and estimates the angular
-size of the sources by creating a shape from the components and calculating the maximum distance between points on the
-convex hull of this shape.
+This module contains the ``AngularSizeFinder`` class, which is used to estimate the angular size of a set of radio
+galaxy images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files. The class
+processes the FITS files, filters the components based on total flux to remove any present noise islands, and estimates
+the angular size of the sources by creating a shape from the components and calculating the maximum distance between
+points on the convex hull of this shape.
+
+The shape geometry is owned by ``MakeShape`` (adapted from LoTSS-Catalogue GitHub): it samples each component ellipse's
+boundary, takes their convex hull, and measures its diameter. Since the convex hull of a union of shapes equals the
+convex hull of all those shapes' boundary points, the GEOS polygon union (shapely ``unary_union``) is unnecessary for
+the size estimate (and expensive) and is only built lazily inside ``MakeShape.plot`` for visualisation.
+
+``AngularSizeFinder`` owns the pipeline: reading and flux-filtering the catalogues, the per-source conventions (e.g. the
+single-component shortcut), and the serial/parallel dispatch. It delegates every geometric calculation to ``MakeShape``.
 """
 import argparse
 import os
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -14,6 +24,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 from matplotlib import transforms
+from scipy.spatial import ConvexHull, QhullError
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 from tqdm import tqdm
@@ -25,187 +36,320 @@ from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 class MakeShape():
     """
-    Code in this class is adapted from the LoTSS-Catalogue GitHub, which contains the code to create the
-    optically-identified LoTSS catalogues. The exact file is found here:
+    A radio source's shape, built from its component list. It owns the shape geometry: sampling the component ellipse
+    boundaries, taking their convex hull, and measuring the hull's diameter (the angular-size estimate). An instance
+    keeps the intermediate geometry so it can also be plotted; ``estimate_size`` is a stateless fast path for callers
+    (e.g. the parallel pipeline) that only need the number.
+
+    Code here is adapted from the LoTSS-Catalogue GitHub, which contains the code to create the optically-identified
+    LoTSS catalogues (e.g., Hardcastle et al. 2023 for LoTSS-DR2). The exact file is found here:
     https://github.com/mhardcastle/lotss-catalogue/blob/master/dr2_catalogue/make_catalogue.py
     """
+
+    # Number of points used to sample each component ellipse's boundary. The original code used 200; this is overkill,
+    # and 50 points give sub-percent error on the length and cuts the point count down dramatically for the hull.
+    # This number needs to be even so the two antipodal major-axis points (theta = 0 and pi) are always sampled exactly,
+    # which makes a single-component source's size land exactly on twice its (buffered) major axis.
+    DEFAULT_ELLIPSE_POINTS = 50
+
+    # Buffer (arcsec) added to each ellipse's axes so neighbouring components overlap into a single connected shape.
+    _ELLIPSE_BUFFER_ARCSEC = 0.1
+
+
     def __init__(self,
                  clist: pd.DataFrame,
-                 show_progress: bool = False):
+                 n: int = DEFAULT_ELLIPSE_POINTS):
         """
-        A class to create a shape representing a radio source given a list of its components, created by taking the
-        union of ellipses representing each component.
-        
+        Build the shape for a source from the component information in ``clist``.
+
+        The angular size (``length``) is computed from the convex hull of the sampled ellipse boundaries; the filled
+        shapely union is only built on demand by ``plot``.
+
         Parameters
         ----------
         clist : pd.DataFrame
             A DataFrame containing the component information for the source, with columns 'RA', 'DEC', 'DC_Maj',
             'DC_Min', and 'PA' representing the right ascension, declination, major axis, minor axis, and position
             angle of each component, respectively.
-        show_progress : bool, optional
-            Whether to show a progress bar for the processing of components, by default False.
+        n : int, optional
+            The number of points used to sample each component ellipse's boundary, by default ``DEFAULT_ELLIPSE_POINTS``.
         """
-        self.logger = get_logger("MakeShape", LoggingLevels.DEBUG.value)
-        self.show_progress = show_progress
+        self.n = n
+
+        # Component arrays (kept for lazy shapely reconstruction in plot())
+        self._ra = np.asarray(clist['RA'], dtype=float)
+        self._dec = np.asarray(clist['DEC'], dtype=float)
+        self._dc_maj = np.asarray(clist['DC_Maj'], dtype=float)
+        self._dc_min = np.asarray(clist['DC_Min'], dtype=float)
+        self._pa = np.asarray(clist['PA'], dtype=float)
 
         # Set the RA and DEC of the source to the mean RA and DEC of its components
-        ra = np.mean(clist['RA'])
-        dec = np.mean(clist['DEC'])
-        self.ra = ra
-        self.dec = dec
+        self.ra = float(self._ra.mean())
+        self.dec = float(self._dec.mean())
 
-        # Create an ellipse for each component in the list, and take the union of these ellipses to form a shape
-        # representing the source
-        ellist = self._create_ellipse_list(clist)
-        self.combined_polygon = unary_union(ellist)
+        # Sample every ellipse boundary, take the convex hull, and find the furthest pair of hull points, which gives
+        # the angular-size estimate. No polygon union is built here.
+        points = self._ellipse_points(self._ra, self._dec, self._dc_maj, self._dc_min, self._pa, n)
+        self.hull_points = self._hull_vertices(points)
+        self.best_coords, self.mdist2 = self._furthest_pair(self.hull_points)
 
-        # Calculate the convex hull of the combined shape, and find the maximum distance between any two points on the
-        # convex hull, which will be used as an estimate of the angular size of the source
-        self.hull = self.combined_polygon.convex_hull
-        hull_points = np.asarray(self.hull.exterior.coords)  # type: ignore
-
-        self.best_coords, self.mdist2 = self._find_furthest_points(hull_points)
-        self.hull_points = hull_points
+        # Filled shapely union and its hull are only needed for plotting; built lazily to keep this path GEOS-free.
+        self.combined_polygon: Polygon | MultiPolygon | None = None
+        self.hull = None
 
 
-    def _ellipse(self,
-                 x0: float,
-                 y0: float,
-                 a: float,
-                 b: float,
-                 pa: float,
-                 n: int = 200) -> Polygon:
+    def length(self) -> float:
         """
-        A function to create an ellipse given its center (x0, y0), semi-major axis a, semi-minor axis b, and position
-        angle pa. The function returns a Polygon object representing the ellipse.
-        
+        Calculate the angular size of the source as the maximum distance between points on the convex hull of the
+        (union of) component ellipses.
+
+        Returns
+        -------
+        float
+            The estimated angular size of the source in arcseconds.
+        """
+        return np.sqrt(self.mdist2)
+
+
+    @classmethod
+    def estimate_size(cls, components, n: int = DEFAULT_ELLIPSE_POINTS) -> float:
+        """
+        Estimate a source's angular size directly from its components, without constructing an instance or any shapely
+        geometry. This is the stateless fast path used by the pipeline; it is equivalent to ``MakeShape(clist).length()``
+        but skips the DataFrame and the stored plotting state.
+
         Parameters
         ----------
-        x0 : float
-            The x-coordinate of the center of the ellipse.
-        y0 : float
-            The y-coordinate of the center of the ellipse.
-        a : float
-            The semi-major axis of the ellipse.
-        b : float
-            The semi-minor axis of the ellipse.
-        pa : float
-            The position angle of the ellipse in degrees, measured counter-clockwise from the positive x-axis.
+        components : array-like
+            The source's components, as rows of ``(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)``.
         n : int, optional
-            The number of points to use to approximate the ellipse, by default 200.
-        
+            The number of points used to sample each component ellipse's boundary, by default ``DEFAULT_ELLIPSE_POINTS``.
+
+        Returns
+        -------
+        float
+            The estimated angular size in arcseconds.
+        """
+        comp = np.asarray(components, dtype=float)
+        assert comp.size, "No components to create shape from. Check the filtering step and the input data."
+
+        points = cls._ellipse_points(comp[:, 1], comp[:, 2], comp[:, 3], comp[:, 4], comp[:, 5], n)
+        _, mdist2 = cls._furthest_pair(cls._hull_vertices(points))
+        return float(np.sqrt(mdist2))
+
+
+    # ---------- GEOMETRY ----------
+    @classmethod
+    def _ellipse_points(cls,
+                        ra: np.ndarray,
+                        dec: np.ndarray,
+                        dc_maj: np.ndarray,
+                        dc_min: np.ndarray,
+                        pa: np.ndarray,
+                        n: int = DEFAULT_ELLIPSE_POINTS) -> np.ndarray:
+        """
+        Sample the boundaries of every component ellipse at once, returning all points as a single (k*n, 2) array of
+        arcsecond offsets from the source centre (the mean RA/DEC of the components).
+
+        Uses a tangent-plane projection (RA scaled by cos(dec), the +90 degree position-angle convention) and the
+        ``_ELLIPSE_BUFFER_ARCSEC`` axis buffer, but builds no shapely objects and loops over no rows.
+
+        Parameters
+        ----------
+        ra, dec : np.ndarray
+            Component right ascensions and declinations, in degrees.
+        dc_maj, dc_min : np.ndarray
+            Component deconvolved major and minor axes, in degrees.
+        pa : np.ndarray
+            Component position angles, in degrees.
+        n : int, optional
+            Number of boundary points per ellipse, by default ``DEFAULT_ELLIPSE_POINTS``.
+
+        Returns
+        -------
+        np.ndarray
+            A (k*n, 2) array of (x, y) boundary points in arcseconds.
+        """
+        ra = np.asarray(ra, dtype=float)
+        dec = np.asarray(dec, dtype=float)
+        dc_maj = np.asarray(dc_maj, dtype=float)
+        dc_min = np.asarray(dc_min, dtype=float)
+        pa = np.asarray(pa, dtype=float)
+
+        # Source centre is the mean of the component positions
+        ra0 = ra.mean()
+        dec0 = dec.mean()
+
+        # Per-component centre offsets in arcseconds, accounting for the cosine of the declination on the RA component
+        x0 = 3600 * np.cos(np.deg2rad(dec0)) * (ra0 - ra)
+        y0 = 3600 * (dec - dec0)
+        a = dc_maj * 3600 + cls._ELLIPSE_BUFFER_ARCSEC
+        b = dc_min * 3600 + cls._ELLIPSE_BUFFER_ARCSEC
+
+        # Convert the position angle from degrees to radians and adjust by 90 degrees to match the original convention
+        ang = np.deg2rad(pa + 90)
+
+        # Points evenly spaced around a unit circle, shared by every component
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        ct = np.cos(theta)          # (n,)
+        st = np.sin(theta)
+        ca = np.cos(ang)[:, None]   # (k, 1)
+        sa = np.sin(ang)[:, None]
+
+        # Parametric ellipse, broadcast over all k components and n angles at once -> (k, n)
+        px = x0[:, None] + a[:, None] * ca * ct - b[:, None] * sa * st
+        py = y0[:, None] + a[:, None] * sa * ct + b[:, None] * ca * st
+        return np.column_stack([px.ravel(), py.ravel()])
+
+
+    @staticmethod
+    def _hull_vertices(points: np.ndarray) -> np.ndarray:
+        """
+        Return the convex-hull vertices of a set of 2D points, falling back to the points themselves when a hull cannot
+        be formed (fewer than three points, or a degenerate/collinear set that Qhull rejects). The maximum pairwise
+        distance is unchanged by that fallback, so the size estimate stays correct.
+
+        Parameters
+        ----------
+        points : np.ndarray
+            An (m, 2) array of points.
+
+        Returns
+        -------
+        np.ndarray
+            The subset of ``points`` lying on the convex hull, or all of ``points`` if no hull could be formed.
+        """
+        if len(points) < 3:
+            return points
+        try:
+            return points[ConvexHull(points).vertices]
+        except QhullError:
+            return points
+
+
+    @staticmethod
+    def _furthest_pair(points: np.ndarray) \
+            -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
+        """
+        Find the pair of points that are furthest apart, returning both the pair and their squared distance.
+
+        Intended to be called on convex-hull vertices only (a handful of points), so the O(m^2) all-pairs computation
+        is cheap. ``length`` needs only the squared distance; ``plot`` also wants the actual pair to draw the
+        max-distance line, so both are returned from one computation.
+
+        Parameters
+        ----------
+        points : np.ndarray
+            An (m, 2) array of points.
+
+        Returns
+        -------
+        best_coords : tuple[tuple[float, float], tuple[float, float]]
+            The pair of points that are furthest apart. ``((0, 0), (0, 0))`` when fewer than two points are given.
+        mdist2 : float
+            The maximum squared distance between any two points, or 0.0 when fewer than two points are given.
+        """
+        if len(points) < 2:
+            return ((0.0, 0.0), (0.0, 0.0)), 0.0
+
+        diff = points[:, None, :] - points[None, :, :]
+        dist2 = (diff * diff).sum(axis=-1)
+        i, j = np.unravel_index(np.argmax(dist2), dist2.shape)
+        return (points[i], points[j]), float(dist2[i, j])
+
+
+    # ---------- VISUALISATION ----------
+    @staticmethod
+    def _ellipse_polygon(x0: float,
+                         y0: float,
+                         a: float,
+                         b: float,
+                         pa: float,
+                         n: int = 50) -> Polygon:
+        """
+        Create a shapely Polygon approximating an ellipse centred at (x0, y0) with semi-axes a, b and position angle pa.
+        Only used to build the filled shape for ``plot``.
+
+        Parameters
+        ----------
+        x0, y0 : float
+            The centre of the ellipse.
+        a, b : float
+            The semi-major and semi-minor axes.
+        pa : float
+            The position angle in degrees.
+        n : int, optional
+            The number of points used to approximate the ellipse, by default 50.
+
         Returns
         -------
         Polygon
-            A Shapely Polygon object representing the ellipse.
+            A shapely Polygon representing the ellipse.
         """
-        # Generate n points evenly spaced around a unit circle
-        theta = np.linspace(0, 2*np.pi, n, endpoint=False)
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
         st = np.sin(theta)
         ct = np.cos(theta)
 
-        # Convert the position angle from degrees to radians and adjust it by 90 degrees to align with the standard
-        # mathematical convention for ellipses
         pa = np.deg2rad(pa + 90)
         sa = np.sin(pa)
         ca = np.cos(pa)
 
-        # Calculate the coordinates of points using the parametric equations of an ellipse
         p = np.empty((n, 2))
         p[:, 0] = x0 + a * ca * ct - b * sa * st
         p[:, 1] = y0 + a * sa * ct + b * ca * st
         return Polygon(p)
 
 
-    def _create_ellipse_list(self, clist: pd.DataFrame) -> list[Polygon]:
+    @classmethod
+    def _combined_polygon(cls,
+                          ra: np.ndarray,
+                          dec: np.ndarray,
+                          dc_maj: np.ndarray,
+                          dc_min: np.ndarray,
+                          pa: np.ndarray,
+                          n: int = 50) -> Polygon | MultiPolygon:
         """
-        A function to create a list of Polygon objects representing the ellipses for each component in the component
-        list.
+        Build the filled shapely union of a source's component ellipses. Uses the same projection and axis buffer as
+        ``_ellipse_points``; only used for plotting.
 
         Parameters
         ----------
-        clist : pd.DataFrame
-            A DataFrame containing the component information for the source, with columns 'RA', 'DEC', 'DC_Maj',
-            'DC_Min', and 'PA' representing the right ascension, declination, major axis, minor axis, and position
-            angle of each component, respectively.
-        
-        Returns
-        -------
-        list[Polygon]
-            A list of Shapely Polygon objects representing the ellipses for each component.
-        """
-        ellist = []
-        for component in tqdm(clist.iterrows(),
-                              desc="Creating ellipses for components...", disable=not self.show_progress):
-            ra_n = component[1]['RA']
-            dec_n = component[1]['DEC']
-
-            # Convert the RA and DEC differences to arcseconds, accounting for the cosine of the declination for the RA
-            # component
-            x = 3600 * np.cos(self.dec * np.pi/180.0) * (self.ra - ra_n)
-            y = 3600 * (dec_n - self.dec)
-
-            # Get the major and minor axes of the ellipse representing the component, and convert to arcseconds.
-            dc_maj_n = component[1]['DC_Maj'] * 3600
-            dc_min_n = component[1]['DC_Min'] * 3600
-
-            # Add a small buffer (0.1 arcseconds) to the major and minor axes to ensure that the ellipses overlap and
-            # form a single connected shape, even if the components are very close together
-            new_polygon = self._ellipse(x, y, dc_maj_n + 0.1, dc_min_n + 0.1, component[1]['PA'])
-            ellist.append(new_polygon)
-
-        return ellist
-
-
-    def _find_furthest_points(self, points: np.ndarray) \
-                                -> tuple[tuple[tuple[float, float], tuple[float, float]], float]:
-        """
-        A function to find the pair of points in a given set of points that are furthest apart, and return these points
-        as a tuple.
-
-        Parameters
-        ----------
-        points : np.ndarray
-            An array of shape (n, 2) containing the coordinates of the points.
+        ra, dec, dc_maj, dc_min, pa : np.ndarray
+            Component positions (deg), axes (deg), and position angles (deg).
+        n : int, optional
+            The number of points used to approximate each ellipse, by default 50.
 
         Returns
         -------
-        best_coords : tuple[tuple[float, float], tuple[float, float]]
-            A tuple containing the pair of points that are furthest apart, where each point is represented as a tuple of
-            (x, y) coordinates.
-        mdist2 : float
-            The maximum distance between the pair of points that are furthest apart.
+        Polygon | MultiPolygon
+            The union of the component ellipses.
         """
-        mdist2 = 0
-        best_coords = None
-        for point in tqdm(points, desc="Finding furthest points...", disable=not self.show_progress):
-            # Calculate the squared distance from the current point to all other points in the set, and find the maximum
-            # distance
-            dist2 = (points[:, 0] - point[0])**2.0 + (points[:, 1] - point[1])**2.0
-            idist = np.argmax(dist2)
-            mdist = dist2[idist]
+        ra0 = ra.mean()
+        dec0 = dec.mean()
 
-            # Update the maximum distance and the corresponding pair of points
-            if mdist > mdist2:
-                mdist2 = mdist
-                best_coords = (point, points[idist]) # (point, furthest_point)
+        x = 3600 * np.cos(np.deg2rad(dec0)) * (ra0 - ra)
+        y = 3600 * (dec - dec0)
+        a = dc_maj * 3600 + cls._ELLIPSE_BUFFER_ARCSEC
+        b = dc_min * 3600 + cls._ELLIPSE_BUFFER_ARCSEC
 
-        if best_coords is None:
-            self.logger.error("No furthest points found. Check the input points array.")
-            return ((0, 0), (0, 0)), 0
-
-        return best_coords, mdist2
+        ellist = [cls._ellipse_polygon(x[i], y[i], a[i], b[i], pa[i], n) for i in range(len(ra))]
+        return unary_union(ellist)
 
 
     def plot(self):
         """
-        A method to plot the combined shape of the source and its convex hull, along with the points on the convex hull
-        and the pair of points that are furthest apart, which are used to estimate the angular size of the source.
+        Plot the combined shape of the source and its convex hull, along with the points on the convex hull and the
+        pair of points that are furthest apart, which are used to estimate the angular size of the source.
         """
+        # Build the filled union + its hull lazily; these are only needed for the plot.
+        if self.combined_polygon is None:
+            self.combined_polygon = self._combined_polygon(self._ra, self._dec, self._dc_maj, self._dc_min, self._pa)
+            self.hull = self.combined_polygon.convex_hull
+
         plt.figure(figsize=(8, 8))
 
         # Plot the combined shape of the source, which is formed by taking the union of ellipses representing each
-        # Some sources are combined together, into a MultiPolygon
+        # component. Some sources are combined together, into a MultiPolygon.
         if isinstance(self.combined_polygon, MultiPolygon):
             for geom in self.combined_polygon.geoms:
                 x, y = geom.exterior.xy
@@ -248,28 +392,17 @@ class MakeShape():
         plt.show()
 
 
-    def length(self):
-        """
-        A method to calculate the angular size of the source based on the maximum distance between points on the convex
-        hull of the union of ellipses representing the components of the source.    
-
-        Returns
-        -------
-        float
-            The estimated angular size of the source in arcseconds.
-        """
-        return np.sqrt(self.mdist2)
-
-
 
 class AngularSizeFinder:
     """
     A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
-    extracted from PyBDSF catalogue FITS files.
+    extracted from PyBDSF catalogue FITS files. It owns the pipeline (reading, flux-filtering) and delegates the shape
+    geometry to ``MakeShape``.
     """
     def __init__(self,
                  root_dir: Path = paths.STORAGE_PARENT / "diffracc/completeness/retrained_loguniform_catalogs",
-                 flux_threshold: float = 0.95):
+                 flux_threshold: float = 0.95,
+                 n_points: int = MakeShape.DEFAULT_ELLIPSE_POINTS):
         """
         This class processes PyBDSF catalogue FITS files containing Gaussian component data for radio sources, filters
         the components based on total flux, and estimates the angular size of the sources by creating a shape from the
@@ -283,6 +416,9 @@ class AngularSizeFinder:
         flux_threshold : float, optional
             The fraction of total flux to keep when filtering components, by default 0.95. Components contributing to
             the dimmest flux are removed while keeping total flux above this threshold.
+        n_points : int, optional
+            The number of points used to sample each component ellipse's boundary when estimating sizes, by default
+            ``MakeShape.DEFAULT_ELLIPSE_POINTS``.
         """
         self.logger = get_logger("AngularSizeFinder", LoggingLevels.INFO.value)
         self.root_dir = root_dir
@@ -292,6 +428,8 @@ class AngularSizeFinder:
         # flux to keep, so the dimmest islands are removed while keeping total flux above this fractional threshold.
         self.flux_threshold = flux_threshold
 
+        self.n_points = n_points
+
         self.rfa = RecursiveFileAnalyzer(self.root_dir)
 
 
@@ -299,17 +437,17 @@ class AngularSizeFinder:
     def _extract_component_data(self, file_path: Path) -> list[tuple]:
         """
         Process a single FITS file to extract the component data for estimating the angular size of the source.
-        
+
         A FITS file is expected to contain a PyBDSF catalogue of Gaussian components for a single radio source. The
         method reads the component data, filters the components based on their contribution to the total flux of the
         source, and returns a list of tuples containing the relevant component information (total flux, RA, DEC, major
         axis, minor axis, position angle) for the filtered components.
-        
+
         Parameters
         ----------
         file_path : Path
-            The path to the FITS file  the component data for a single source.
-        containing
+            The path to the FITS file containing the component data for a single source.
+
         Returns
         -------
         list[tuple]
@@ -409,7 +547,7 @@ class AngularSizeFinder:
             The regex pattern to match FITS files, by default r'.*?\D+(\d+)\.fits$'.
         output_file : str | Path | None, optional
             The name of the CSV file to save the estimated angular sizes to, by default None.
-        
+
         Returns
         -------
         indices : np.ndarray
@@ -483,6 +621,9 @@ def build_arg_parser():
                         help="Threshold for identifying outliers in estimated angular sizes (in arcseconds). "
                              "Sources with estimated sizes above this threshold will be removed from the analysis. "
                              "Default is 200.0 arcseconds.")
+    parser.add_argument("--num-points", type=int, default=MakeShape.DEFAULT_ELLIPSE_POINTS,
+                        help="Number of points used to sample each component ellipse's boundary. Default is "
+                             f"{MakeShape.DEFAULT_ELLIPSE_POINTS}.")
 
     return parser
 
@@ -495,7 +636,8 @@ if __name__ == "__main__":
 
     root = args.root_dir if args.root_dir else _default_root
 
-    asf = AngularSizeFinder(root, flux_threshold=args.flux_threshold)
+    asf = AngularSizeFinder(root, flux_threshold=args.flux_threshold,
+                            n_points=args.num_points)
     indices, sizes = asf.estimate_angular_sizes(output_file=args.output_file)
 
     # Check for estimated angular sizes that are above the outlier threshold - "outliers"
