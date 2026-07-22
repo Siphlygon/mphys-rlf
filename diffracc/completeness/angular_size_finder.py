@@ -1,3 +1,11 @@
+"""
+This module contains the AngularSizeFinder class, which is used to estimate the angular size of a set of radio galaxy
+images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files. The class processes the
+FITS files, filters the components based on total flux to remove any present noise islands, and estimates the angular
+size of the sources by creating a shape from the components and calculating the maximum distance between points on the
+convex hull of this shape.
+"""
+import argparse
 import os
 from pathlib import Path
 
@@ -276,7 +284,7 @@ class AngularSizeFinder:
             The fraction of total flux to keep when filtering components, by default 0.95. Components contributing to
             the dimmest flux are removed while keeping total flux above this threshold.
         """
-        self.logger = get_logger("AngularSizeFinder", LoggingLevels.DEBUG.value)
+        self.logger = get_logger("AngularSizeFinder", LoggingLevels.INFO.value)
         self.root_dir = root_dir
 
         # Decide a flux threshold for filtering components. PyBDSF can sometimes fit islands to noise and so we sort and
@@ -350,6 +358,8 @@ class AngularSizeFinder:
             cumulative_flux += component[0]
             filtered_components.append(component)
             if cumulative_flux / sum_flux >= self.flux_threshold:
+                self.logger.debug(f"Filtered components to keep {len(filtered_components)} out of {len(components)} "
+                                  f"components, contributing to {cumulative_flux / sum_flux:.2%} of the total flux.")
                 break
 
         return filtered_components
@@ -411,6 +421,7 @@ class AngularSizeFinder:
         # indices
         if output_file is not None and os.path.exists(output_file):
             try:
+                self.logger.info(f"Reading estimated angular sizes from {output_file}")
                 ang_sizes = np.genfromtxt(output_file, delimiter=',', skip_header=1)
             except Exception as e:
                 raise Exception(f"Failed to read {output_file}. Please check the file and try again: {e}") from e
@@ -421,40 +432,76 @@ class AngularSizeFinder:
             return fits_indices, ang_sizes
 
         # Run the pipeline to extract component data from each FITS file,
-        components_list, fits_indices = self.rfa.run_pipeline(function=self._extract_component_data,
-                                                              root_dir=fits_dir if fits_dir else self.root_dir,
-                                                              pattern=pattern,
-                                                              return_nums=True,
-                                                              mode="file")
+        components_list, fits_indices = self.rfa.run_pipeline(
+            function=self._extract_component_data,
+            root_dir=fits_dir if fits_dir else self.root_dir,
+            pattern=pattern,
+            return_nums=True,
+            mode="file",
+            progress_bar_desc="Extracting and filtering component data from FITS files"
+        )
 
         # Estimate the angular size of each image based on the component data
         ang_sizes = []
-        for components in components_list:
+        for components in tqdm(components_list, desc="Estimating angular sizes", mininterval=1.0):
             # If there's only one component, either originally or after filtering, return a size based on DC_Maj
             if len(components) == 1:
                 ang_sizes.append(2 * components[0][3] * 3600)
             else:
-                angular_size = self._fit_shape_and_estimate_size(components)
-                ang_sizes.append(angular_size)
+                ang_sizes.append(self._fit_shape_and_estimate_size(components))
 
         # Save the estimated angular sizes to a CSV file if an output file name is provided
         if output_file:
+            self.logger.info(f"Saving estimated angular sizes to {output_file}")
             df = pd.DataFrame(ang_sizes, columns=['Estimated Angular Size (arcseconds)'])
             df.to_csv(output_file, index=False)
 
         return fits_indices, np.array(ang_sizes)
 
 
+def build_arg_parser():
+    """
+    Build the argument parser for the command line interface.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        The argument parser for the command line interface.
+    """
+    parser = argparse.ArgumentParser(description="Estimate angular sizes of radio sources from FITS files.")
+    parser.add_argument("--root-dir", type=str, default=None,
+                        help="Root directory containing the FITS files. Default is "
+                             "'diffracc/completeness/dr2_cutouts_download_catalogs'.")
+    parser.add_argument("--output-file", type=str, default='estimated_angular_sizes.csv',
+                        help="Output CSV file to save the estimated angular sizes. Default is "
+                             "'estimated_angular_sizes.csv'.")
+    parser.add_argument("--flux-threshold", type=float, default=0.95,
+                        help="Fraction of total flux to keep when filtering components. Default is 0.95.")
+    parser.add_argument("--pattern", type=str, default=r'.*?\D+(\d+)\.fits$',
+                        help="Regex pattern to match FITS files. Default is r'.*?\D+(\d+)\.fits$'.")
+    parser.add_argument("--outlier-threshold", type=float, default=200.0,
+                        help="Threshold for identifying outliers in estimated angular sizes (in arcseconds). "
+                             "Sources with estimated sizes above this threshold will be removed from the analysis. "
+                             "Default is 200.0 arcseconds.")
+
+    return parser
+
 
 if __name__ == "__main__":
-    root = paths.STORAGE_PARENT / "diffrac/completeness/dr2_cutouts_download_catalogs"
-    SAVE_FILE = 'estimated_angular_sizes.csv'
+    _default_root = paths.STORAGE_PARENT / "diffracc/completeness/dr2_cutouts_download_catalogs"
 
-    ang_size_finder = AngularSizeFinder(root)
-    indices, sizes = ang_size_finder.estimate_angular_sizes(output_file=SAVE_FILE)
+    parser = build_arg_parser()
+    args = parser.parse_args()
 
-    # Check for estimated angular sizes that are above 250 arcseconds - "outliers"
-    outliers = np.where(sizes > 250)[0]
+    root = args.root_dir if args.root_dir else _default_root
+
+    asf = AngularSizeFinder(root, flux_threshold=args.flux_threshold)
+    indices, sizes = asf.estimate_angular_sizes(output_file=args.output_file)
+
+    # Check for estimated angular sizes that are above the outlier threshold - "outliers"
+    outliers = np.where(sizes > args.outlier_threshold)[0]
+    asf.logger.warning(f"Found {len(outliers)} outliers with estimated angular sizes above {args.outlier_threshold} "
+                                   f"arcseconds. These will be removed from the analysis.")
     indices = np.delete(indices, outliers)
     sizes = np.delete(sizes, outliers)
 
@@ -469,5 +516,5 @@ if __name__ == "__main__":
     plt.xlabel('Estimated Angular Size (arcseconds)')
     plt.ylabel('Number of Sources')
     plt.grid(axis='y', alpha=0.75)
-    plt.savefig(SAVE_FILE.replace('.csv', '_distribution.png'))
+    plt.savefig(args.output_file.replace('.csv', '_distribution.png'))
     plt.show()
