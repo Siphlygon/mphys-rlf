@@ -25,7 +25,7 @@ export HDF5_USE_FILE_LOCKING='FALSE'
 export WANDB_API_PATH="/share/nas2_3/lgreen/mphys-rlf/.wandb_api_key"
 
 ## https://github.com/pytorch/examples/blob/main/distributed/ddp-tutorial-series/multinode.py ##
-nodes=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
+nodes=($(scontrol show hostnames $SLURM_JOB_NODELIST))
 nodes_array=($nodes)
 head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
@@ -36,9 +36,9 @@ export NCCL_SOCKET_IFNAME=em1
 export GLOO_SOCKET_IFNAME=em1
 
 # Training params
-export MODEL_PRESET="LOFAR_raw_naive_nolas"
+export MODEL_PRESET="LOFAR_raw_matched_nolas"
 export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_5_peak_500_exclusive.h5"
-export MODEL_NAME="snr5_exclusive_nolas_notran"
+export MODEL_NAME="snr5_exclusive_nolas_notran_matched"
 export USE_TRANSFORMS='FALSE'
 #export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_5_peak_500_exclusive_flux_transform.json"
 export USE_LAS_VALUES='FALSE'

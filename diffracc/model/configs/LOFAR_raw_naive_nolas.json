@@ -1,0 +1,40 @@
+{
+    "model_name": "LOFAR_raw_naive_nolas",
+    "model_type": "EDMPrecond",
+    "image_size": 80,
+    "image_channels": 1,
+    "init_channels": 128,
+    "channel_mults": [
+        1,
+        2,
+        2
+    ],
+    "norm_groups": 32,
+    "attention_levels": 2,
+    "attention_heads": 2,
+    "attention_head_channels": 32,
+    "dropout": 0.1,
+    "pretrained_model": null,
+    "batch_size": 64,
+    "accumulation_steps": 2,
+    "iterations": 100000,
+    "learning_rate": 2e-05,
+    "ema_rate": 0.9999,
+    "sigma_data": 0.5,
+    "sigma_min": 0.002,
+    "sigma_max": 80,
+    "p_mean": -2.5,
+    "p_std": 1.8,
+    "grad_clip_norm": 25.0,
+    "log_interval": 100,
+    "snapshot_interval": 2000,
+    "val_every": 500,
+    "validate_ema": true,
+    "write_output": true,
+    "override_files": false,
+    "n_devices": 2,
+    "context": [
+        "max_values_tr"
+    ],
+    "context_dropout": 0.1
+}

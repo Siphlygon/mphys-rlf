@@ -41,10 +41,10 @@ export GLOO_SOCKET_IFNAME=em1
 # called and transform_las_vals asserts on startup. LOFAR_asinh_nolas is the same architecture/hyperparameters with
 # peak flux as the only condition.
 export MODEL_PRESET="LOFAR_asinh_nolas"
-export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive.h5"
-export MODEL_NAME="snr15_inclusive_nolas"
+export DATASET_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_5_peak_500_exclusive.h5"
+export MODEL_NAME="snr5_exclusive_nolas_tran"
 export USE_TRANSFORMS='TRUE'
-export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_15_peak_500_inclusive_flux_transform.json"
+export FLUX_TRANSFORM_PATH="/share/nas2_3/lgreen/mphys-rlf/datasets/snr_5_peak_500_exclusive_flux_transform.json"
 export USE_LAS_VALUES='FALSE'
 
 # Data-loading worker processes per rank. The default of 1 starves the GPU; with --cpus-per-task=16 there is ample
