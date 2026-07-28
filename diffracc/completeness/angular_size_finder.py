@@ -1,20 +1,18 @@
 """
-This module contains the ``AngularSizeFinder`` class, which is used to estimate the angular size of a set of radio
-galaxy images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files. The class
-processes the FITS files, filters the components based on total flux to remove any present noise islands, and estimates
-the angular size of the sources by creating a shape from the components and calculating the maximum distance between
-points on the convex hull of this shape.
+This module contains the `AngularSizeFinder` class, which is used to estimate the angular size of a set of radio galaxy
+images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files. The class processes the
+FITS files, filters the components based on total flux to remove any present noise islands, and estimates the angular
+size of the sources by creating a shape from the components and calculating the maximum distance between points on the
+convex hull of this shape.
 
-The shape geometry is owned by ``MakeShape`` (adapted from LoTSS-Catalogue GitHub): it samples each component ellipse's
+The shape geometry is owned by `MakeShape` (adapted from LoTSS-Catalogue GitHub): it samples each component ellipse's
 boundary, takes their convex hull, and measures its diameter. Since the convex hull of a union of shapes equals the
-convex hull of all those shapes' boundary points, the GEOS polygon union (shapely ``unary_union``) is unnecessary for
-the size estimate (and expensive) and is only built lazily inside ``MakeShape.plot`` for visualisation.
-
-``AngularSizeFinder`` owns the pipeline: reading and flux-filtering the catalogues, the per-source conventions (e.g. the
-single-component shortcut), and the serial/parallel dispatch. It delegates every geometric calculation to ``MakeShape``.
+convex hull of all those shapes' boundary points, the GEOS polygon union (shapely `unary_union`) is unnecessary for the
+size estimate (and expensive) and is only built inside `MakeShape.plot` for visualisation purposes.
 """
 import argparse
 import os
+import pickle
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -36,10 +34,10 @@ from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 
 class MakeShape():
     """
-    A radio source's shape, built from its component list. It owns the shape geometry: sampling the component ellipse
-    boundaries, taking their convex hull, and measuring the hull's diameter (the angular-size estimate). An instance
-    keeps the intermediate geometry so it can also be plotted; ``estimate_size`` is a stateless fast path for callers
-    (e.g. the parallel pipeline) that only need the number.
+    A radio source's shape, built from its component list. It samples the component ellipse boundaries, taking their
+    convex hull, and measuring the hull's diameter (the angular-size estimate). An instance keeps the intermediate
+    geometry so it can also be plotted; `estimate_size` is a stateless fast path for callers (e.g. the parallel
+    pipeline) that only need the number.
 
     Code here is adapted from the LoTSS-Catalogue GitHub, which contains the code to create the optically-identified
     LoTSS catalogues (e.g., Hardcastle et al. 2023 for LoTSS-DR2). The exact file is found here:
@@ -60,10 +58,10 @@ class MakeShape():
                  clist: pd.DataFrame,
                  n: int = DEFAULT_ELLIPSE_POINTS):
         """
-        Build the shape for a source from the component information in ``clist``.
+        Build the shape for a source from the component information in `clist`.
 
-        The angular size (``length``) is computed from the convex hull of the sampled ellipse boundaries; the filled
-        shapely union is only built on demand by ``plot``.
+        The angular size (`length`) is computed from the convex hull of the sampled ellipse boundaries; the filled
+        `shapely` union is only built on demand by `plot`.
 
         Parameters
         ----------
@@ -72,7 +70,7 @@ class MakeShape():
             'DC_Min', and 'PA' representing the right ascension, declination, major axis, minor axis, and position
             angle of each component, respectively.
         n : int, optional
-            The number of points used to sample each component ellipse's boundary, by default ``DEFAULT_ELLIPSE_POINTS``.
+            The number of points used to sample each component ellipse's boundary, by default `DEFAULT_ELLIPSE_POINTS`.
         """
         self.n = n
 
@@ -115,15 +113,15 @@ class MakeShape():
     def estimate_size(cls, components, n: int = DEFAULT_ELLIPSE_POINTS) -> float:
         """
         Estimate a source's angular size directly from its components, without constructing an instance or any shapely
-        geometry. This is the stateless fast path used by the pipeline; it is equivalent to ``MakeShape(clist).length()``
+        geometry. This is the stateless fast path used by the pipeline. It is equivalent to `MakeShape(clist).length()`
         but skips the DataFrame and the stored plotting state.
 
         Parameters
         ----------
         components : array-like
-            The source's components, as rows of ``(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)``.
+            The source's components, as rows of `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)`.
         n : int, optional
-            The number of points used to sample each component ellipse's boundary, by default ``DEFAULT_ELLIPSE_POINTS``.
+            The number of points used to sample each component ellipse's boundary, by default `DEFAULT_ELLIPSE_POINTS`.
 
         Returns
         -------
@@ -152,7 +150,7 @@ class MakeShape():
         arcsecond offsets from the source centre (the mean RA/DEC of the components).
 
         Uses a tangent-plane projection (RA scaled by cos(dec), the +90 degree position-angle convention) and the
-        ``_ELLIPSE_BUFFER_ARCSEC`` axis buffer, but builds no shapely objects and loops over no rows.
+        `_ELLIPSE_BUFFER_ARCSEC` axis buffer, but builds no shapely objects and loops over no rows.
 
         Parameters
         ----------
@@ -163,7 +161,7 @@ class MakeShape():
         pa : np.ndarray
             Component position angles, in degrees.
         n : int, optional
-            Number of boundary points per ellipse, by default ``DEFAULT_ELLIPSE_POINTS``.
+            Number of boundary points per ellipse, by default `DEFAULT_ELLIPSE_POINTS`.
 
         Returns
         -------
@@ -217,7 +215,7 @@ class MakeShape():
         Returns
         -------
         np.ndarray
-            The subset of ``points`` lying on the convex hull, or all of ``points`` if no hull could be formed.
+            The subset of `points` lying on the convex hull, or all of `points` if no hull could be formed.
         """
         if len(points) < 3:
             return points
@@ -233,9 +231,9 @@ class MakeShape():
         """
         Find the pair of points that are furthest apart, returning both the pair and their squared distance.
 
-        Intended to be called on convex-hull vertices only (a handful of points), so the O(m^2) all-pairs computation
-        is cheap. ``length`` needs only the squared distance; ``plot`` also wants the actual pair to draw the
-        max-distance line, so both are returned from one computation.
+        Intended to be called on convex-hull vertices only (a handful of points), so the O(m^2) all-pairs computation is
+        cheap. `length` needs only the squared distance; `plot` also wants the actual pair to draw the max-distance
+        line, so both are returned from one computation.
 
         Parameters
         ----------
@@ -245,7 +243,7 @@ class MakeShape():
         Returns
         -------
         best_coords : tuple[tuple[float, float], tuple[float, float]]
-            The pair of points that are furthest apart. ``((0, 0), (0, 0))`` when fewer than two points are given.
+            The pair of points that are furthest apart. `((0, 0), (0, 0))` when fewer than two points are given.
         mdist2 : float
             The maximum squared distance between any two points, or 0.0 when fewer than two points are given.
         """
@@ -265,10 +263,10 @@ class MakeShape():
                          a: float,
                          b: float,
                          pa: float,
-                         n: int = 50) -> Polygon:
+                         n: int = 200) -> Polygon:
         """
-        Create a shapely Polygon approximating an ellipse centred at (x0, y0) with semi-axes a, b and position angle pa.
-        Only used to build the filled shape for ``plot``.
+        Create a shapely Polygon approximating an ellipse centred at `(x0, y0)` with semi-axes `a`, `b` and position
+        angle `pa`, using `n` points. Only used to build the filled shape for `plot`.
 
         Parameters
         ----------
@@ -279,7 +277,7 @@ class MakeShape():
         pa : float
             The position angle in degrees.
         n : int, optional
-            The number of points used to approximate the ellipse, by default 50.
+            The number of points used to approximate the ellipse, by default 200.
 
         Returns
         -------
@@ -307,17 +305,17 @@ class MakeShape():
                           dc_maj: np.ndarray,
                           dc_min: np.ndarray,
                           pa: np.ndarray,
-                          n: int = 50) -> Polygon | MultiPolygon:
+                          n: int = 200) -> Polygon | MultiPolygon:
         """
         Build the filled shapely union of a source's component ellipses. Uses the same projection and axis buffer as
-        ``_ellipse_points``; only used for plotting.
+        `_ellipse_points`; only used for plotting.
 
         Parameters
         ----------
         ra, dec, dc_maj, dc_min, pa : np.ndarray
             Component positions (deg), axes (deg), and position angles (deg).
         n : int, optional
-            The number of points used to approximate each ellipse, by default 50.
+            The number of points used to approximate each ellipse, by default 200.
 
         Returns
         -------
@@ -397,7 +395,7 @@ class AngularSizeFinder:
     """
     A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
     extracted from PyBDSF catalogue FITS files. It owns the pipeline (reading, flux-filtering, per-source conventions,
-    and serial/parallel dispatch) and delegates the shape geometry to ``MakeShape``.
+    and serial/parallel dispatch) and delegates the shape geometry to `MakeShape`.
     """
     def __init__(self,
                  root_dir: Path = paths.STORAGE_PARENT / "diffracc/completeness/retrained_loguniform_catalogs",
@@ -419,10 +417,10 @@ class AngularSizeFinder:
             the dimmest flux are removed while keeping total flux above this threshold.
         n_points : int, optional
             The number of points used to sample each component ellipse's boundary when estimating sizes, by default
-            ``MakeShape.DEFAULT_ELLIPSE_POINTS``.
+            `MakeShape.DEFAULT_ELLIPSE_POINTS`.
         num_processes : int, optional
             The number of worker processes to use for the (CPU-bound, per-source-independent) size-estimation step, by
-            default 1 (serial). Values > 1 dispatch the estimation across a ``ProcessPoolExecutor``.
+            default 1 (serial). Values > 1 dispatch the estimation across a `ProcessPoolExecutor`.
         """
         self.logger = get_logger("AngularSizeFinder", LoggingLevels.INFO.value)
         self.root_dir = root_dir
@@ -439,70 +437,72 @@ class AngularSizeFinder:
 
 
     # ---------- ASSEMBLING SIZE ESTIMATES ----------
-    def _extract_component_data(self, file_path: Path) -> list[tuple]:
+    @staticmethod
+    def _read_and_filter(file_path: Path, flux_threshold: float) -> list[tuple]:
         """
-        Process a single FITS file to extract the component data for estimating the angular size of the source.
+        Read one PyBDSF catalogue FITS file and return its flux-filtered components.
 
-        A FITS file is expected to contain a PyBDSF catalogue of Gaussian components for a single radio source. The
-        method reads the component data, filters the components based on their contribution to the total flux of the
-        source, and returns a list of tuples containing the relevant component information (total flux, RA, DEC, major
-        axis, minor axis, position angle) for the filtered components.
+        A staticmethod taking `flux_threshold` explicitly (rather than reading `self`) so it is picklable (i.e.,
+        shareable across processes) and can be dispatched to `RecursiveFileAnalyzer`'s process mode for parallel
+        parsing.
 
         Parameters
         ----------
         file_path : Path
             The path to the FITS file containing the component data for a single source.
+        flux_threshold : float
+            The fraction of total flux to keep when filtering (see `_filter_by_flux`).
 
         Returns
         -------
         list[tuple]
-            A list of tuples, where each tuple contains the total flux, RA, DEC, major axis, minor axis, and position
-            angle of a component. The components are filtered based on their fractional total flux.
+            The filtered components, each a `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)` tuple.
         """
-        components = []
-        with fits.open(file_path) as hdul:
+        # Fastest way to read certain columns from the table
+        with fits.open(file_path, memmap=False) as hdul:
             data = hdul[1].data
-            for row in data:
-                components.append((row["Total_flux"], row["RA"], row["DEC"], row["DC_Maj"], row["DC_Min"], row["PA"]))
+            components = list(zip(data["Total_flux"], data["RA"], data["DEC"],
+                                  data["DC_Maj"], data["DC_Min"], data["PA"]))
 
-        return self._filter_components(components)
+        return AngularSizeFinder._filter_by_flux(components, flux_threshold)
 
 
-    def _filter_components(self, components: list[tuple]) -> list[tuple]:
+    @staticmethod
+    def _filter_by_flux(components: list[tuple], flux_threshold: float) -> list[tuple]:
         """
-        Filter the components based on their fractional total flux, keeping only those components that contribute to a
-        specified fraction of the total flux of the source.
+        Keep the brightest components that together reach `flux_threshold` of the total flux, discarding the dimmest -
+        which PyBDSF sometimes fits to noise islands.
 
         Parameters
         ----------
         components : list[tuple]
-            A list of tuples representing the components, where each tuple contains the component's island ID, total
-            flux, RA, DEC, major axis, minor axis, and position angle.
+            The components, each a tuple whose first element is the total flux, followed by RA, DEC, major axis, minor
+            axis, and position angle.
+        flux_threshold : float
+            The fraction of total flux to keep. The dimmest components are removed while the cumulative flux of those
+            kept stays above this fraction.
 
         Returns
         -------
         list[tuple]
-            A list of tuples representing the filtered components.
+            The filtered components, brightest first.
         """
         assert components, "No components found in the data. Check the FITS file and the expected column names."
 
-        # Sort components by total flux in descending order
-        components.sort(key=lambda x: x[0], reverse=True)
+        # Sort components by total flux in descending order (a new list, leaving the caller's untouched)
+        components = sorted(components, key=lambda c: c[0], reverse=True)
 
         sum_flux = sum(component[0] for component in components)
         if sum_flux == 0:
             raise ValueError("Total flux of the source is zero. Cannot filter components based on flux threshold.")
 
-        # Filter components based on their contribution to the total flux, removing the dimmest components while keeping
-        # total flux above the specified threshold
+        # Keep the brightest components until their cumulative flux reaches the threshold fraction of the total
         filtered_components = []
         cumulative_flux = 0
         for component in components:
             cumulative_flux += component[0]
             filtered_components.append(component)
-            if cumulative_flux / sum_flux >= self.flux_threshold:
-                self.logger.debug(f"Filtered components to keep {len(filtered_components)} out of {len(components)} "
-                                  f"components, contributing to {cumulative_flux / sum_flux:.2%} of the total flux.")
+            if cumulative_flux / sum_flux >= flux_threshold:
                 break
 
         return filtered_components
@@ -512,20 +512,20 @@ class AngularSizeFinder:
     def _size_worker(components: list[tuple] | None, n: int) -> float:
         """
         Estimate one source's angular size (arcseconds), applying the pipeline's per-source conventions and delegating
-        the geometry to ``MakeShape``. A staticmethod so it can be pickled and dispatched to a ``ProcessPoolExecutor``.
+        the geometry to `MakeShape`. A staticmethod so it can be pickled and dispatched to a `ProcessPoolExecutor`.
 
         Parameters
         ----------
         components : list[tuple] | None
-            The filtered components, each a ``(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)`` tuple. ``None`` (a failed file
-            read that ``RecursiveFileAnalyzer`` turned into ``None``) yields ``NaN`` rather than crashing the whole run.
+            The filtered components, each a `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)` tuple. `None` (a failed file
+            read that `RecursiveFileAnalyzer` turned into `None`) yields `NaN` rather than crashing the whole run.
         n : int
             Number of boundary points per ellipse.
 
         Returns
         -------
         float
-            The estimated angular size in arcseconds, or ``NaN`` if ``components`` is ``None``.
+            The estimated angular size in arcseconds, or `NaN` if `components` is `None`.
         """
         if components is None:
             return float("nan")
@@ -540,24 +540,24 @@ class AngularSizeFinder:
         return MakeShape.estimate_size(comp, n)
 
 
-    def _estimate_sizes(self, components_list) -> list[float]:
+    def _estimate_sizes(self, components_list: list[tuple] | np.ndarray) -> list[float]:
         """
         Estimate the angular size for every source's component list, serially or across a process pool.
 
         Parameters
         ----------
-        components_list : Sequence
-            The per-source filtered component lists (as produced by ``_extract_component_data`` via the file pipeline).
+        components_list : list[tuple] | np.ndarray
+            The per-source filtered component lists (as produced by `_read_and_filter` via the extraction pipeline).
 
         Returns
         -------
         list[float]
-            The estimated angular sizes in arcseconds, one per source, in the same order as ``components_list``.
+            The estimated angular sizes in arcseconds, one per source, in the same order as `components_list`.
         """
         worker = partial(self._size_worker, n=self.n_points)
 
         # Each source is independent and the work is CPU-bound pure numpy/scipy, so it parallelises cleanly. The
-        # chunksize amortises the per-task dispatch overhead over many small sources.
+        # chunksize is tuned to keep the workers busy without overwhelming the main process with too many results.
         if self.num_processes and self.num_processes > 1:
             self.logger.info(f"Estimating angular sizes across {self.num_processes} processes")
             with ProcessPoolExecutor(max_workers=self.num_processes) as executor:
@@ -569,11 +569,92 @@ class AngularSizeFinder:
                 for components in tqdm(components_list, desc="Estimating angular sizes", mininterval=1.0)]
 
 
+    # ---------- EXTRACTION + CONSOLIDATION ----------
+    def _extract_components(self, fits_dir: str | Path | None, pattern: str) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Extract and flux-filter the components from every catalogue FITS under `fits_dir`.
+
+        Reading a PyBDSF binary table is dominated by astropy parsing which binds the GIL, so when `num_processes > 1`
+        this runs across worker processes (`mode="process"`), which the GIL-bound parse actually benefits from;
+        otherwise it stays on the default threaded file mode.
+
+        Parameters
+        ----------
+        fits_dir : str | Path | None
+            The root directory of catalogue FITS files. If `None`, the finder's `root_dir` is used.
+        pattern : str
+            The regex pattern matching the catalogue files, with a capture group for the source index.
+
+        Returns
+        -------
+        PipelineResult
+            The per-source filtered component lists and their extracted indices.
+        """
+        parallel = self.num_processes and self.num_processes > 1
+        return self.rfa.run_pipeline(
+            function=self._read_and_filter,
+            flux_threshold=self.flux_threshold,
+            root_dir=fits_dir if fits_dir else self.root_dir,
+            pattern=pattern,
+            return_nums=True,
+            mode="process" if parallel else "file",
+            num_workers=self.num_processes if parallel else None,
+            progress_bar_desc="Extracting and filtering component data from FITS files",
+        )
+
+
+    def _load_or_extract_components(self,
+                                    fits_dir: str | Path | None,
+                                    pattern: str,
+                                    components_cache: str | Path | None) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return the per-source components and indices, using a one-time consolidated cache when available.
+
+        Extracting the components re-parses every catalogue FITS (the dominant cost of the whole pipeline). When
+        `components_cache` is given, the extracted result is consolidated into that single file so subsequent runs -
+        e.g. re-estimating with a different `n_points`, or recovering after a downstream failure - skip the parse
+        entirely. This is deliberately local to the finder for now; it may later move into a shared, program-wide
+        consolidation step.
+
+        Parameters
+        ----------
+        fits_dir : str | Path | None
+            The root directory of catalogue FITS files. If `None`, the finder's `root_dir` is used.
+        pattern : str
+            The regex pattern matching the catalogue files.
+        components_cache : str | Path | None
+            Path to the consolidated components file. If it exists, it is loaded instead of re-parsing; if it does not
+            exist, the freshly extracted components are written to it. If `None`, no consolidation is done.
+
+        Returns
+        -------
+        components_list : np.ndarray
+            The per-source filtered component lists.
+        fits_indices : np.ndarray
+            The source indices corresponding to `components_list`.
+        """
+        if components_cache is not None and os.path.exists(components_cache):
+            self.logger.info(f"Loading consolidated components from {components_cache}")
+            with open(components_cache, "rb") as f:
+                cached = pickle.load(f)
+            return cached["components"], cached["indices"]
+
+        components_list, fits_indices = self._extract_components(fits_dir, pattern)
+
+        if components_cache is not None:
+            self.logger.info(f"Consolidating extracted components to {components_cache}")
+            with open(components_cache, "wb") as f:
+                pickle.dump({"components": components_list, "indices": fits_indices}, f)
+
+        return components_list, fits_indices
+
+
     # ---------- RUNNING THE PIPELINE ----------
     def estimate_angular_sizes(self,
                                fits_dir: str | Path | None = None,
                                pattern: str = r'.*?\D+(\d+)\.fits$',
-                               output_file: str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
+                               output_file: str | Path | None = None,
+                               components_cache: str | Path | None = None) -> tuple[np.ndarray, np.ndarray]:
         """
         A method to estimate the angular sizes of sources from the FITS files in the root directory, and optionally save
         the results to a CSV file.
@@ -581,11 +662,15 @@ class AngularSizeFinder:
         Parameters
         ----------
         fits_dir : str | Path | None, optional
-            The root directory containing the FITS files, by default None.
+            The root directory containing the FITS files, by default `None`.
         pattern : str, optional
             The regex pattern to match FITS files, by default r'.*?\D+(\d+)\.fits$'.
         output_file : str | Path | None, optional
-            The name of the CSV file to save the estimated angular sizes to, by default None.
+            The name of the CSV file to save the estimated angular sizes to, by default `None`.
+        components_cache : str | Path | None, optional
+            Path to a consolidated components file, by default `None`. When given, the extracted components are cached
+            to (and reloaded from) this file, so re-runs skip the expensive re-parse of every catalogue FITS. See
+            `_load_or_extract_components`.
 
         Returns
         -------
@@ -608,15 +693,8 @@ class AngularSizeFinder:
                                                        return_nums=True).numbers
             return fits_indices, ang_sizes
 
-        # Run the pipeline to extract component data from each FITS file,
-        components_list, fits_indices = self.rfa.run_pipeline(
-            function=self._extract_component_data,
-            root_dir=fits_dir if fits_dir else self.root_dir,
-            pattern=pattern,
-            return_nums=True,
-            mode="file",
-            progress_bar_desc="Extracting and filtering component data from FITS files"
-        )
+        # Extract (or reload consolidated) component data for each FITS file
+        components_list, fits_indices = self._load_or_extract_components(fits_dir, pattern, components_cache)
 
         # Estimate the angular size of each image based on the component data
         ang_sizes = self._estimate_sizes(components_list)
@@ -657,8 +735,13 @@ def build_arg_parser():
     parser.add_argument("--num-points", type=int, default=MakeShape.DEFAULT_ELLIPSE_POINTS,
                         help="Number of points used to sample each component ellipse's boundary. Default is "
                              f"{MakeShape.DEFAULT_ELLIPSE_POINTS}.")
-    parser.add_argument("--num-processes", type=int, default=1,
-                        help="Number of worker processes for the size-estimation step. Default is 1 (serial).")
+    parser.add_argument("--num-processes", type=int, default=8,
+                        help="Number of worker processes for the extraction and size-estimation steps. Set to 1 for "
+                        "serial/threaded execution. Default is 8.")
+    parser.add_argument("--components-cache", type=str, default=None,
+                        help="Optional path to a consolidated components file. When given, extracted components are "
+                        "cached to (and reloaded from) it, so re-runs skip re-parsing every catalogue FITS. "
+                        "Default is None (no consolidation).")
 
     return parser
 
@@ -671,9 +754,11 @@ if __name__ == "__main__":
 
     root = args.root_dir if args.root_dir else _default_root
 
-    asf = AngularSizeFinder(root, flux_threshold=args.flux_threshold,
-                            n_points=args.num_points, num_processes=args.num_processes)
-    indices, sizes = asf.estimate_angular_sizes(output_file=args.output_file)
+    asf = AngularSizeFinder(root,
+                            flux_threshold=args.flux_threshold,
+                            n_points=args.num_points,
+                            num_processes=args.num_processes)
+    indices, sizes = asf.estimate_angular_sizes(output_file=args.output_file, components_cache=args.components_cache)
 
     # Check for estimated angular sizes that are above the outlier threshold - "outliers"
     outliers = np.where(sizes > args.outlier_threshold)[0]
