@@ -8,8 +8,6 @@ instances - __init__ is cheap (it only stores a path and builds an unused Recurs
 to bypass it. _extract_component_data and estimate_angular_sizes's cache branch are tested against small real files in
 tmp_path rather than the real catalogue.
 """
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -106,37 +104,32 @@ class TestMakeShapeLength:
 
 
 class TestFilterComponents:
-    """Tests that AngularSizeFinder._filter_components correctly filters components to reach the flux threshold."""
+    """Tests that AngularSizeFinder._filter_by_flux correctly filters components to reach the flux threshold."""
 
-    @pytest.fixture
-    def finder(self):
-        """Fixture that returns an AngularSizeFinder instance with a flux threshold set for testing."""
-        return AngularSizeFinder(root_dir=Path("unused"), flux_threshold=0.95)
-
-    def test_keeps_components_until_flux_threshold_reached(self, finder):
-        """Test that _filter_components keeps the brightest components until the flux threshold is reached."""
+    def test_keeps_components_until_flux_threshold_reached(self):
+        """Test that _filter_by_flux keeps the brightest components until the flux threshold is reached."""
         # total flux = 16.5; 0.95 * 16.5 = 15.675 -> top 2 (10+5=15) undershoots, top 3 (10+5+1=16) reaches it.
         components = [(10.0, 0, 0, 0, 0, 0), (5.0, 0, 0, 0, 0, 0), (1.0, 0, 0, 0, 0, 0), (0.5, 0, 0, 0, 0, 0)]
 
-        filtered = finder._filter_components(list(components))
+        filtered = AngularSizeFinder._filter_by_flux(list(components), 0.95)
 
         assert [c[0] for c in filtered] == [10.0, 5.0, 1.0]
 
-    def test_sorts_components_by_flux_descending_regardless_of_input_order(self, finder):
-        """Test that _filter_components sorts the components by flux in descending order, regardless of input order."""
+    def test_sorts_components_by_flux_descending_regardless_of_input_order(self):
+        """Test that _filter_by_flux sorts the components by flux in descending order, regardless of input order."""
         components = [(1.0, 0, 0, 0, 0, 0), (10.0, 0, 0, 0, 0, 0), (5.0, 0, 0, 0, 0, 0)]
-        filtered = finder._filter_components(list(components))
+        filtered = AngularSizeFinder._filter_by_flux(list(components), 0.95)
         assert [c[0] for c in filtered] == [10.0, 5.0, 1.0]
 
-    def test_raises_on_empty_components(self, finder):
-        """Test that _filter_components raises an AssertionError when given an empty list of components."""
+    def test_raises_on_empty_components(self):
+        """Test that _filter_by_flux raises an AssertionError when given an empty list of components."""
         with pytest.raises(AssertionError):
-            finder._filter_components([])
+            AngularSizeFinder._filter_by_flux([], 0.95)
 
-    def test_raises_on_zero_total_flux(self, finder):
-        """Test that _filter_components raises a ValueError when the total flux of the components is zero."""
+    def test_raises_on_zero_total_flux(self):
+        """Test that _filter_by_flux raises a ValueError when the total flux of the components is zero."""
         with pytest.raises(ValueError):
-            finder._filter_components([(0.0, 0, 0, 0, 0, 0), (0.0, 0, 0, 0, 0, 0)])
+            AngularSizeFinder._filter_by_flux([(0.0, 0, 0, 0, 0, 0), (0.0, 0, 0, 0, 0, 0)], 0.95)
 
 
 class TestEstimateSize:
@@ -163,7 +156,7 @@ class TestEstimateSize:
 
 
 class TestExtractComponentData:
-    """Tests that AngularSizeFinder._extract_component_data correctly reads and filters components from a FITS file."""
+    """Tests that AngularSizeFinder._read_and_filter correctly reads and filters components from a FITS file."""
 
     def _write_component_fits(self, path, fluxes, ra, dec, dc_maj, dc_min, pa):
         """Helper method to write a FITS file with the specified component data for testing."""
@@ -179,8 +172,7 @@ class TestExtractComponentData:
         fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path)
 
     def test_reads_and_filters_components_from_fits_file(self, tmp_path):
-        """Test that _extract_component_data reads a FITS file and filters components to reach the flux threshold."""
-        finder = AngularSizeFinder(root_dir=tmp_path, flux_threshold=0.95)
+        """Test that _read_and_filter reads a FITS file and filters components to reach the flux threshold."""
         fits_path = tmp_path / "source_1.fits"
         self._write_component_fits(
             fits_path,
@@ -192,7 +184,7 @@ class TestExtractComponentData:
             pa=[0.0] * 4,
         )
 
-        components = finder._extract_component_data(fits_path)
+        components = AngularSizeFinder._read_and_filter(fits_path, 0.95)
 
         # matches TestFilterComponents' threshold arithmetic: top 3 of 4 components reach 0.95 of total flux.
         assert len(components) == 3
