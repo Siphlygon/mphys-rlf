@@ -36,19 +36,21 @@ def write_log(tmp_path, content: str, name: str = "source.pybdsf.log") -> Path:
     return path
 
 
-class TestGetFlux:
-    """Tests for the get_flux() function in log_analyzer.py."""
+class TestGetTotalFlux:
+    """Tests for the get_total_flux() function in log_analyzer.py."""
 
-    def test_extracts_flux_value(self, tmp_path):
-        """Test that get_flux() correctly extracts the flux value from a log file."""
+    def test_extracts_total_flux_value(self, tmp_path):
+        """Test that get_total_flux() correctly extracts the total flux value from a log file."""
         path = write_log(tmp_path, "Flux from sum of (non-blank) pixels ..... : 1.234 Jy\n")
-        assert la.get_flux(path) == pytest.approx(1.234)
+        assert la.get_total_flux(path) == pytest.approx(1.234)
 
     def test_raises_when_pattern_not_found(self, tmp_path):
-        """Test that get_flux() raises an AttributeError when the expected pattern is not found in the log file."""
+        """
+        Test that get_total_flux() raises an AttributeError when the expected pattern is not found in the log file.
+        """
         path = write_log(tmp_path, "nothing relevant here\n")
         with pytest.raises(AttributeError):
-            la.get_flux(path)
+            la.get_total_flux(path)
 
 
 class TestGetModelFlux:
