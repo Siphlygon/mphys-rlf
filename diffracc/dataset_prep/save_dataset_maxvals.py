@@ -25,7 +25,9 @@ def write_maxvals_of_h5_to_file(outfile: Path, infile: Path):
         The h5 file which contains images as file['images'][:].shape = (n_images, ndim, ndim)
     """
     logger.info(f"Writing maxvals of {infile} to {outfile}")
-    with h5py.File(infile, "r") as f:
+    # locking=False so a read-only open never blocks: on the cluster, HDF5's file lock can hang indefinitely - the same
+    # failure the slurm wrappers dodge via HDF5_USE_FILE_LOCKING=FALSE, made independent of how the script is launched.
+    with h5py.File(infile, "r", locking=False) as f:
         max_vals = np.max(f["images"][:], axis=(1, 2))
     np.save(outfile, max_vals)
     logger.info(f"Done writing maxvals of {infile} to {outfile}")
