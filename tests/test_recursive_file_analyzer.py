@@ -1,4 +1,5 @@
 """Unit tests for diffracc/utils/recursive_file_analyzer.py."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ from astropy.io import fits
 from diffracc.utils.recursive_file_analyzer import (
     RecursiveFileAnalyzer,
     _pad_to_shape,
+    _safe_call,
     _to_array,
     get_fits_primaryhdu_data,
     get_fits_primaryhdu_header,
@@ -15,16 +17,16 @@ from diffracc.utils.recursive_file_analyzer import (
 
 
 class TestPadToShape:
-    """Tests for the _pad_to_shape function, which pads smaller arrays to a target shape with zeros."""
+    """Tests for the _pad_to_shape function, which pads smaller arrays to a target shape with NaNs."""
 
-    def test_pads_with_zeros_to_target_shape(self):
-        """Test that a smaller array is padded to the target shape with zeros."""
+    def test_pads_with_nans_to_target_shape(self):
+        """Test that a smaller array is padded to the target shape with NaNs."""
         arr = np.ones((2, 2))
         padded = _pad_to_shape(arr, (4, 4))
         assert padded.shape == (4, 4)
         np.testing.assert_array_equal(padded[:2, :2], 1.0)
-        np.testing.assert_array_equal(padded[2:, :], 0.0)
-        np.testing.assert_array_equal(padded[:, 2:], 0.0)
+        np.testing.assert_array_equal(padded[2:, :], np.nan)
+        np.testing.assert_array_equal(padded[:, 2:], np.nan)
 
     def test_no_padding_needed_when_already_target_shape(self):
         """Test that an array that already matches the target shape is returned unchanged."""
@@ -69,15 +71,15 @@ class TestGetFitsPrimaryhduData:
         result = get_fits_primaryhdu_data(path)
         assert result.shape == (1, 1)
 
-    def test_zero_pads_when_shape_does_not_match_expected(self, tmp_path):
-        """Test that the data is zero-padded to the expected shape when it does not match."""
+    def test_nan_pads_when_shape_does_not_match_expected(self, tmp_path):
+        """Test that the data is NaN-padded to the expected shape when it does not match."""
         data = np.ones((3, 3), dtype=np.float32)
         path = tmp_path / "small.fits"
         fits.PrimaryHDU(data=data).writeto(path)
         result = get_fits_primaryhdu_data(path, expected_shape=(5, 5))
         assert result.shape == (5, 5)
         np.testing.assert_array_equal(result[:3, :3], 1.0)
-        np.testing.assert_array_equal(result[3:, :], 0.0)
+        np.testing.assert_array_equal(result[3:, :], np.nan)
 
     def test_matching_expected_shape_is_unchanged(self, tmp_path):
         """Test that an array with the expected shape is returned unchanged."""
@@ -412,3 +414,83 @@ class TestRunPipeline:
                          output_file=out_file, progress_bar_desc="default")
         written = {line.strip() for line in out_file.read_text().splitlines()}
         assert written == {"1", "2"}
+
+
+class TestSafeCall:
+    """Tests for the module-level _safe_call helper, which wraps the mapped function inside a process worker."""
+
+    def test_returns_function_result(self):
+        """Test that _safe_call returns the result of applying the function to the path."""
+        assert _safe_call(str.upper, "abc") == "ABC"
+
+    def test_returns_none_on_exception(self):
+        """Test that _safe_call swallows any exception and returns None, so one bad file cannot abort the run."""
+        def _raise(_):
+            raise ValueError("boom")
+
+        assert _safe_call(_raise, "x") is None
+
+
+class TestRunPipelineProcessMode:
+    """
+    Tests for run_pipeline's process mode.
+
+    The mapped function must be picklable for the spawn-based ProcessPoolExecutor (and importable by the worker
+    processes), so - unlike the thread-mode tests - these use importable module-level functions (os.path.getsize,
+    get_fits_primaryhdu_data), not lambdas. os.path.getsize is convenient here because a file's byte count is a
+    predictable, order-checkable integer.
+    """
+
+    def _make_sized_files(self, tmp_path, contents: dict[str, str]):
+        """Create text files whose byte length equals len(content), so os.path.getsize is predictable."""
+        for name, content in contents.items():
+            (tmp_path / name).write_text(content)
+
+    def test_applies_function_to_every_matched_file(self, tmp_path):
+        """Test that in process mode the function is applied to every matched file and results are returned."""
+        self._make_sized_files(tmp_path, {"a.txt": "1", "b.txt": "22", "c.txt": "333"})
+        rfa = RecursiveFileAnalyzer(tmp_path)
+        result = rfa.run_pipeline(function=os.path.getsize, pattern=r".*\.txt$",
+                                  mode="process", num_workers=2, progress_bar_desc=None)
+        assert sorted(result.results.tolist()) == [1, 2, 3]
+        assert result.numbers is None
+
+    def test_return_nums_gives_results_aligned_with_sorted_numbers(self, tmp_path):
+        """Test that process-mode results stay aligned with the sorted numbers extracted from filenames."""
+        # byte lengths are chosen to equal the number in each filename, so alignment is directly checkable.
+        self._make_sized_files(tmp_path, {"item2.txt": "22", "item1.txt": "1", "item3.txt": "333"})
+        rfa = RecursiveFileAnalyzer(tmp_path)
+        result = rfa.run_pipeline(function=os.path.getsize, pattern=r".*?(\d+)\.txt$",
+                                  return_nums=True, mode="process", num_workers=2, progress_bar_desc=None)
+        assert list(result.numbers) == [1, 2, 3]
+        assert list(result.results) == [1, 2, 3]
+
+    def test_writes_to_output_file_instead_of_returning(self, tmp_path):
+        """Test that in process mode, results are written to the output file instead of being returned."""
+        self._make_sized_files(tmp_path, {"a.txt": "1", "b.txt": "22"})
+        rfa = RecursiveFileAnalyzer(tmp_path)
+        out_file = tmp_path / "out.log"
+        result = rfa.run_pipeline(function=os.path.getsize, pattern=r".*\.txt$", mode="process",
+                                  num_workers=2, output_file=out_file, progress_bar_desc=None)
+        assert result.results.tolist() == []
+        written = {line.strip() for line in out_file.read_text().splitlines()}
+        assert written == {"1", "2"}
+
+    def test_returns_none_for_files_that_error_without_aborting(self, tmp_path):
+        """Test that a file whose function raises yields None (via _safe_call) without killing the whole run."""
+        fits.PrimaryHDU(data=np.ones((5, 5), dtype=np.float32)).writeto(tmp_path / "good.fits")
+        (tmp_path / "bad.fits").write_text("this is not a FITS file")
+        rfa = RecursiveFileAnalyzer(tmp_path)
+        result = rfa.run_pipeline(function=get_fits_primaryhdu_data, pattern=r".*\.fits$",
+                                  mode="process", num_workers=2, progress_bar_desc=None)
+        results = list(result.results)
+        assert sum(r is None for r in results) == 1
+        assert any(getattr(r, "shape", None) == (5, 5) for r in results)
+
+    def test_default_progress_bar_desc_still_returns_results(self, tmp_path):
+        """Test that process mode with the default progress_bar_desc still returns results correctly."""
+        self._make_sized_files(tmp_path, {"a.txt": "1", "b.txt": "22"})
+        rfa = RecursiveFileAnalyzer(tmp_path)
+        result = rfa.run_pipeline(function=os.path.getsize, pattern=r".*\.txt$", mode="process",
+                                  num_workers=2, progress_bar_desc="default")
+        assert sorted(result.results.tolist()) == [1, 2]
