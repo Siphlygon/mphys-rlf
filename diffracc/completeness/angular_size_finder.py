@@ -44,11 +44,11 @@ class MakeShape():
     https://github.com/mhardcastle/lotss-catalogue/blob/master/dr2_catalogue/make_catalogue.py
     """
 
-    # Number of points used to sample each component ellipse's boundary. The original code used 200; this is overkill,
-    # and 50 points give sub-percent error on the length and cuts the point count down dramatically for the hull.
     # This number needs to be even so the two antipodal major-axis points (theta = 0 and pi) are always sampled exactly,
     # which makes a single-component source's size land exactly on twice its (buffered) major axis.
-    DEFAULT_ELLIPSE_POINTS = 50
+    # the higher n is, the more accurate the convex hull and the size estimate, but the slower the computation.
+    # at n=200 this is a very minor contribution to the total execution, and matches the LoTSS-Catalogue code
+    DEFAULT_ELLIPSE_POINTS = 200
 
     # Buffer (arcsec) added to each ellipse's axes so neighbouring components overlap into a single connected shape.
     _ELLIPSE_BUFFER_ARCSEC = 0.1
