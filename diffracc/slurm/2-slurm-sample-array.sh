@@ -20,14 +20,16 @@
 # Cancel one:   scancel <jobid>_3        Cancel all:  scancel <jobid>
 
 #SBATCH --time=1-23
-#SBATCH --no-requeue
+# --requeue (not --no-requeue) so the dead-driver guard below can requeue a task off a broken node onto a healthy
+# one. Safe because _count_existing_samples resumes without regenerating samples already on disk.
+#SBATCH --requeue
 #SBATCH --chdir=/share/nas2_3/lgreen/mphys-rlf
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --exclusive
 #SBATCH --mem=0
 #SBATCH --cpus-per-task=16
-#SBATCH --exclude=compute-0-9,compute-0-1,compute-0-2
+#SBATCH --exclude=compute-0-1,compute-0-2,compute-0-9,compute-0-29,compute-0-30,compute-0-31,compute-0-32,compute-0-33,compute-0-39,compute-0-40,compute-0-102
 
 set -euo pipefail
 
@@ -41,7 +43,29 @@ fi
 GPUS_PER_NODE=2
 
 echo ">>>node task ${SLURM_ARRAY_TASK_ID}/${SLURM_ARRAY_TASK_COUNT} of config ${SAMPLE_CONFIG} on $(hostname)"
-nvidia-smi --query-gpu=index,name,memory.free --format=csv,noheader || echo "WARNING: nvidia-smi unavailable"
+
+# Guard against a dead NVIDIA driver on this node. Without it, each worker instead crashes much later inside
+# device_utils.physical_gpu_df()'s nvmlInit() with NVMLError_DriverNotLoaded - after loading the model - and this
+# task's whole slice of N_SAMPLES is silently lost, leaving the missing sample folders that sent us here. Some
+# partition nodes have an unloaded driver (the static --exclude list holds the known ones); this catches a
+# newly-broken node before any work is done.
+#
+# On failure we self-heal: append this node to the job's ExcNodeList (preserving the static --exclude entries
+# already there, so nothing is lost) and requeue, which sends the scheduler looking for a different node. Because
+# each failure adds one more node to the exclusion, a requeue can never land back on the same dead node.
+if ! nvidia-smi --query-gpu=index,name,memory.free --format=csv,noheader; then
+    echo "ERROR: no working NVIDIA driver on ${SLURMD_NODENAME}; excluding it and requeuing task ${SLURM_ARRAY_TASK_ID}." >&2
+    exc=$(scontrol show job "${SLURM_JOB_ID}" | grep -oP 'ExcNodeList=\K\S+' || true)
+    [ "${exc}" = "(null)" ] && exc=""
+    if scontrol update JobId="${SLURM_JOB_ID}" ExcNodeList="${exc:+${exc},}${SLURMD_NODENAME}" \
+            && scontrol requeue "${SLURM_JOB_ID}"; then
+        echo "       requeued off ${SLURMD_NODENAME}. Consider adding it to the static --exclude at the top too, so" >&2
+        echo "       future submissions skip it from the start." >&2
+    else
+        echo "ERROR: could not requeue (is --requeue set?); aborting - rerun this config by hand once the node is fixed." >&2
+    fi
+    exit 1
+fi
 
 pwd;
 
