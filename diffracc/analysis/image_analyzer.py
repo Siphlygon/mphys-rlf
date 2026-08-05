@@ -9,6 +9,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePath
 from typing import Any, Mapping
 
+# PyBDSF is parallelised across images by a process Pool (see ImageAnalyzer.analyze_all_fits_in_input), so each worker
+# should run numpy/scipy/BLAS single-threaded: otherwise every one of the N pool workers spawns its own BLAS thread pool
+# and a node ends up with N x cores threads contending for N cores. These must be set before numpy/scipy/bdsf are
+# imported, as BLAS reads them once at load time; setdefault so an explicit environment value (e.g. from SLURM) wins.
+for _thread_var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_thread_var, "1")
+
 import bdsf
 import bdsf.image
 import numpy as np
@@ -88,6 +95,12 @@ class ProcessArgs:
     # A trous config
     atrous_do: bool = True
     atrous_jmax: int = 4
+
+    # Parallelism config. `ncores` is how many cores PyBDSF uses within a *single* image (a-trous, fitting). We instead
+    # parallelise across images with a process Pool (see ImageAnalyzer.analyze_all_fits_in_input), so each image runs
+    # single-threaded to avoid nesting cores-within-workers oversubscription. Left out of the TOML deliberately (it is a
+    # runtime, not a science, choice); override for a specific run with process_ncores=N.
+    ncores: int = 1
 
 
     @classmethod
@@ -322,20 +335,30 @@ class ImageAnalyzer:
         return PurePath(*path.parts[(last_index_of_subdir + 1):])
 
 
-    def analyze_all_fits_in_input(self):
+    def analyze_all_fits_in_input(self, n_cpus: int | None = None, max_tasks_per_child: int | None = 50):
         """
-        Recursively analyze all of "[fits_input_dir]/[subdir]/**.fits".
+        Recursively analyze all of "[fits_input_dir]/[subdir]/**.fits" with PyBDSF.
 
-        Spawns as many processes as the environment variable N_CPUS if set, or if not set spawns one process. If
-        environment variables SLURM_ARRAY_TASK_COUNT and SLURM_ARRAY_TASK_ID are set, will only process the files
-        designated to this task, with a bin defined by (task_id / task_count * len(files)) to
-        ((task_id + 1) / task_count * len(files)).
+        Spawns `n_cpus` worker processes. If `n_cpus` is None it falls back to the N_CPUS environment variable (set to
+        SLURM_CPUS_PER_TASK by the SLURM script), and if that is unset to os.cpu_count() so a bare local run uses the
+        whole machine. If run as a SLURM array, the input file list is split into contiguous per-task bins.
+        analyze_fits_at_path skips any file whose PyBDSF outputs already exist.
+
+        Parameters
+        ----------
+        n_cpus : int | None = None
+            Number of worker processes. None resolves to N_CPUS if set, else os.cpu_count().
+        max_tasks_per_child : int | None = 50
+            Recycle each worker after this many files to bound PyBDSF's per-image memory growth. Recycling is cheap
+            under the `fork` start method (Linux/WSL: forked workers inherit the already-imported bdsf) but costly under
+            `spawn` (native Windows/macOS: each replacement re-imports bdsf from scratch), so pass None to disable
+            recycling on a spawn platform where memory growth is not a concern (e.g. small local runs).
         """
         du = DistributedUtils()
 
-        n_cpus = os.environ.get("N_CPUS", 1)
-        if isinstance(n_cpus, str):
-            n_cpus = int(n_cpus)
+        if n_cpus is None:
+            env_n_cpus = os.environ.get("N_CPUS")
+            n_cpus = int(env_n_cpus) if env_n_cpus else (os.cpu_count() or 1)
         self.logger.info("Using %i cpu" + ("s" if n_cpus != 1 else ""), n_cpus)
         input_subdir = self.fits_input_dir / self.subdir
 
@@ -347,8 +370,14 @@ class ImageAnalyzer:
         bin_end = du.get_bin_end(n_files)
         files = files[bin_start:bin_end]
 
-        p = NonDaemonPool(processes=n_cpus)
-        p.map(self.analyze_fits_at_path, files)
+        # One process per CPU, each running PyBDSF single-threaded (ProcessArgs.ncores), so the pool - not PyBDSF's
+        # own internal threading - is the sole source of parallelism, avoiding cores-within-workers oversubscription.
+        # imap_unordered with chunksize=1 hands out files one at a time, keeping workers load-balanced despite the wide
+        # spread in per-image PyBDSF runtime; maxtasksperchild recycles workers so PyBDSF's per-image memory growth
+        # can't accumulate across a long task.
+        with NonDaemonPool(processes=n_cpus, maxtasksperchild=max_tasks_per_child) as p:
+            for _ in p.imap_unordered(self.analyze_fits_at_path, files, chunksize=1):
+                pass
 
 
     def analyze_fits_at_path(self, path: Path | str):
