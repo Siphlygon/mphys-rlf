@@ -339,10 +339,11 @@ class ImageAnalyzer:
         """
         Recursively analyze all of "[fits_input_dir]/[subdir]/**.fits" with PyBDSF.
 
-        Spawns `n_cpus` worker processes. If `n_cpus` is None it falls back to the N_CPUS environment variable (set to
-        SLURM_CPUS_PER_TASK by the SLURM script), and if that is unset to os.cpu_count() so a bare local run uses the
-        whole machine. If run as a SLURM array, the input file list is split into contiguous per-task bins.
-        analyze_fits_at_path skips any file whose PyBDSF outputs already exist.
+        Spawns `n_cpus` worker processes. If `n_cpus` is None it falls back to the N_CPUS environment variable and if
+        that is unset to `os.cpu_count()` so a bare local run uses the whole machine. When distributed across an array
+        of tasks, the sorted input file list is split across tasks by interleaving (this task takes
+        `files[task_id :: task_count]`), so files still needing work are shared evenly across tasks rather than
+        concentrated in a few contiguous ranges. `analyze_fits_at_path` skips any file whose PyBDSF outputs already exist.
 
         Parameters
         ----------
@@ -362,16 +363,13 @@ class ImageAnalyzer:
         self.logger.info("Using %i cpu" + ("s" if n_cpus != 1 else ""), n_cpus)
         input_subdir = self.fits_input_dir / self.subdir
 
-        files = self.rfa.get_unwrapped_list(path=input_subdir, pattern=r'.*?\.fits$').paths
+        # Sort first so every task partitions an identical, stable order (scandir order is not guaranteed consistent
+        # across tasks), then interleave: each file's owning task is a fixed function of its rank
+        files = sorted(self.rfa.get_unwrapped_list(path=input_subdir, pattern=r'.*?\.fits$').paths)
+        files = files[du.get_task_id() :: du.get_task_count()]
 
-        # distribute across multiple tasks
-        n_files = len(files)
-        bin_start = du.get_bin_start(n_files)
-        bin_end = du.get_bin_end(n_files)
-        files = files[bin_start:bin_end]
-
-        # One process per CPU, each running PyBDSF single-threaded (ProcessArgs.ncores), so the pool - not PyBDSF's
-        # own internal threading - is the sole source of parallelism, avoiding cores-within-workers oversubscription.
+        # One process per CPU, each running PyBDSF single-threaded (ProcessArgs.ncores), so the pool is the sole source
+        # of parallelism.
         # imap_unordered with chunksize=1 hands out files one at a time, keeping workers load-balanced despite the wide
         # spread in per-image PyBDSF runtime; maxtasksperchild recycles workers so PyBDSF's per-image memory growth
         # can't accumulate across a long task.
