@@ -14,16 +14,18 @@ from diffracc.utils import paths
 
 
 class _FakeAnalyzer:
-    """Records the kwargs it was constructed with and whether analyze_all_fits_in_input() was called."""
+    """Records the kwargs it was constructed with, and whether/with-what kwargs analyze_all_fits_in_input() ran."""
     instances = []
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.ran = False
+        self.run_kwargs = None
         _FakeAnalyzer.instances.append(self)
 
-    def analyze_all_fits_in_input(self):
+    def analyze_all_fits_in_input(self, **kwargs):
         self.ran = True
+        self.run_kwargs = kwargs
 
 
 @pytest.fixture(autouse=True)
