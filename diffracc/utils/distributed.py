@@ -5,6 +5,21 @@ from .logger import LoggingLevels, get_logger
 
 
 def distribute(sliceable_array):
+    """
+    Compute the slice of a larger array that this node should be dealing with in a distributed environment. The slice is
+    determined by the task ID and the total number of tasks in the distributed environment.
+
+    Parameters
+    ----------
+    sliceable_array : array-like
+        The larger array to be distributed across the nodes. Each node will only interact with its own slice of the
+        array, determined by its task ID and the total number of tasks in the distributed environment.
+
+    Returns
+    -------
+    array-like
+        The slice of the array that this node should be dealing with.
+    """
     du = DistributedUtils()
 
     # distribute across multiple tasks by giving each node a slice of a larger array dependent on its array id
@@ -18,11 +33,11 @@ class DistributedUtils:
     """
     Utility functions for running on a distributed system (SLURM in particular)
     """
-    def __init__( self, log_level: int = LoggingLevels.INFO.value ):
-        self.logger = get_logger( __name__, log_level )
+    def __init__(self, log_level: int = LoggingLevels.INFO.value):
+        self.logger = get_logger(__name__, log_level)
 
 
-    def is_distributed( self ) -> bool:
+    def is_distributed(self) -> bool:
         """
         Check if the program is running in a distributed environment by checking the SLURM_ARRAY_TASK_COUNT environment
         variable.
@@ -35,7 +50,7 @@ class DistributedUtils:
         return self.get_task_count() != 1
 
 
-    def get_task_id( self ) -> int:
+    def get_task_id(self) -> int:
         """
         Get the task ID of the current node in a distributed environment by checking the SLURM_ARRAY_TASK_ID environment
         variable. If the program is not running in a distributed environment, it returns 0.
@@ -45,10 +60,10 @@ class DistributedUtils:
         int
             The task ID of the current node.
         """
-        return int( os.environ.get( "SLURM_ARRAY_TASK_ID", 0 ) )
+        return int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
 
 
-    def get_task_count( self ) -> int:
+    def get_task_count(self) -> int:
         """
         Get the total number of tasks in a distributed environment by checking the SLURM_ARRAY_TASK_COUNT environment
         variable. If the program is not running in a distributed environment, it returns 1.
@@ -58,10 +73,10 @@ class DistributedUtils:
         int
             The total number of tasks in a distributed environment.
         """
-        return int( os.environ.get( "SLURM_ARRAY_TASK_COUNT", 1 ) )
+        return int(os.environ.get("SLURM_ARRAY_TASK_COUNT", 1))
 
 
-    def get_bin_end( self, n: int ) -> int:
+    def get_bin_end(self, n: int) -> int:
         """
         Function to take a total number n and get the corresponding end of the bin that this node should be dealing with
         
@@ -75,10 +90,10 @@ class DistributedUtils:
         int
             The end index of the bin that this node should be dealing with.
         """
-        return ( n * ( self.get_task_id() + 1 ) ) // self.get_task_count()
+        return (n * (self.get_task_id() + 1)) // self.get_task_count()
 
 
-    def get_bin_start( self, n: int ) -> int:
+    def get_bin_start(self, n: int) -> int:
         """
         Function to take a total number n and get the corresponding start of the bin that this node should be dealing
         with
@@ -93,4 +108,4 @@ class DistributedUtils:
         int
             The start index of the bin that this node should be dealing with.
         """
-        return ( n * self.get_task_id() ) // self.get_task_count()
+        return (n * self.get_task_id()) // self.get_task_count()
