@@ -22,6 +22,10 @@ CATALOGUES = MappingProxyType({
     "hardcastle2025": {
         "file_name": "agn-v1.1.fits",
         "url": "https://lofar-surveys.org/public/DR2/AGN_selection/agn-v1.1.fits"
+    },
+    "hardcastle2023_components": {
+        "file_name": "combined-components-v1.1.fits",
+        "url": "https://lofar-surveys.org/public/DR2/catalogues/combined-components-v1.1.fits"
     }
 })
 DESIRED_COLUMNS = [s.value for s in Source]
@@ -113,15 +117,24 @@ class CatalogueDownloader:
         Parameters
         ----------
         cat : str
-            The catalogue to download. Has to be one of the keys in the CATALOGUES dictionary.
+            The catalogue to download. Has to be one of the keys in the `CATALOGUES` dictionary.
         raw_catalogue_path : Path, optional
-            The path to save the downloaded catalogue FITS file, by default paths.RAW_CATALOGUE_PATH.
+            The path to save the downloaded catalogue FITS file, by default `paths.RAW_CATALOGUE_PATH`.
         stripped_catalogue_path : Path, optional
-            The path to save the stripped catalogue H5 file, by default paths.STRIPPED_CATALOGUE_PATH.
+            The path to save the stripped catalogue H5 file, by default `paths.STRIPPED_CATALOGUE_PATH`.
         """
         if os.path.exists(raw_catalogue_path):
             self.logger.info(f'Catalogue already exists at {raw_catalogue_path}. Skipping download.')
-            self._create_stripped_catalogue(file_path=stripped_catalogue_path, catalogue_path=raw_catalogue_path)
+            if cat == "hardcastle2023":
+                self._create_stripped_catalogue(file_path=stripped_catalogue_path, catalogue_path=raw_catalogue_path)
+                if os.path.exists(paths.COMPONENT_CATALOGUE_PATH):
+                    self.logger.info(f'Component catalogue already exists at {paths.COMPONENT_CATALOGUE_PATH}.' +
+                                     ' Skipping download.')
+                else:
+                    self.logger.info(f'Component catalogue does not exist at {paths.COMPONENT_CATALOGUE_PATH}.' +
+                                     ' Downloading...')
+                    self.download_catalogue(cat="hardcastle2023_components",
+                                            raw_catalogue_path=paths.COMPONENT_CATALOGUE_PATH)
             return
 
         # Check if the catalogue is in the predefined CATALOGUES dictionary and therefore supported
@@ -145,7 +158,8 @@ class CatalogueDownloader:
             raise RuntimeError(f"Failed to download catalogue from {url}. Status code: {response.status_code}")
 
         # After downloading, create a stripped version of the catalogue with only the desired columns
-        self._create_stripped_catalogue(file_path=stripped_catalogue_path, catalogue_path=raw_catalogue_path)
+        if cat == "hardcastle2023":
+            self._create_stripped_catalogue(file_path=stripped_catalogue_path, catalogue_path=raw_catalogue_path)
 
 
     def _get_positions_from_hardcastle(self, catalogue_path: Path = paths.STRIPPED_CATALOGUE_PATH)\
@@ -203,27 +217,35 @@ class CatalogueDownloader:
             self.logger.error(f"Error writing positions to file: {e}")
 
 
-    def main(self,
+    def download_hardcastle_catalogue(self,
              catalogue_path: Path = paths.RAW_CATALOGUE_PATH,
              stripped_path: Path = paths.STRIPPED_CATALOGUE_PATH,
+             component_path: Path = paths.COMPONENT_CATALOGUE_PATH,
              positions_path: Path = paths.PREPROCESSING_PARENT / "resolved_positions.txt"):
         """
-        Downloads the Hardcastle catalogue, extracts the RA and DEC positions of resolved sources, and writes those
-        positions to a text file. This method orchestrates the entire process and logs the progress.
+        Downloads the Hardcastle catalogue and accompanying component catalogue, extracts the RA and DEC positions of
+        resolved sources, and writes those positions to a text file.
         
         Parameters
         ----------
         catalogue_path : Path, optional
-            The path to save the downloaded Hardcastle Catalogue FITS file, by default paths.RAW_CATALOGUE_PATH
+            The path to save the downloaded Hardcastle catalogue FITS file, by default `paths.RAW_CATALOGUE_PATH`.
         stripped_path : Path, optional
-            The path to save the stripped Hardcastle Catalogue file, by default paths.STRIPPED_CATALOGUE_PATH
+            The path to save the stripped Hardcastle catalogue file, by default `paths.STRIPPED_CATALOGUE_PATH`.
+        component_path : Path, optional
+            The path to save the downloaded Hardcastle component catalogue FITS file, by default
+            `paths.COMPONENT_CATALOGUE_PATH`.
         positions_path : Path, optional
-            The path to save the positions text file, by default paths.PREPROCESSING_PARENT / "resolved_positions.txt"
+            The path to save the positions text file, by default `paths.PREPROCESSING_PARENT/"resolved_positions.txt"`.
         """
         # Download the Hardcastle catalogue if it doesn't exist, and load it
         self.download_catalogue(cat="hardcastle2023",
                                 raw_catalogue_path=catalogue_path,
                                 stripped_catalogue_path=stripped_path)
+
+        # Also download the component catalogue if it doesn't exist
+        self.download_catalogue(cat="hardcastle2023_components",
+                                raw_catalogue_path=component_path)
 
         # Load the Hardcastle catalogue and filter for resolved items
         hdc_positions = self._get_positions_from_hardcastle(catalogue_path=stripped_path)
@@ -234,4 +256,4 @@ class CatalogueDownloader:
 
 if __name__ == "__main__":
     downloader = CatalogueDownloader()
-    downloader.main()
+    downloader.download_hardcastle_catalogue()
