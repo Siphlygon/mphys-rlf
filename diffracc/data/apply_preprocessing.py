@@ -24,7 +24,7 @@ class CutoutPreprocessor:
     select images suitable for training the diffusion model on based on a range of criteria.
     """
     def __init__(self,
-                 snr_threshold: float = 15,
+                 snr_threshold: float = 5,
                  edge_max_threshold: float = 0.8,
                  peak_flux_threshold: float = 500,
                  exclusive: bool = False,
@@ -36,7 +36,7 @@ class CutoutPreprocessor:
         Parameters
         ----------
         snr_threshold : float, optional
-            The signal-to-noise ratio threshold for selecting images, by default 15
+            The signal-to-noise ratio threshold for selecting images, by default 5
         edge_max_threshold : float, optional
             The maximum threshold for edge pixels, by default 0.8
         peak_flux_threshold : float, optional
@@ -150,30 +150,27 @@ class CutoutPreprocessor:
                                            mode="file",
                                            # kwargs for load_single_cutout
                                            logger=self.logger)
-        values = values.astype(np.float32)
+        # values are alr in f32 from load_single_cutout, but we can cast indices
         indices = indices.astype(np.int32)
 
-        # Check indices to see any missing cutout images
-        self.logger.debug(f"Checking for missing cutout images in the range 0 to {self.num_counts - 1}...")
-        true_cutouts = set(range(self.num_counts))
-        missing_cutouts = true_cutouts - set(indices)
+        found = len(indices)
+        self.logger.info(f"Total cutouts expected: {self.num_counts}, found: {found}")
 
-        self.logger.info(f"Total cutouts expected: {self.num_counts}, found: {len(indices)}")
-        if missing_cutouts:
-            self.logger.warning(f"Missing cutout images: {sorted(missing_cutouts)}")
+        # Fast path: every cutout present and already index-aligned, can straight up return it
+        expected_order = np.arange(self.num_counts, dtype=indices.dtype)
+        if found == self.num_counts and np.array_equal(indices, expected_order):
+            return values  # type: ignore
 
-            # Create NaN arrays for the missing cutouts and append them to the values and indices arrays, so we have a
-            # complete dataset with NaNs for missing images
-            values = np.append(values, np.full((len(missing_cutouts), 80, 80), np.nan, dtype=np.float32), axis=0,)
-            indices = np.append(indices, list(missing_cutouts))
+        # Otherwise scatter the loaded cutouts into one index-aligned array, leaving missing positions as NaN.
+        present = np.zeros(self.num_counts, dtype=bool)
+        present[indices] = True
+        missing_idx = np.flatnonzero(~present)
+        self.logger.warning(f"Missing {len(missing_idx)} cutout images; filling those positions with NaNs.")
+        self.logger.debug(f"Missing cutout indices: {missing_idx.tolist()}")
 
-            # Sort the values and indices by index to ensure they are in the correct order for linking back to the
-            # catalogue information
-            self.logger.info("Sorting cutout images and indices to ensure correct order...")
-            sorted_indices = np.argsort(indices)
-            values = values[sorted_indices]
-
-        return values  # type: ignore
+        full = np.full((self.num_counts, 80, 80), np.nan, dtype=np.float32)
+        full[indices] = values
+        return full
 
 
     def _build_dataframe(self, images: np.ndarray) -> pd.DataFrame:
@@ -191,41 +188,43 @@ class CutoutPreprocessor:
         pd.DataFrame
             A pandas DataFrame containing the extracted pixel values and initialized columns.
         """
-        # Extract the pixel values from images and put into dataframe
-        catalogue_data = []
-        for idx, image in enumerate(tqdm(images, desc="Extracting pixel values from cutout images")):
-            # Check if the image is broken (defined as all NaN values)
-            if self._identify_broken_source_single(image):
-                self.logger.warning(f"Image {idx} is a missing image (all values NaN). Marking as broken.")
-                catalogue_data.append({'index': idx,
-                                       'pixel_values': np.full((80, 80), np.nan, dtype=np.float32),
-                                       'broken': True,
-                                       'incomplete': False})
+        n_images = images.shape[0]
+        per_image = images.shape[1] * images.shape[2]
 
-            # Check if the image is incomplete (defined as some but not all NaN values)
-            elif self._identify_incomplete_image_single(image):
-                self.logger.warning(f"Image {idx} is an incomplete image (some values NaN). Marking as incomplete.")
-                catalogue_data.append({'index': idx,
-                                       'pixel_values': image.astype(np.float32),
-                                       'broken': False,
-                                       'incomplete': True})
-            else:
-                catalogue_data.append({'index': idx,
-                                       'pixel_values': image.astype(np.float32),
-                                       'broken': False,
-                                       'incomplete': False})
+        # Count NaNs per image in chunks as to avoid large memory spikes.
+        nan_counts = np.empty(n_images, dtype=np.int64)
+        chunk = 20000
+        for start in range(0, n_images, chunk):
+            block = images[start:start + chunk]
+            nan_counts[start:start + chunk] = np.isnan(block).reshape(block.shape[0], -1).sum(axis=1)
 
-        # Initialise all other columns to default right now
-        catalogue_data = [{**item,
-                           'size': 0.0,
-                           'S/N': 0.0,
-                           'edge_max': 0.0,
-                           'peak_flux': 0.0,
-                           'rlagn': False} for item in catalogue_data]
+        # broken: every pixel NaN (a missing image). incomplete: some, but not all, pixels NaN.
+        broken = nan_counts == per_image
+        incomplete = (nan_counts > 0) & ~broken
 
-        # Set up DataFrame columns
-        columns = ['index', 'pixel_values', 'broken', 'incomplete', 'size', 'S/N', 'edge_max', 'peak_flux', 'rlagn']
-        dataset = pd.DataFrame(catalogue_data, columns=columns)
+        n_broken = int(broken.sum())
+        n_incomplete = int(incomplete.sum())
+        if n_broken:
+            self.logger.warning(f"{n_broken} images are missing (all values NaN) and are marked broken.")
+            self.logger.debug(f"Broken image indices: {np.flatnonzero(broken).tolist()}")
+        if n_incomplete:
+            self.logger.warning(f"{n_incomplete} images are incomplete (some values NaN) and are marked incomplete.")
+            self.logger.debug(f"Incomplete image indices: {np.flatnonzero(incomplete).tolist()}")
+
+        # Store each image as a view into the existing stack rather than a fresh per-image copy: list(images) yields
+        # 2D views, so the object column costs ~n_images pointers instead of a second ~8 GB array held alongside the
+        # source stack.
+        dataset = pd.DataFrame({
+            'index': np.arange(n_images, dtype=np.int32),
+            'pixel_values': list(images),
+            'broken': broken,
+            'incomplete': incomplete,
+            'size': 0.0,
+            'S/N': 0.0,
+            'edge_max': 0.0,
+            'peak_flux': 0.0,
+            'rlagn': False,
+        })
 
         return dataset
 
@@ -734,9 +733,9 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--snr-threshold",
-        help="The S/N threshold to apply when filtering the dataset. Default 15.",
+        help="The S/N threshold to apply when filtering the dataset. Default 5.",
         type=float,
-        default=15
+        default=5
     )
     parser.add_argument(
         "--edge-max-threshold",
