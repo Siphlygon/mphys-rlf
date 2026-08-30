@@ -153,6 +153,15 @@ class CutoutPreprocessor:
         # values are alr in f32 from load_single_cutout, but we can cast indices
         indices = indices.astype(np.int32)
 
+        # Guard against cutout numbers outside the expected range before using them to place images into the full,
+        # index-aligned array below (an out-of-range index would otherwise raise from the scatter assignment).
+        in_range = (indices >= 0) & (indices < self.num_counts)
+        if not in_range.all():
+            self.logger.warning(f"{int((~in_range).sum())} cutout indices fall outside "
+                                f"[0, {self.num_counts}); ignoring them.")
+            indices = indices[in_range]
+            values = values[in_range]
+
         found = len(indices)
         self.logger.info(f"Total cutouts expected: {self.num_counts}, found: {found}")
 
