@@ -1,9 +1,9 @@
 """
-A script to evaluate the convergence of a diffusion model by sampling images from several snapshots and comparing them
-to a real image set.
+A script to evaluate the convergence/training of a diffusion model by sampling images from several snapshots an
+comparing them to a real image set.
 
 Experience shows (and this is a maxim in ML training anyway) that validation loss is not always a good progress metre.
-Especially for our diffusion models, we found that although validation loss may barely decrease between e.g., 34l and
+Especially for our diffusion models, we found that although validation loss may barely decrease between e.g., 34k and
 100k iterations, the quality of the generated samples can improve dramatically - from static noise to clean, physical
 radio galaxies. So "the loss is flat" cannot be used to argue convergence, and the only way to decide whether more
 iterations are worth the GPU-hours is to evaluate sample quality directly as a function of iteration.
@@ -154,7 +154,8 @@ def _sample_snapshot(model_dir: Path,
                      key: str,
                      timesteps: int,
                      device: torch.device,
-                     seed: int) -> tuple[np.ndarray, np.ndarray | None]:
+                     seed: int,
+                     sample_batch: int = 256) -> tuple[np.ndarray, np.ndarray | None]:
     """
     Sample n images from one snapshot, returned in physical Jy/beam.
 
@@ -177,6 +178,9 @@ def _sample_snapshot(model_dir: Path,
         Device to sample on.
     seed : int
         Seed for the initial latents, shared across snapshots in a sweep.
+    sample_batch : int, optional
+        Maximum images pushed through the U-Net at once, by default 256. The fixed pool of latents is processed in
+        chunks of this size to avoid massive memory usage. Lower as required.
 
     Returns
     -------
@@ -189,14 +193,23 @@ def _sample_snapshot(model_dir: Path,
     model = model.to(device)
 
     context_dim = model.model.context_dim
-    # Central (standardised-zero) prompt for every image, matching sample_snapshot_grid's convention.
-    context = torch.zeros(n, context_dim, device=device) if context_dim else None
 
+    # Draw every latent up front (cheap - this is just noise) so the shared-seed guarantee is identical regardless of
+    # chunking; only the U-Net forward pass is memory-bound, so the latents are then sampled in sample_batch-sized
+    # chunks and the resulting images moved to the CPU before the next chunk.
     generator = torch.Generator(device=device).manual_seed(seed)
     latents = torch.randn(n, 1, 80, 80, device=device, generator=generator)
-    steps = diffusion.edm_sampling(
-        model, context_batch=context, latents=latents, batch_size=n, image_size=80, timesteps=timesteps)
-    imgs = steps[-1][:, 0].cpu().numpy()
+
+    chunks = []
+    for start in range(0, n, sample_batch):
+        lat = latents[start:start + sample_batch]
+        bs = lat.shape[0]
+        # Central (standardised-zero) prompt for every image, matching sample_snapshot_grid's convention.
+        context = torch.zeros(bs, context_dim, device=device) if context_dim else None
+        steps = diffusion.edm_sampling(
+            model, context_batch=context, latents=lat, batch_size=bs, image_size=80, timesteps=timesteps)
+        chunks.append(steps[-1][:, 0].cpu().numpy())
+    imgs = np.concatenate(chunks, axis=0)
 
     # The evaluation suite requires physical Jy/beam, so always invert a recorded transform here (unlike
     # sample_snapshot_grid, where leaving samples in model space is a valid viewing choice).
@@ -221,6 +234,7 @@ def sweep_snapshots(model_name: str,
                     timesteps: int = 25,
                     seed: int = 0,
                     check_memorisation: bool = False,
+                    sample_batch: int = 256,
                     out_dir: Path | None = None) -> dict:
     """
     Sample and evaluate several snapshots of one model, to see whether quality is still improving with training.
@@ -249,6 +263,9 @@ def sweep_snapshots(model_name: str,
     check_memorisation : bool, optional
         Also run the memorisation report against the real set, by default False. Off by default because it is a
         nearest-neighbour search over the full real stack and is the slowest part of the report.
+    sample_batch : int, optional
+        Maximum images pushed through the U-Net at once, by default 256. Only caps peak GPU memory; the result is
+        unchanged. Lower it if sampling OOMs, raise it if there is headroom.
     out_dir : Path | None, optional
         Where to write outputs, by default the model directory.
 
@@ -282,7 +299,8 @@ def sweep_snapshots(model_name: str,
     reports, sampled = {}, {}
     for snapshot_iter in chosen:
         logger.info(f"Sampling {n} images from iteration {snapshot_iter}...")
-        imgs, prompted_peak = _sample_snapshot(model_dir, snapshot_iter, n, key, timesteps, device, seed)
+        imgs, prompted_peak = _sample_snapshot(
+            model_dir, snapshot_iter, n, key, timesteps, device, seed, sample_batch=sample_batch)
         sampled[snapshot_iter] = imgs
 
         logger.info(f"Running Tier-1 evaluation for iteration {snapshot_iter}...")
@@ -452,11 +470,15 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0, help="Latent seed, shared across snapshots (default 0).")
     parser.add_argument("--check-memorisation", action="store_true",
                         help="Also run the memorisation report (slow: nearest-neighbour over the real stack).")
+    parser.add_argument("--sample-batch", type=int, default=256,
+                        help="Max images sampled through the U-Net at once (default 256); lower this if sampling OOMs. "
+                             "Only affects peak GPU memory, not the result.")
     parser.add_argument("--out-dir", type=Path, default=None, help="Output directory (default: the model dir).")
     args = parser.parse_args()
 
     sweep_snapshots(
         args.model_name, args.real_data_path, snapshots=args.snapshots, n_snapshots=args.n_snapshots,
         n=args.n, n_real=(None if args.n_real == 0 else args.n_real), key=args.key, timesteps=args.timesteps,
-        seed=args.seed, check_memorisation=args.check_memorisation, out_dir=args.out_dir,
+        seed=args.seed, check_memorisation=args.check_memorisation, sample_batch=args.sample_batch,
+        out_dir=args.out_dir,
     )
