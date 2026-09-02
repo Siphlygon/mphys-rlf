@@ -292,10 +292,7 @@ def flag_cropped_sources(source_ra: np.ndarray,
     pd.DataFrame
         One row per input source (same order), with columns:
         `n_own_components`, `cropped` (bool, any own component crosses the frame),
-        `own_extent` (arcsec, the larger side of the own-emission bounding box),
-        `recentre_ra` / `recentre_dec` (deg, the bounding-box centre - the cutout centre that would best contain the
-        source),
-        `recentrable` (bool, cropped but `own_extent` still fits the cutout, so re-cutting there would contain it).
+        `own_extent` (arcsec, the larger side of the own-emission bounding box).
     """
     source_name = _as_str_array(source_name)
     n = len(source_ra)
@@ -312,8 +309,6 @@ def flag_cropped_sources(source_ra: np.ndarray,
     n_own = np.zeros(n, dtype=np.int32)
     cropped = np.zeros(n, dtype=bool)
     own_extent = np.zeros(n, dtype=float)
-    recentre_ra = source_ra.astype(float).copy()
-    recentre_dec = source_dec.astype(float).copy()
 
     logger.info(f"Testing own-component containment for {n} sources...")
     for i in range(n):
@@ -342,21 +337,13 @@ def flag_cropped_sources(source_ra: np.ndarray,
         dec_min, dec_max = (y0 - d_dec).min(), (y0 + d_dec).max()
         cropped[i] = (ra_min < -half) or (ra_max > half) or (dec_min < -half) or (dec_max > half)
         own_extent[i] = max(ra_max - ra_min, dec_max - dec_min)
-        centre_x = 0.5 * (ra_min + ra_max)
-        centre_y = 0.5 * (dec_min + dec_max)
-        recentre_ra[i] = source_ra[i] + centre_x / cos_dec / 3600.0
-        recentre_dec[i] = source_dec[i] + centre_y / 3600.0
 
     result = pd.DataFrame({
         "n_own_components": n_own,
         "cropped": cropped,
         "own_extent": own_extent,
-        "recentre_ra": recentre_ra,
-        "recentre_dec": recentre_dec,
-        "recentrable": cropped & (own_extent <= cutout_size_arcsec),
     })
-    logger.info(f"Flagged {int(cropped.sum())} / {n} cutouts ({cropped.mean() * 100:.1f}%) as cropped; "
-                f"of those {int(result['recentrable'].sum())} would fit if re-centred.")
+    logger.info(f"Flagged {int(cropped.sum())} / {n} cutouts ({cropped.mean() * 100:.1f}%) as cropped.")
     return result
 
 

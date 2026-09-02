@@ -16,7 +16,7 @@ from ..utils import data_utils as du
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
-from . import contamination
+from . import cutout_quality
 
 
 class CutoutPreprocessor:
@@ -578,7 +578,7 @@ class CutoutPreprocessor:
             return
 
         self.logger.info("Computing foreign-contamination and cropping flags from the component catalogue...")
-        flags = contamination.compute_from_catalogues(sigma_threshold=self.foreign_sigma_threshold)
+        flags = cutout_quality.compute_from_catalogues(sigma_threshold=self.foreign_sigma_threshold)
         assert len(flags) == len(dataset), (
             f"Contamination flags ({len(flags)}) are not aligned with the dataset ({len(dataset)}); expected one "
             "resolved source per row in the same order.")
