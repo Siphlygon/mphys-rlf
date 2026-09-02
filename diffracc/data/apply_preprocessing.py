@@ -463,21 +463,6 @@ class CutoutPreprocessor:
         images = np.stack(image_lists, axis=0)
         del image_lists
 
-        # Vectorised edge max
-        # Computes the ratio of the maximum border pixel to the image max; too high implies source cutoff by the cutout
-        self.logger.info("Creating vectorised flags for edge max...")
-        start_time = time.time()
-        top = images[:, 0, :].max(axis=1)
-        bottom = images[:, -1, :].max(axis=1)
-        left = images[:, 1:-1, 0].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
-        right = images[:, 1:-1, -1].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
-        edge_max_vals = np.maximum.reduce([top, bottom, left, right])
-        global_max = images.max(axis=(1, 2))
-        # avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
-            edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
-        self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
-
         # Vectorised size flags
         self.logger.info("Creating vectorised flags for source size...")
         start_time = time.time()
@@ -517,7 +502,6 @@ class CutoutPreprocessor:
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
-        dataset.loc[valid_mask, 'edge_max'] = edge_ratio
         dataset.loc[valid_mask, 'size'] = sizes
         dataset.loc[valid_mask, 'S/N'] = snr_list
         dataset.loc[valid_mask, 'peak_flux'] = peak_fluxes
