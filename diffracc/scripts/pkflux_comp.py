@@ -35,7 +35,7 @@ def main(args):
     if not peak_fluxes_from_imgs:
         raise RuntimeError(f"No FITS files found in {img_directory}")
 
-    plt.scatter(peak_fluxes_conditioned, peak_fluxes_from_imgs, s=0.01)
+    plt.scatter(peak_fluxes_conditioned, peak_fluxes_from_imgs, s=0.01, label=args.subdir)
 
     min_peakflux = min(np.min(peak_fluxes_conditioned), np.min(peak_fluxes_from_imgs))
     max_peakflux = max(np.max(peak_fluxes_conditioned), np.max(peak_fluxes_from_imgs))
@@ -49,6 +49,7 @@ def main(args):
     plt.ylabel('Image peak flux, Jy/beam')
     plt.xscale('log')
     plt.yscale('log')
+    plt.legend()
     plt.savefig('peak_flux_conditioning.png')
     plt.show()
 
