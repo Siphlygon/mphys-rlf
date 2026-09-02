@@ -83,6 +83,34 @@ def _unit_vectors(ra: np.ndarray, dec: np.ndarray) -> np.ndarray:
     return np.column_stack([cos_dec * np.cos(r), cos_dec * np.sin(r), np.sin(np.radians(dec))])
 
 
+def _ellipse_halfwidths(maj: np.ndarray, minr: np.ndarray, pa_deg: np.ndarray):
+    """
+    Axis-aligned half-widths of an ellipse projected onto the RA and Dec axes.
+
+    For an ellipse with full axes `maj`/`minr` at position angle `pa_deg` (North through East), the extents of its
+    bounding box are `d_ra = sqrt((a sin PA)^2 + (b cos PA)^2)` and `d_dec = sqrt((a cos PA)^2 + (b sin PA)^2)`, with
+    semi-axes `a = maj/2`, `b = minr/2`. Works element-wise on arrays or scalars.
+
+    Parameters
+    ----------
+    maj, minr : np.ndarray or float
+        Full ellipse axes (e.g. FWHM `Maj`/`Min`) in arcsec.
+    pa_deg : np.ndarray or float
+        Position angle in degrees, North through East.
+
+    Returns
+    -------
+    d_ra, d_dec : np.ndarray or float
+        The half-widths of the ellipse's axis-aligned bounding box, in the same units as `maj`/`minr`.
+    """
+    a = maj / 2.0
+    b = minr / 2.0
+    pa = np.radians(pa_deg)
+    d_ra = np.sqrt((a * np.sin(pa)) ** 2 + (b * np.cos(pa)) ** 2)
+    d_dec = np.sqrt((a * np.cos(pa)) ** 2 + (b * np.sin(pa)) ** 2)
+    return d_ra, d_dec
+
+
 def load_component_catalogue(component_catalogue_path=paths.COMPONENT_CATALOGUE_PATH) -> dict:
     """
     Load the positions, peak fluxes, fitted-ellipse shapes and parent-source names of every radio component.
@@ -132,9 +160,15 @@ def flag_foreign_components(source_ra: np.ndarray,
     component catalogue's `Parent_Source` association.
 
     The cutout is treated as a `cutout_size_arcsec` square, axis-aligned to RA/Dec and centred on the source position
-    (verified centred to ~0.6" for the dr2 cutouts). A component is foreign if its `Parent_Source` differs from the
-    cutout source's `Source_Name`, and detected if its peak flux exceeds `sigma_threshold` times the source's island
-    rms.
+    (verified centred to ~0.6" for the dr2 cutouts). A component contaminates the cutout if any part of its fitted
+    ellipse (`Maj`/`Min`/`PA`) overlaps the frame - not merely if its centre is inside it. This matters because a bright
+    neighbour whose centre lies just outside the frame can still spill emission across the edge; testing centres alone
+    (as an earlier version did) missed those, leaving the pixel-based `edge_max` guard to catch them. A component counts
+    as foreign if its `Parent_Source` differs from the cutout source's `Source_Name`, and as detected if its peak flux
+    exceeds `sigma_threshold` times the source's island rms.
+
+    Uncatalogued edge features (imaging artefacts, hot pixels, sources missing from the catalogue) are, by construction,
+    invisible to this catalogue-based test; a pixel-based guard such as `edge_max` remains the backstop for those.
 
     Parameters
     ----------
@@ -158,7 +192,7 @@ def flag_foreign_components(source_ra: np.ndarray,
     -------
     pd.DataFrame
         One row per input source (same order), with columns:
-        `n_foreign_components` (all foreign components in-frame),
+        `n_foreign_components` (all foreign components whose ellipse overlaps the frame),
         `n_foreign_detected` (foreign components >= sigma_threshold),
         `brightest_foreign_flux` (mJy/beam),
         `brightest_foreign_snr` (peak flux / island rms),
@@ -169,13 +203,16 @@ def flag_foreign_components(source_ra: np.ndarray,
     components = _ensure_components(components, component_catalogue_path)
     comp_ra, comp_dec = components["ra"], components["dec"]
     comp_peak, comp_parent = components["peak"], components["parent"]
+    comp_maj, comp_min, comp_pa = components["maj"], components["min"], components["pa"]
 
     logger.info("Building component KD-tree...")
     tree = cKDTree(_unit_vectors(comp_ra, comp_dec))
     half = cutout_size_arcsec / 2.0
-    # Chord radius of the circle circumscribing the square cutout; the exact square is applied below.
-    radius = np.radians(half * np.sqrt(2.0) / 3600.0)
-    logger.info(f"Querying components within {half:.0f}\" of {n} sources...")
+    # Search out to the circle circumscribing the cutout PLUS the largest component's half-extent, so no component whose
+    # ellipse could reach the frame is missed; the exact ellipse-vs-square test is applied per candidate below.
+    max_halfext = float(comp_maj.max()) / 2.0 if len(comp_maj) else 0.0
+    radius = np.radians((half * np.sqrt(2.0) + max_halfext) / 3600.0)
+    logger.info(f"Querying components within {half * np.sqrt(2.0) + max_halfext:.0f}\" of {n} sources...")
     candidates = tree.query_ball_point(_unit_vectors(source_ra, source_dec), radius)
 
     n_foreign = np.zeros(n, dtype=np.int32)
@@ -187,10 +224,13 @@ def flag_foreign_components(source_ra: np.ndarray,
         if not cand:
             continue
         cand = np.asarray(cand)
-        # Restrict from the circumscribed circle to the actual square cutout.
-        d_ra = (comp_ra[cand] - source_ra[i]) * np.cos(np.radians(source_dec[i])) * 3600.0
-        d_dec = (comp_dec[cand] - source_dec[i]) * 3600.0
-        cand = cand[(np.abs(d_ra) <= half) & (np.abs(d_dec) <= half)]
+        # Keep components whose fitted ellipse's bounding box overlaps the square cutout (centre may be outside it).
+        x0 = (comp_ra[cand] - source_ra[i]) * np.cos(np.radians(source_dec[i])) * 3600.0
+        y0 = (comp_dec[cand] - source_dec[i]) * 3600.0
+        d_ra, d_dec = _ellipse_halfwidths(comp_maj[cand], comp_min[cand], comp_pa[cand])
+        overlaps = ((x0 - d_ra <= half) & (x0 + d_ra >= -half)
+                    & (y0 - d_dec <= half) & (y0 + d_dec >= -half))
+        cand = cand[overlaps]
         if cand.size == 0:
             continue
         foreign = cand[comp_parent[cand] != source_name[i]]
@@ -321,17 +361,15 @@ def flag_cropped_sources(source_ra: np.ndarray,
         cos_dec = np.cos(np.radians(source_dec[i]))
         x0 = (comp_ra[own] - source_ra[i]) * cos_dec * 3600.0
         y0 = (comp_dec[own] - source_dec[i]) * 3600.0
-        a = comp_maj[own] / 2.0
-        b = comp_min[own] / 2.0
+        maj = comp_maj[own]
+        minr = comp_min[own]
         if boundary_sigma is not None and isl_rms[i] > 0:
             ratio = comp_peak[own] / (boundary_sigma * isl_rms[i])
             with np.errstate(invalid="ignore", divide="ignore"):
                 scale = np.sqrt(np.clip(np.log(ratio) / np.log(2.0), 0.0, None))
-            a = a * scale
-            b = b * scale
-        pa = np.radians(comp_pa[own])
-        d_ra = np.sqrt((a * np.sin(pa)) ** 2 + (b * np.cos(pa)) ** 2)
-        d_dec = np.sqrt((a * np.cos(pa)) ** 2 + (b * np.sin(pa)) ** 2)
+            maj = maj * scale
+            minr = minr * scale
+        d_ra, d_dec = _ellipse_halfwidths(maj, minr, comp_pa[own])
 
         ra_min, ra_max = (x0 - d_ra).min(), (x0 + d_ra).max()
         dec_min, dec_max = (y0 - d_dec).min(), (y0 + d_dec).max()
@@ -411,7 +449,7 @@ if __name__ == "__main__":
     parser.add_argument("--cutout-arcsec", type=float, default=CUTOUT_SIZE_ARCSEC,
                         help=f"Square cutout side length in arcsec (default {CUTOUT_SIZE_ARCSEC:g}).")
     parser.add_argument("--output", type=str,
-                        default=str(paths.PREPROCESSING_PARENT / "contaminant_flags.csv"),
+                        default=str(paths.PREPROCESSING_PARENT / "cutout_quality_flags.csv"),
                         help="Where to write the per-source flag CSV.")
     args = parser.parse_args()
 
