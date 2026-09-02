@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from diffracc.data import contamination
+from diffracc.data import cutout_quality
 from diffracc.rlf.agn_selection import select_non_contaminants, select_rlagn
 
 
@@ -270,7 +270,7 @@ class TestContaminationFlagIntegration:
     def test_skips_catalogue_load_when_both_drops_disabled(self, cutout_preprocessor_factory, monkeypatch):
         """Test that neither drop enabled means the component catalogue is never touched."""
         cp = cutout_preprocessor_factory(drop_foreign_contaminated=False, drop_cropped=False)
-        monkeypatch.setattr(contamination, "compute_from_catalogues",
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues",
                             lambda *a, **k: pytest.fail("catalogue must not load when both drops are disabled"))
         dataset = pd.DataFrame({"index": [0, 1]})
         cp._compute_contamination_flags(dataset)  # returns early, no exception, no columns added
@@ -280,7 +280,7 @@ class TestContaminationFlagIntegration:
         """Test that the flags returned by compute_from_catalogues are written into the dataset by position."""
         cp = cutout_preprocessor_factory(drop_foreign_contaminated=True, drop_cropped=True)
         fake = pd.DataFrame({"foreign_contaminant": [True, False], "cropped": [False, True]})
-        monkeypatch.setattr(contamination, "compute_from_catalogues", lambda *a, **k: fake)
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues", lambda *a, **k: fake)
         dataset = pd.DataFrame({"index": [0, 1]})
         cp._compute_contamination_flags(dataset)
         assert dataset["foreign_contaminant"].tolist() == [True, False]
@@ -290,7 +290,7 @@ class TestContaminationFlagIntegration:
         """Test that a flag table of the wrong length is caught rather than silently misaligning sources."""
         cp = cutout_preprocessor_factory(drop_foreign_contaminated=True, drop_cropped=True)
         fake = pd.DataFrame({"foreign_contaminant": [True], "cropped": [False]})  # only 1 row
-        monkeypatch.setattr(contamination, "compute_from_catalogues", lambda *a, **k: fake)
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues", lambda *a, **k: fake)
         dataset = pd.DataFrame({"index": [0, 1, 2]})  # 3 rows
         with pytest.raises(AssertionError):
             cp._compute_contamination_flags(dataset)
