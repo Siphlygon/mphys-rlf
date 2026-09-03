@@ -127,14 +127,6 @@ class CatalogueDownloader:
             self.logger.info(f'Catalogue already exists at {raw_catalogue_path}. Skipping download.')
             if cat == "hardcastle2023":
                 self._create_stripped_catalogue(file_path=stripped_catalogue_path, catalogue_path=raw_catalogue_path)
-                if os.path.exists(paths.COMPONENT_CATALOGUE_PATH):
-                    self.logger.info(f'Component catalogue already exists at {paths.COMPONENT_CATALOGUE_PATH}.' +
-                                     ' Skipping download.')
-                else:
-                    self.logger.info(f'Component catalogue does not exist at {paths.COMPONENT_CATALOGUE_PATH}.' +
-                                     ' Downloading...')
-                    self.download_catalogue(cat="hardcastle2023_components",
-                                            raw_catalogue_path=paths.COMPONENT_CATALOGUE_PATH)
             return
 
         # Check if the catalogue is in the predefined CATALOGUES dictionary and therefore supported
