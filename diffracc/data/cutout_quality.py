@@ -196,6 +196,7 @@ def flag_foreign_components(source_ra: np.ndarray,
         `n_foreign_detected` (foreign components >= sigma_threshold),
         `brightest_foreign_flux` (mJy/beam),
         `brightest_foreign_snr` (peak flux / island rms),
+        `brightest_foreign_parent` (the `Parent_Source` of the brightest foreign component, or "" if none),
         `foreign_contaminant` (bool, True if any foreign component is detected).
     """
     source_name = _as_str_array(source_name)
@@ -219,6 +220,7 @@ def flag_foreign_components(source_ra: np.ndarray,
     n_detected = np.zeros(n, dtype=np.int32)
     brightest_flux = np.zeros(n, dtype=float)
     brightest_snr = np.zeros(n, dtype=float)
+    brightest_parent = np.full(n, "", dtype=object)   # Parent_Source of the brightest foreign component
 
     for i, cand in enumerate(candidates):
         if not cand:
@@ -244,12 +246,14 @@ def flag_foreign_components(source_ra: np.ndarray,
         j = int(np.argmax(foreign_flux))
         brightest_flux[i] = foreign_flux[j]
         brightest_snr[i] = foreign_snr[j]
+        brightest_parent[i] = comp_parent[foreign[j]]
 
     result = pd.DataFrame({
         "n_foreign_components": n_foreign,
         "n_foreign_detected": n_detected,
         "brightest_foreign_flux": brightest_flux,
         "brightest_foreign_snr": brightest_snr,
+        "brightest_foreign_parent": brightest_parent,
         "foreign_contaminant": n_detected > 0,
     })
     logger.info(f"Flagged {int(result['foreign_contaminant'].sum())} / {n} cutouts "
@@ -385,12 +389,78 @@ def flag_cropped_sources(source_ra: np.ndarray,
     return result
 
 
+def _lookup_id_name(query_names, sorted_names: np.ndarray, sorted_ids: np.ndarray) -> np.ndarray:
+    """
+    Look up the optical `ID_NAME` for each `Source_Name` in `query_names`, returning "" where the name is blank or not
+    found. `sorted_names`/`sorted_ids` are the source catalogue's names and IDs sorted by name (see
+    :func:`add_optical_missplit_flag`).
+    """
+    q = _as_str_array(np.asarray(query_names, dtype=object))
+    pos = np.clip(np.searchsorted(sorted_names, q), 0, len(sorted_names) - 1)
+    hit = (sorted_names[pos] == q) & (q != "")
+    return np.where(hit, sorted_ids[pos], "")
+
+
+def add_optical_missplit_flag(flags: pd.DataFrame,
+                              target_source_name,
+                              optical_catalogue_path=paths.RAW_CATALOGUE_PATH) -> pd.DataFrame:
+    """
+    Add a light record of whether a flagged foreign contaminant might actually be the target's own emission split off
+    under a different `Parent_Source` (a catalogue mis-association).
+
+    A flagged cutout is marked `foreign_shares_optical_id = True` when the brightest foreign component's parent source
+    shares the target's optical identification (`ID_NAME`). Because one optical galaxy generally hosts one physical
+    radio source, a shared host suggests the "foreign" component is really part of the target - i.e. the contamination
+    flag may be a false positive from catalogue under-association.
+
+    This is a review aid only; it does NOT change any contamination decision. It is also NOT ground truth: `ID_NAME`
+    comes from the same identification pipeline as `Parent_Source` (so this is an internal association-vs-identification
+    consistency check, not an independent test), it cannot be verified from the radio images, and `ID_NAME` has its own
+    error rate. This is for interest, and not an actual record of a mis-split or mismatch.
+
+    Parameters
+    ----------
+    flags : pd.DataFrame
+        Output of :func:`flag_foreign_components` (must carry `brightest_foreign_parent` and `foreign_contaminant`).
+    target_source_name : array-like
+        The `Source_Name` of each cutout's target, in the same row order as `flags`.
+    optical_catalogue_path : Path, optional
+        Source catalogue carrying `Source_Name` and `ID_NAME` for the lookup, by default `paths.STRIPPED_CATALOGUE_PATH`.
+
+    Returns
+    -------
+    pd.DataFrame
+        `flags` with two added columns: `target_optical_id` (the target's `ID_NAME`) and `foreign_shares_optical_id`.
+    """
+    logger.info(f"Loading optical IDs from {optical_catalogue_path} for the mis-split cross-check...")
+    with fits.open(optical_catalogue_path, memmap=True) as hdul:
+        data = hdul[1].data
+        names = _as_str_array(data["Source_Name"])
+        ids = _as_str_array(data["ID_NAME"])
+    order = np.argsort(names)
+    sorted_names, sorted_ids = names[order], ids[order]
+
+    target_id = _lookup_id_name(target_source_name, sorted_names, sorted_ids)
+    parent_id = _lookup_id_name(flags["brightest_foreign_parent"].to_numpy(), sorted_names, sorted_ids)
+    shares = (flags["foreign_contaminant"].to_numpy()
+              & (target_id != "") & (target_id != "N/A") & (target_id == parent_id))
+
+    out = flags.copy()
+    out["target_optical_id"] = target_id
+    out["foreign_shares_optical_id"] = shares
+    logger.info(f"Of {int(flags['foreign_contaminant'].sum())} foreign-flagged cutouts, "
+                f"{int(shares.sum())} share the target's optical ID (possible mis-split - flagged, not dropped).")
+    return out
+
+
 def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
                             component_catalogue_path=paths.COMPONENT_CATALOGUE_PATH,
                             resolved_only: bool = True,
                             cutout_size_arcsec: float = CUTOUT_SIZE_ARCSEC,
                             sigma_threshold: float = 5.0,
-                            boundary_sigma: float = None) -> pd.DataFrame:
+                            boundary_sigma: float = None,
+                            record_optical: bool = True,
+                            optical_catalogue_path=paths.STRIPPED_CATALOGUE_PATH) -> pd.DataFrame:
     """
     Convenience entry point: load the source catalogue once, run both `flag_foreign_components` and
     `flag_cropped_sources`, and return the combined per-source flags aligned to the (resolved) source order used by the
@@ -410,12 +480,17 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
         Foreign-component detection threshold, by default 5.0.
     boundary_sigma : float, optional
         Iso-contour level for the cropping test; by default None (bare FWHM ellipse).
+    record_optical : bool, optional
+        Also record the soft `foreign_shares_optical_id` mis-split cross-check (see :func:`add_optical_missplit_flag`),
+        by default True. Does not change any contamination decision.
+    optical_catalogue_path : Path, optional
+        Source catalogue carrying `ID_NAME` for the optical cross-check, by default `paths.STRIPPED_CATALOGUE_PATH`.
 
     Returns
     -------
     pd.DataFrame
         The merged foreign and cropping flags with a leading `index` column giving the position within the (resolved)
-        source order.
+        source order. When `record_optical` is True, also carries `target_optical_id` and `foreign_shares_optical_id`.
     """
     logger.info(f"Loading source catalogue from {source_catalogue_path}...")
     with fits.open(source_catalogue_path, memmap=True) as hdul:
@@ -436,6 +511,8 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
                                    cutout_size_arcsec=cutout_size_arcsec,
                                    boundary_sigma=boundary_sigma, components=components)
     flags = pd.concat([foreign, cropped], axis=1)
+    if record_optical:
+        flags = add_optical_missplit_flag(flags, source_name, optical_catalogue_path)
     flags.insert(0, "index", np.arange(len(flags)))
     return flags
 
@@ -451,10 +528,13 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str,
                         default=str(paths.PREPROCESSING_PARENT / "cutout_quality_flags.csv"),
                         help="Where to write the per-source flag CSV.")
+    parser.add_argument("--no-optical", action="store_true",
+                        help="Skip the soft optical mis-split cross-check (foreign_shares_optical_id).")
     args = parser.parse_args()
 
     result = compute_from_catalogues(cutout_size_arcsec=args.cutout_arcsec,
                                      sigma_threshold=args.sigma,
-                                     boundary_sigma=args.boundary_sigma)
+                                     boundary_sigma=args.boundary_sigma,
+                                     record_optical=not args.no_optical)
     result.to_csv(args.output, index=False)
     logger.info(f"Saved contamination + cropping flags to {args.output}")
