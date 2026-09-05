@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from diffracc.data import cutout_quality
 from diffracc.rlf.agn_selection import select_non_contaminants, select_rlagn
 
 
@@ -66,44 +67,26 @@ class TestIdentifyImageStatus:
         assert cp._identify_incomplete_image_single(image) == False
 
 
-class TestCalculateEdgeMaxSingle:
-    """
-    Tests that CutoutPreprocessor._calculate_edge_max_single correctly computes the edge_max ratio for a single image.
-    """
-
-    def test_matches_hand_computed_ratio(self, cutout_preprocessor_factory):
-        """Test that the edge_max ratio is computed correctly for a hand-built image."""
-        cp = cutout_preprocessor_factory()
-        image = np.ones((80, 80))  # all edges = 1.0
-        image[5, 5] = 10.0  # interior max
-        assert cp._calculate_edge_max_single(image) == pytest.approx(1.0 / 10.0)
-
-    def test_edge_dominated_image_gives_ratio_near_one(self, cutout_preprocessor_factory):
-        """Test that an image dominated by edge pixels gives an edge_max ratio near 1."""
-        cp = cutout_preprocessor_factory()
-        image = np.zeros((80, 80))
-        image[0, 0] = 5.0  # a corner (edge) pixel is the global max
-        assert cp._calculate_edge_max_single(image) == pytest.approx(1.0)
-
-
 class _SyntheticCatalogue:
-    """Two hand-built synthetic sources with known edge_max/S-N/RLAGN-relevant quantities, shared by the vectorised
-    and iterative flag-computation tests below so their outputs can be cross-checked against each other."""
+    """
+    Two hand-built synthetic sources with known S/N/RLAGN-relevant quantities, shared by the vectorised and iterative
+    flag-computation tests below so their outputs can be cross-checked against each other.
+    """
 
     def __init__(self):
         """Builds a synthetic catalogue with two sources, each with a synthetic image and associated catalogue info."""
-        # image A: border pixels = 1.0, interior peak = 10.0 -> edge_max ratio = 0.1
+        # image A: interior peak = 10.0
         self.image_a = np.ones((80, 80))
         self.image_a[40, 40] = 10.0
-        # image B: border pixels = 3.0, interior peak = 6.0 -> edge_max ratio = 0.5
+        # image B: interior peak = 6.0
         self.image_b = np.full((80, 80), 3.0)
         self.image_b[40, 40] = 6.0
 
         self.dataset = pd.DataFrame([
             {'index': 0, 'pixel_values': self.image_a, 'broken': False, 'incomplete': False,
-             'size': 0.0, 'S/N': 0.0, 'edge_max': 0.0, 'peak_flux': 0.0, 'rlagn': False},
+             'size': 0.0, 'S/N': 0.0, 'peak_flux': 0.0, 'rlagn': False},
             {'index': 1, 'pixel_values': self.image_b, 'broken': False, 'incomplete': False,
-             'size': 0.0, 'S/N': 0.0, 'edge_max': 0.0, 'peak_flux': 0.0, 'rlagn': False},
+             'size': 0.0, 'S/N': 0.0, 'peak_flux': 0.0, 'rlagn': False},
         ])
         self.cat_info = [
             {'LAS': 10.0, 'Isl_rms': 0.5, 'mag_w1': 17.0, 'mag_w2': 15.0, 'mag_w3': 13.0, 'magerr_w3': 0.1,
@@ -142,7 +125,6 @@ class TestComputeFlags:
 
         cp._compute_vectorised_flags(cat.dataset, cat.cat_info)
 
-        np.testing.assert_allclose(cat.dataset['edge_max'].to_numpy(dtype=float), [0.1, 0.5])
         np.testing.assert_allclose(cat.dataset['size'].to_numpy(dtype=float), [10.0, 20.0])
         np.testing.assert_allclose(cat.dataset['peak_flux'].to_numpy(dtype=float), [10000.0, 6000.0])
         np.testing.assert_allclose(cat.dataset['S/N'].to_numpy(dtype=float), [20000.0, 6000.0])
@@ -155,7 +137,6 @@ class TestComputeFlags:
 
         cp._compute_iterative_flags(cat.dataset, cat.cat_info)
 
-        np.testing.assert_allclose(cat.dataset['edge_max'].to_numpy(dtype=float), [0.1, 0.5])
         np.testing.assert_allclose(cat.dataset['size'].to_numpy(dtype=float), [10.0, 20.0])
         np.testing.assert_allclose(cat.dataset['peak_flux'].to_numpy(dtype=float), [10000.0, 6000.0])
         np.testing.assert_allclose(cat.dataset['S/N'].to_numpy(dtype=float), [20000.0, 6000.0])
@@ -172,7 +153,7 @@ class TestComputeFlags:
         cp._compute_vectorised_flags(cat_v.dataset, cat_v.cat_info)
         cp._compute_iterative_flags(cat_i.dataset, cat_i.cat_info)
 
-        pd.testing.assert_series_equal(cat_v.dataset['edge_max'], cat_i.dataset['edge_max'], check_dtype=False)
+        pd.testing.assert_series_equal(cat_v.dataset['size'], cat_i.dataset['size'], check_dtype=False)
         pd.testing.assert_series_equal(cat_v.dataset['S/N'], cat_i.dataset['S/N'], check_dtype=False)
         pd.testing.assert_series_equal(cat_v.dataset['rlagn'], cat_i.dataset['rlagn'], check_dtype=False)
 
@@ -187,10 +168,10 @@ class TestComputeFlags:
         cp._compute_iterative_flags(cat.dataset, cat.cat_info)
 
         # untouched default values for the broken row
-        assert cat.dataset.loc[1, 'edge_max'] == 0.0
+        assert cat.dataset.loc[1, 'size'] == 0.0
         assert cat.dataset.loc[1, 'S/N'] == 0.0
         # the valid row was still processed
-        assert cat.dataset.loc[0, 'edge_max'] == pytest.approx(0.1)
+        assert cat.dataset.loc[0, 'S/N'] == pytest.approx(20000.0)
 
     def test_vectorised_skips_broken_images_too(self, cutout_preprocessor_factory):
         """
@@ -204,9 +185,9 @@ class TestComputeFlags:
 
         cp._compute_vectorised_flags(cat.dataset, cat.cat_info)
 
-        assert cat.dataset.loc[1, 'edge_max'] == 0.0
+        assert cat.dataset.loc[1, 'size'] == 0.0
         assert cat.dataset.loc[1, 'S/N'] == 0.0
-        assert cat.dataset.loc[0, 'edge_max'] == pytest.approx(0.1)
+        assert cat.dataset.loc[0, 'size'] == pytest.approx(10.0)
         assert cat.dataset.loc[0, 'S/N'] == pytest.approx(20000.0)
 
 
@@ -277,3 +258,39 @@ class TestDropContaminantsOnlyMode:
             cosmo=cp.cosmo)
 
         np.testing.assert_array_equal(cat.dataset['rlagn'].values, expected)
+
+
+class TestContaminationFlagIntegration:
+    """
+    Tests CutoutPreprocessor._compute_contamination_flags, which delegates to contamination.compute_from_catalogues.
+    That call loads the 1 GB component catalogue, so it is monkeypatched here - these tests only check the wiring:
+    when it runs, when it is skipped, how its output is written back, and the alignment guard.
+    """
+
+    def test_skips_catalogue_load_when_both_drops_disabled(self, cutout_preprocessor_factory, monkeypatch):
+        """Test that neither drop enabled means the component catalogue is never touched."""
+        cp = cutout_preprocessor_factory(drop_foreign_contaminated=False, drop_cropped=False)
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues",
+                            lambda *a, **k: pytest.fail("catalogue must not load when both drops are disabled"))
+        dataset = pd.DataFrame({"index": [0, 1]})
+        cp._compute_contamination_flags(dataset)  # returns early, no exception, no columns added
+        assert "foreign_contaminant" not in dataset.columns
+
+    def test_writes_back_flags_when_enabled(self, cutout_preprocessor_factory, monkeypatch):
+        """Test that the flags returned by compute_from_catalogues are written into the dataset by position."""
+        cp = cutout_preprocessor_factory(drop_foreign_contaminated=True, drop_cropped=True)
+        fake = pd.DataFrame({"foreign_contaminant": [True, False], "cropped": [False, True]})
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues", lambda *a, **k: fake)
+        dataset = pd.DataFrame({"index": [0, 1]})
+        cp._compute_contamination_flags(dataset)
+        assert dataset["foreign_contaminant"].tolist() == [True, False]
+        assert dataset["cropped"].tolist() == [False, True]
+
+    def test_raises_when_flags_misaligned_with_dataset(self, cutout_preprocessor_factory, monkeypatch):
+        """Test that a flag table of the wrong length is caught rather than silently misaligning sources."""
+        cp = cutout_preprocessor_factory(drop_foreign_contaminated=True, drop_cropped=True)
+        fake = pd.DataFrame({"foreign_contaminant": [True], "cropped": [False]})  # only 1 row
+        monkeypatch.setattr(cutout_quality, "compute_from_catalogues", lambda *a, **k: fake)
+        dataset = pd.DataFrame({"index": [0, 1, 2]})  # 3 rows
+        with pytest.raises(AssertionError):
+            cp._compute_contamination_flags(dataset)

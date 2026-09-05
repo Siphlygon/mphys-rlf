@@ -28,6 +28,8 @@ class Source(Enum):
     WISE3Mag = "mag_w3" # magnitude in the wise band 3
     WISE3MagErr = "magerr_w3" # magnitude error in the wise band 3, or blank for upper lim
     Resolved = "Resolved" # Whether the source is resolved (True) or not (False)
+    SourceName = "Source_Name" # The source name in the Hardcastle catalogue, e.g. "J123456.78+123456.7"
+    OpticalID = "ID_NAME" # The optical ID name in the Hardcastle catalogue
 
 
 

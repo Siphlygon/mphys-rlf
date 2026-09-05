@@ -16,6 +16,7 @@ from ..utils import data_utils as du
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from . import cutout_quality
 
 
 class CutoutPreprocessor:
@@ -25,10 +26,12 @@ class CutoutPreprocessor:
     """
     def __init__(self,
                  snr_threshold: float = 5,
-                 edge_max_threshold: float = 0.8,
                  peak_flux_threshold: float = 500,
                  exclusive: bool = False,
-                 drop_contaminants_only: bool = False):
+                 drop_contaminants_only: bool = False,
+                 foreign_sigma_threshold: float = 5,
+                 drop_foreign_contaminated: bool = True,
+                 drop_cropped: bool = True):
         """
         A class that takes cutouts of resolved sources from the Hardcastle 2023 dataset and applies pre-processing steps
         to select images suitable for training the diffusion model on based on a range of criteria.
@@ -37,8 +40,6 @@ class CutoutPreprocessor:
         ----------
         snr_threshold : float, optional
             The signal-to-noise ratio threshold for selecting images, by default 5
-        edge_max_threshold : float, optional
-            The maximum threshold for edge pixels, by default 0.8
         peak_flux_threshold : float, optional
             The maximum peak flux threshold for selecting images, by default 500 mJy/beam.
         exclusive : bool, optional
@@ -52,14 +53,26 @@ class CutoutPreprocessor:
             redshift is dropped. That is correct for the luminosity function but discards a large, non-random fraction
             of the images when building a training set, so this mode instead removes only the sources positively
             identified as SFG or RQQ and keeps everything it cannot classify.
+        foreign_sigma_threshold : float, optional
+            Detection threshold (in units of the local island rms) for a foreign radio component to count as
+            contamination, by default 5. See `diffracc.data.contamination`.
+        drop_foreign_contaminated : bool, optional
+            Whether to drop cutouts that contain a foreign (neighbour) source detected above `foreign_sigma_threshold`,
+            by default True. Uses the component catalogue's `Parent_Source` association.
+        drop_cropped : bool, optional
+            Whether to drop cutouts in which the source's own fitted emission crosses the frame edge, by default True.
+            An exact per-component ellipse test that catches off-centre asymmetric sources the `size <= 120` gate misses.
         """
-        self.logger = get_logger('CutoutPreprocessor', LoggingLevels.DEBUG.value)
+        # change to DEBUG for more verbose output, INFO for normal operation, WARNING to suppress most messages
+        self.logger = get_logger('CutoutPreprocessor', LoggingLevels.INFO.value)
 
         self.snr_threshold = snr_threshold
-        self.edge_max_threshold = edge_max_threshold
         self.peak_flux_threshold = peak_flux_threshold
         self.exclusive = exclusive
         self.drop_contaminants_only = drop_contaminants_only
+        self.foreign_sigma_threshold = foreign_sigma_threshold
+        self.drop_foreign_contaminated = drop_foreign_contaminated
+        self.drop_cropped = drop_cropped
 
         self.num_counts = 314969
 
@@ -229,9 +242,10 @@ class CutoutPreprocessor:
             'broken': broken,
             'incomplete': incomplete,
             'size': 0.0,
-            'S/N': 0.0,
-            'edge_max': 0.0,
+            'foreign_contaminant': False,
+            'cropped': False,
             'peak_flux': 0.0,
+            'S/N': 0.0,
             'rlagn': False,
         })
 
@@ -375,27 +389,6 @@ class CutoutPreprocessor:
         return np.isnan(image).all()
 
 
-    def _calculate_edge_max_single(self, image: np.ndarray) -> float:
-        """
-        Calculates the maximum pixel value among the edge pixels of the image.
-        
-        Code modified from the original LOFAR-diffusion repository, found here:
-        https://github.com/tmartinezML/LOFAR-Diffusion/blob/develop/src/data/image_utils.py
-
-        Parameters
-        ----------
-        image : np.ndarray
-            The image to calculate the edge maximum for, shape (80, 80).
-
-        Returns
-        -------
-        float
-            The maximum pixel value among the edge pixels of the image.
-        """
-        edge_max = max(image[0].max(), image[-1].max(), image[1:-1, 0].max(), image[1:-1, -1].max())
-        return edge_max / image.max()
-
-
     def _select_sources(self,
                         wise1_mag: np.ndarray | float,
                         wise2_mag: np.ndarray | float,
@@ -470,21 +463,6 @@ class CutoutPreprocessor:
         images = np.stack(image_lists, axis=0)
         del image_lists
 
-        # Vectorised edge max
-        # Computes the ratio of the maximum border pixel to the image max; too high implies source cutoff by the cutout
-        self.logger.info("Creating vectorised flags for edge max...")
-        start_time = time.time()
-        top = images[:, 0, :].max(axis=1)
-        bottom = images[:, -1, :].max(axis=1)
-        left = images[:, 1:-1, 0].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
-        right = images[:, 1:-1, -1].max(axis=1) if images.shape[1] > 2 else np.full(images.shape[0], -np.inf)
-        edge_max_vals = np.maximum.reduce([top, bottom, left, right])
-        global_max = images.max(axis=(1, 2))
-        # avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
-            edge_ratio = np.where(global_max != 0, edge_max_vals / global_max, 0.0)
-        self.logger.info(f"Edge max flags created in {time.time() - start_time} seconds")
-
         # Vectorised size flags
         self.logger.info("Creating vectorised flags for source size...")
         start_time = time.time()
@@ -524,7 +502,6 @@ class CutoutPreprocessor:
         self.logger.info(f"RLAGN selection flags created in {time.time() - start_time} seconds")
 
         # write back results
-        dataset.loc[valid_mask, 'edge_max'] = edge_ratio
         dataset.loc[valid_mask, 'size'] = sizes
         dataset.loc[valid_mask, 'S/N'] = snr_list
         dataset.loc[valid_mask, 'peak_flux'] = peak_fluxes
@@ -549,7 +526,6 @@ class CutoutPreprocessor:
         """
         size_list = []
         snr_list = []
-        edge_max_list = []
         peak_flux_list = []
         rlagn_list = []
 
@@ -566,7 +542,6 @@ class CutoutPreprocessor:
             snr_list.append(self._calculate_snr_single(noise, peak_flux))
             peak_flux_list.append(peak_flux)
 
-            edge_max_list.append(self._calculate_edge_max_single(img))
             total_flux = source['Total_flux'] / 1000  # convert from mJy to Jy
             rlagn_list.append(self._select_sources(source['mag_w1'],
                                                    source['mag_w2'],
@@ -579,9 +554,36 @@ class CutoutPreprocessor:
         # Put the flags into the dataset
         dataset.loc[valid_indices, 'size'] = size_list
         dataset.loc[valid_indices, 'S/N'] = snr_list
-        dataset.loc[valid_indices, 'edge_max'] = edge_max_list
         dataset.loc[valid_indices, 'rlagn'] = rlagn_list
         dataset.loc[valid_indices, 'peak_flux'] = peak_flux_list
+
+
+    def _compute_contamination_flags(self, dataset: pd.DataFrame):
+        """
+        Compute the foreign-contamination and cropping flags from the value-added component catalogue and write them
+        into the dataset's `foreign_contaminant` and `cropped` columns.
+
+        Unlike the pixel-based flags these are pure catalogue geometry (no images), so they are computed once here for
+        both the vectorised and iterative paths. The flags are derived over the full resolved catalogue in its native
+        (row) order, which is the same order as `dataset` (one row per resolved source), so they align positionally;
+        this is asserted. Skipped entirely when neither drop is enabled, to avoid loading the component catalogue.
+
+        Parameters
+        ----------
+        dataset : pd.DataFrame
+            The dataset whose `foreign_contaminant` and `cropped` columns are to be filled.
+        """
+        if not (self.drop_foreign_contaminated or self.drop_cropped):
+            self.logger.info("Foreign-contamination and cropping drops both disabled; skipping their flags.")
+            return
+
+        self.logger.info("Computing foreign-contamination and cropping flags from the component catalogue...")
+        flags = cutout_quality.compute_from_catalogues(sigma_threshold=self.foreign_sigma_threshold)
+        assert len(flags) == len(dataset), (
+            f"Contamination flags ({len(flags)}) are not aligned with the dataset ({len(dataset)}); expected one "
+            "resolved source per row in the same order.")
+        dataset['foreign_contaminant'] = flags['foreign_contaminant'].to_numpy()
+        dataset['cropped'] = flags['cropped'].to_numpy()
 
 
     # ---------- MAIN FUNCTION ----------
@@ -622,8 +624,13 @@ class CutoutPreprocessor:
             else:
                 selection_tag = 'exclusive' if self.exclusive else 'inclusive'
             suffix = 'h5' if save_hdf5 else 'fits'
-            output_file_path = paths.DATASET_PARENT / \
-                f"snr_{int(self.snr_threshold)}_peak_{int(self.peak_flux_threshold)}_{selection_tag}.{suffix}"
+            file_name = (
+                f"snr{int(self.snr_threshold)}" +
+                f"_peak{int(self.peak_flux_threshold)}" +
+                f"_{selection_tag}" +
+                f".{suffix}"
+            )
+            output_file_path = paths.DATASET_PARENT / file_name
 
         # Load the initial dataset with pixel values
         dataset, cat_info, cat_columns = self._load_initial_dataset(catalogue_path)
@@ -636,14 +643,20 @@ class CutoutPreprocessor:
             self.logger.info("Using iterative flag computation...")
             self._compute_iterative_flags(dataset, cat_info)
 
+        # Catalogue-based foreign-contamination and cropping flags (independent of the pixel flags above).
+        self._compute_contamination_flags(dataset)
+
+        # A flag-free "keep everything" condition, used when a drop is disabled so the bookkeeping below still lines up.
+        keep_all = pd.Series(True, index=dataset.index)
         conditions = [
             ~dataset["broken"],
             ~dataset["incomplete"],
             (dataset["size"] <= 120), # max size of a cutout
-            (dataset["S/N"] >= self.snr_threshold),
-            (dataset["edge_max"] <= self.edge_max_threshold),
+            ~dataset["foreign_contaminant"] if self.drop_foreign_contaminated else keep_all,
+            ~dataset["cropped"] if self.drop_cropped else keep_all,
             (dataset["peak_flux"] <= self.peak_flux_threshold),
-            dataset["rlagn"]
+            (dataset["S/N"] >= self.snr_threshold),
+            dataset["rlagn"],
         ]
 
         # Log the number of sources removed at each step
@@ -656,18 +669,21 @@ class CutoutPreprocessor:
         num_broken = lengths[0] - lengths[1]
         num_incomplete = lengths[1] - lengths[2]
         num_too_large = lengths[2] - lengths[3]
-        num_low_snr = lengths[3] - lengths[4]
-        num_edge_max = lengths[4] - lengths[5]
+        num_foreign = lengths[3] - lengths[4]
+        num_cropped = lengths[4] - lengths[5]
         num_peak_flux = lengths[5] - lengths[6]
-        num_rqqsfg = lengths[6] - lengths[7]
-        total =  num_incomplete + num_broken + num_too_large + num_low_snr + num_edge_max + num_peak_flux + num_rqqsfg
+        num_low_snr = lengths[6] - lengths[7]
+        num_rqqsfg = lengths[7] - lengths[8]
+        total = (num_incomplete + num_broken + num_too_large + num_foreign + num_cropped + num_peak_flux + num_low_snr
+                 + num_rqqsfg)
 
         self.logger.info(f"Number of sources removed as broken/missing: {num_broken}")
         self.logger.info(f"Number of sources removed as incomplete: {num_incomplete}")
         self.logger.info(f"Number of sources removed as too large: {num_too_large}")
-        self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
-        self.logger.info(f"Number of sources removed as edge max: {num_edge_max}")
+        self.logger.info(f"Number of sources removed as foreign-contaminated: {num_foreign}")
+        self.logger.info(f"Number of sources removed as cropped: {num_cropped}")
         self.logger.info(f"Number of sources removed as high peak flux: {num_peak_flux}")
+        self.logger.info(f"Number of sources removed as low S/N: {num_low_snr}")
         self.logger.info(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}")
         self.logger.info(f"Total number of sources removed: {total}")
         self.logger.info(f"Number of sources remaining in clean dataset: {len(clean_dataset)}")
@@ -679,9 +695,10 @@ class CutoutPreprocessor:
                 f.write(f"Number of sources removed as broken/missing: {num_broken}\n")
                 f.write(f"Number of sources removed as incomplete: {num_incomplete}\n")
                 f.write(f"Number of sources removed as too large: {num_too_large}\n")
-                f.write(f"Number of sources removed as low S/N: {num_low_snr}\n")
-                f.write(f"Number of sources removed as edge max: {num_edge_max}\n")
+                f.write(f"Number of sources removed as foreign-contaminated: {num_foreign}\n")
+                f.write(f"Number of sources removed as cropped: {num_cropped}\n")
                 f.write(f"Number of sources removed as high peak flux: {num_peak_flux}\n")
+                f.write(f"Number of sources removed as low S/N: {num_low_snr}\n")
                 f.write(f"Number of sources removed as RQQ/SFG: {num_rqqsfg}\n")
                 f.write(f"Total number of sources removed: {total}\n")
                 f.write(f"Number of sources remaining in clean dataset: {len(clean_dataset)}\n")
@@ -747,12 +764,6 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         default=5
     )
     parser.add_argument(
-        "--edge-max-threshold",
-        help="The edge max threshold to apply when filtering the dataset. Default 0.8.",
-        type=float,
-        default=0.8
-    )
-    parser.add_argument(
         "--exclusive",
         help="Whether to apply the RLAGN selection exclusively (i.e., only sources which have proper W3 detections are "
         "included) or inclusively (i.e., including sources with insufficient W3 detection data). Default False "
@@ -767,6 +778,25 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "controlled by --exclusive. Default False.",
         action='store_true'
     )
+    parser.add_argument(
+        "--foreign-sigma-threshold",
+        help="Detection threshold (in local island rms) for a foreign radio component to count as contamination. "
+        "Default 5.",
+        type=float,
+        default=5
+    )
+    parser.add_argument(
+        "--keep-foreign-contaminated",
+        help="Do NOT drop cutouts that contain a foreign (neighbour) source above --foreign-sigma-threshold. By "
+        "default such cutouts are removed using the component catalogue's Parent_Source association.",
+        action='store_true'
+    )
+    parser.add_argument(
+        "--keep-cropped",
+        help="Do NOT drop cutouts whose source's own fitted emission crosses the frame edge. By default such cutouts "
+        "are removed via the exact per-component ellipse test.",
+        action='store_true'
+    )
     return parser
 
 
@@ -775,9 +805,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     preprocessor = CutoutPreprocessor(snr_threshold=args.snr_threshold,
-                                      edge_max_threshold=args.edge_max_threshold,
                                       exclusive=args.exclusive,
-                                      drop_contaminants_only=args.drop_contaminants_only)
+                                      drop_contaminants_only=args.drop_contaminants_only,
+                                      foreign_sigma_threshold=args.foreign_sigma_threshold,
+                                      drop_foreign_contaminated=not args.keep_foreign_contaminated,
+                                      drop_cropped=not args.keep_cropped)
     preprocessor.apply_preprocessing(vectorised=args.vectorised,
                                      save_hdf5=not args.save_fits,
                                      catalogue_path=args.catalogue_path,

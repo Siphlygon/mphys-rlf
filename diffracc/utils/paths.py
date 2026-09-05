@@ -64,6 +64,9 @@ PREPROCESSING_PARENT = DATASET_PARENT / "preprocessing"
 # Paths for the different catalogue files
 STRIPPED_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass_stripped.fits"
 RAW_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-release-v1.2-LM_opt_mass.fits"
+# The LoTSS DR2 value-added component catalogue (Hardcastle et al. 2023). Its Parent_Source column names the source each
+# radio component belongs to, used to flag foreign (neighbour) contamination.
+COMPONENT_CATALOGUE_PATH = PREPROCESSING_PARENT / "combined-components-v1.1.fits"
 
 CUTOUTS_PATH = FITS_PARENT / "dr2_cutouts_download"
 # COMBINED_CUTOUTS_PATH_H5 = PREPROCESSING_PARENT / "hardcastle_catalogue_with_images.h5"
