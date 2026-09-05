@@ -3,9 +3,9 @@ Uses the component catalogue for LoTSS-DR2 to flag cutouts that are contaminated
 frame edge.
 
 A fixed-size cutout centred on one catalogued source frequently contains other catalogued LoTSS sources. Because the
-peak-flux S/N only measures the single brightest pixel, such neighbours can influence the S/N cut and also teach a
-generative model unphysical, off-target structure; empirically they explain ~81% of the cases where the image-max peak
-and the catalogue peak strongly disagree.
+peak-flux SNR check in `apply_preprosessing.py` only measures the single brightest pixel, such neighbours can influence
+the S/N cut and otherwise poorly represent the supposed target flux (e.g., giving a brighter image than expected from
+the prompt). They can also teach a generative model unphysical, off-target structure. 
 
 Separately, because the cutout is centred on the catalogue position - the fitted-Gaussian peak for a single (`S`) source
 but the flux-weighted centroid for multi-component (`M`/`Z`) sources - an asymmetric source can sit off its own
@@ -22,6 +22,7 @@ belongs to:
   box so a re-centring step can salvage a croppable source.
 """
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -32,7 +33,7 @@ from ..utils import paths
 from ..utils.data_utils import Source
 from ..utils.logger import LoggingLevels, get_logger
 
-logger = get_logger("Contamination", LoggingLevels.INFO.value)
+logger = get_logger("cutout_quality", LoggingLevels.INFO.value)
 
 # Cutout geometry (matches the 80x80, 1.5"/pixel dr2 cutouts).
 PIXEL_SCALE_ARCSEC = 1.5
@@ -142,8 +143,23 @@ def load_component_catalogue(component_catalogue_path=paths.COMPONENT_CATALOGUE_
     return components
 
 
-def _ensure_components(components, component_catalogue_path) -> dict:
-    """Load the component catalogue only if a pre-loaded dict was not supplied."""
+def _ensure_components(components: dict | None, component_catalogue_path: Path) -> dict:
+    """
+    Load the component catalogue only if a pre-loaded dict was not supplied.
+    
+    Parameters
+    ----------
+    components : dict or None
+        A pre-loaded component catalogue (see :func:`load_component_catalogue`) to avoid re-reading the file; loaded on
+        demand when None.
+    component_catalogue_path : Path
+        Path to the component catalogue, by default `paths.COMPONENT_CATALOGUE_PATH`.
+    
+    Returns
+    -------
+    dict
+        The component catalogue, either the supplied dict or the loaded one.
+    """
     return components if components is not None else load_component_catalogue(component_catalogue_path)
 
 
@@ -151,24 +167,20 @@ def flag_foreign_components(source_ra: np.ndarray,
                             source_dec: np.ndarray,
                             source_name: np.ndarray,
                             isl_rms: np.ndarray,
-                            component_catalogue_path=paths.COMPONENT_CATALOGUE_PATH,
+                            component_catalogue_path: Path = paths.COMPONENT_CATALOGUE_PATH,
                             cutout_size_arcsec: float = CUTOUT_SIZE_ARCSEC,
                             sigma_threshold: float = 5.0,
-                            components: dict = None) -> pd.DataFrame:
+                            components: dict | None = None) -> pd.DataFrame:
     """
     Flag each cutout that contains a foreign (neighbour) radio component detected above a S/N threshold, using the
     component catalogue's `Parent_Source` association.
 
     The cutout is treated as a `cutout_size_arcsec` square, axis-aligned to RA/Dec and centred on the source position
     (verified centred to ~0.6" for the dr2 cutouts). A component contaminates the cutout if any part of its fitted
-    ellipse (`Maj`/`Min`/`PA`) overlaps the frame - not merely if its centre is inside it. This matters because a bright
-    neighbour whose centre lies just outside the frame can still spill emission across the edge; testing centres alone
-    (as an earlier version did) missed those, leaving the pixel-based `edge_max` guard to catch them. A component counts
-    as foreign if its `Parent_Source` differs from the cutout source's `Source_Name`, and as detected if its peak flux
-    exceeds `sigma_threshold` times the source's island rms.
-
-    Uncatalogued edge features (imaging artefacts, hot pixels, sources missing from the catalogue) are, by construction,
-    invisible to this catalogue-based test; a pixel-based guard such as `edge_max` remains the backstop for those.
+    ellipse (`Maj`/`Min`/`PA`) overlaps the frame, also capturing emission spilling over the edge.
+    
+    A component counts as foreign if its `Parent_Source` differs from the cutout source's `Source_Name`, and as detected
+    if its peak flux exceeds `sigma_threshold` times the source's island rms.
 
     Parameters
     ----------
@@ -224,6 +236,8 @@ def flag_foreign_components(source_ra: np.ndarray,
 
     for i, cand in enumerate(candidates):
         if not cand:
+            logger.error(
+                f"Source {source_name[i]} at ({source_ra[i]:.6f}, {source_dec[i]:.6f}) has no catalogue components.")
             continue
         cand = np.asarray(cand)
         # Keep components whose fitted ellipse's bounding box overlaps the square cutout (centre may be outside it).
@@ -235,8 +249,11 @@ def flag_foreign_components(source_ra: np.ndarray,
         cand = cand[overlaps]
         if cand.size == 0:
             continue
+
         foreign = cand[comp_parent[cand] != source_name[i]]
         if foreign.size == 0:
+            logger.debug(
+                f"Source {source_name[i]} at ({source_ra[i]:.6f}, {source_dec[i]:.6f}) has no foreign components.")
             continue
         foreign_flux = comp_peak[foreign]
         foreign_snr = foreign_flux / isl_rms[i] if isl_rms[i] > 0 else np.zeros_like(foreign_flux)
@@ -264,7 +281,7 @@ def flag_foreign_components(source_ra: np.ndarray,
 
 def _group_by_parent(parent: np.ndarray):
     """
-    Group component indices by their parent-source name for O(1) lookup of a source's own components.
+    Group component indices by their parent-source name for a future O(1) lookup of a source's own components.
 
     Parameters
     ----------
@@ -290,26 +307,24 @@ def flag_cropped_sources(source_ra: np.ndarray,
                          source_dec: np.ndarray,
                          source_name: np.ndarray,
                          isl_rms: np.ndarray,
-                         component_catalogue_path=paths.COMPONENT_CATALOGUE_PATH,
+                         component_catalogue_path: Path = paths.COMPONENT_CATALOGUE_PATH,
                          cutout_size_arcsec: float = CUTOUT_SIZE_ARCSEC,
-                         boundary_sigma: float = None,
-                         components: dict = None) -> pd.DataFrame:
+                         boundary_sigma: float | None = None,
+                         components: dict | None = None) -> pd.DataFrame:
     """
-    Flag cutouts in which the source's own emission is cropped by the frame, from the exact fitted ellipse of each of
-    its components - no tunable extent factor.
+    Flag cutouts in which the source's own emission is cropped by the frame, determined from the exact fitted ellipse of
+    each of its components.
 
-    Each own component is an elliptical Gaussian of semi-axes `Maj/2`, `Min/2` rotated by `PA`. Its emission is taken
+    Each component is an elliptical Gaussian of semi-axes `Maj/2`, `Min/2` rotated by `PA`. Its emission is taken
     out to the `boundary_sigma` iso-contour: for a component of peak `P` and local noise `sigma` the Gaussian falls to
     `boundary_sigma * sigma` at a radius that scales the FWHM semi-axes by `sqrt(ln(P/(boundary_sigma * sigma))/ln 2)`.
     This is parameter-free once the (inherited) detection level is fixed - a bright lobe's contour reaches further than
-    a faint one's, as it should. Set `boundary_sigma=None` to use the bare FWHM ellipse instead.
+    a faint one's, as it should. This behaviour can be disabled by setting `boundary_sigma=None`, which will use the
+    bare FWHM ellipse instead.
 
     The axis-aligned half-extents of that rotated ellipse are
-    `dRA = sqrt((a*sin PA)^2 + (b*cos PA)^2)` and `dDec = sqrt((a*cos PA)^2 + (b*sin PA)^2)`; the component crosses the
-    frame when `|x0| + dRA` or `|y0| + dDec` exceeds the cutout half-width.
-
-    Own components are found by `Parent_Source` grouping (not a spatial query), so a component lying outside the current
-    frame is still counted - that is exactly the cropped case.
+    `dRA = sqrt((a*sin PA)^2 + (b*cos PA)^2)` and `dDec = sqrt((a*cos PA)^2 + (b*sin PA)^2)`
+    and the component crosses the frame when `|x0| + dRA` or `|y0| + dDec` exceeds the cutout half-width.
 
     Parameters
     ----------
@@ -354,7 +369,7 @@ def flag_cropped_sources(source_ra: np.ndarray,
     cropped = np.zeros(n, dtype=bool)
     own_extent = np.zeros(n, dtype=float)
 
-    logger.info(f"Testing own-component containment for {n} sources...")
+    logger.info(f"Testing own-component cropping for {n} sources...")
     for i in range(n):
         k = slot[i]
         if k >= len(names) or names[k] != source_name[i]:
@@ -389,11 +404,25 @@ def flag_cropped_sources(source_ra: np.ndarray,
     return result
 
 
-def _lookup_id_name(query_names, sorted_names: np.ndarray, sorted_ids: np.ndarray) -> np.ndarray:
+
+def _lookup_id_name(query_names: np.ndarray, sorted_names: np.ndarray, sorted_ids: np.ndarray) -> np.ndarray:
     """
     Look up the optical `ID_NAME` for each `Source_Name` in `query_names`, returning "" where the name is blank or not
-    found. `sorted_names`/`sorted_ids` are the source catalogue's names and IDs sorted by name (see
-    :func:`add_optical_missplit_flag`).
+    found.
+    
+    Parameters
+    ----------
+    query_names : np.ndarray
+        The `Source_Name` values to look up.
+    sorted_names : np.ndarray
+        The `Source_Name` values from the optical catalogue, sorted ascending.
+    sorted_ids : np.ndarray
+        The `ID_NAME` values from the optical catalogue, sorted to match `sorted_names`.
+    
+    Returns
+    -------
+    np.ndarray
+        The `ID_NAME` values corresponding to `query_names`, or "" where not found.
     """
     q = _as_str_array(np.asarray(query_names, dtype=object))
     pos = np.clip(np.searchsorted(sorted_names, q), 0, len(sorted_names) - 1)
@@ -409,9 +438,11 @@ def add_optical_missplit_flag(flags: pd.DataFrame,
     under a different `Parent_Source` (a catalogue mis-association).
 
     A flagged cutout is marked `foreign_shares_optical_id = True` when the brightest foreign component's parent source
-    shares the target's optical identification (`ID_NAME`). Because one optical galaxy generally hosts one physical
-    radio source, a shared host suggests the "foreign" component is really part of the target - i.e. the contamination
-    flag may be a false positive from catalogue under-association.
+    shares the target's optical identification (`ID_NAME`). Note that this represents a disagreement between the two
+    fields, as by nature of being foreign, the `Parent_Source` is not the target's own `Source_Name`.
+    
+    Under the consideration that we would wish to group all components of a single physical source (e.g. a radio galaxy)
+    together, any shared optical ID is a potential indicator of a mis-split and a false-positive contamination flag.
 
     This is a review aid only; it does NOT change any contamination decision. It is also NOT ground truth: `ID_NAME`
     comes from the same identification pipeline as `Parent_Source` (so this is an internal association-vs-identification
@@ -499,21 +530,27 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
             else np.ones(len(data), dtype=bool)
         source_ra = np.asarray(data[Source.RA.value][mask], dtype=float)
         source_dec = np.asarray(data[Source.DEC.value][mask], dtype=float)
-        isl_rms = np.asarray(data[Source.RMS.value][mask], dtype=float)
-        source_name = np.asarray(data["Source_Name"][mask])
+        peak_flux_mjy = np.asarray(data[Source.PeakFlux.value][mask], dtype=float)
+        isl_rms_mjy = np.asarray(data[Source.RMS.value][mask], dtype=float)
+        source_name = np.asarray(data[Source.SourceName.value][mask])
     logger.info(f"Loaded {len(source_ra)} sources (resolved_only={resolved_only}).")
 
     components = load_component_catalogue(component_catalogue_path)
-    foreign = flag_foreign_components(source_ra, source_dec, source_name, isl_rms,
+    foreign = flag_foreign_components(source_ra, source_dec, source_name, isl_rms_mjy,
                                       cutout_size_arcsec=cutout_size_arcsec,
                                       sigma_threshold=sigma_threshold, components=components)
-    cropped = flag_cropped_sources(source_ra, source_dec, source_name, isl_rms,
+    cropped = flag_cropped_sources(source_ra, source_dec, source_name, isl_rms_mjy,
                                    cutout_size_arcsec=cutout_size_arcsec,
                                    boundary_sigma=boundary_sigma, components=components)
     flags = pd.concat([foreign, cropped], axis=1)
     if record_optical:
         flags = add_optical_missplit_flag(flags, source_name, optical_catalogue_path)
     flags.insert(0, "index", np.arange(len(flags)))
+    flags.insert(1, "source_name", _as_str_array(source_name))
+    flags.insert(2, "ra", source_ra)
+    flags.insert(3, "dec", source_dec)
+    flags.insert(4, "peak_flux", peak_flux_mjy)
+    flags.insert(5, "isl_rms", isl_rms_mjy)
     return flags
 
 
