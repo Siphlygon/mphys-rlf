@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 
 from ..analysis.log_analyzer import get_model_flux, get_rms, get_sigma_clipped_mean, get_sigma_clipped_rms
-from ..completeness.angular_size_finder import AngularSizeFinder
+from ..las.angular_size_finder import AngularSizeFinder
 from ..utils import paths
 from .distributed import DistributedUtils
 from .logger import get_logger

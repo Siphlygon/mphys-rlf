@@ -12,7 +12,7 @@ import pytest
 from astropy.io import fits
 from astropy.wcs import WCS
 
-from diffracc.completeness import floodfill_size as ff
+from diffracc.las import floodfill_size as ff
 
 
 def _header(ny=80, nx=80, pix_arcsec=1.5, beam_arcsec=6.0):
