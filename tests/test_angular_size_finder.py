@@ -277,3 +277,42 @@ class TestMakeShapePlot:
             MakeShape(clist).plot()
         finally:
             plt.close("all")
+
+
+class TestSelectAngularSize:
+    """
+    AngularSizeFinder.select_angular_size chooses between the component-based and flood-fill sizes: it takes the
+    flood-fill size only when unflagged, the flux matches within 20%, and the component size is in 30-600 arcsec.
+    """
+
+    def test_selects_floodfill_when_all_gates_pass(self):
+        """Test that select_angular_size selects the flood-fill size when all gates pass."""
+        las, src = AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, False, False)
+        assert las == 55.0 and src == "Flood-fill"
+
+    def test_keeps_component_when_size_below_30(self):
+        """Test that select_angular_size keeps the component size when it is below 30 arcsec."""
+        las, src = AngularSizeFinder.select_angular_size(20.0, 55.0, 1.0, 1.0, False, False)
+        assert las == 20.0 and src == "Catalogue"
+
+    def test_keeps_component_when_size_above_600(self):
+        """Test that select_angular_size keeps the component size when it is above 600 arcsec."""
+        las, src = AngularSizeFinder.select_angular_size(700.0, 55.0, 1.0, 1.0, False, False)
+        assert las == 700.0 and src == "Catalogue"
+
+    def test_keeps_component_on_flux_mismatch(self):
+        """Test that select_angular_size keeps the component size when the fluxes mismatch by more than 20%."""
+        las, src = AngularSizeFinder.select_angular_size(40.0, 55.0, 0.5, 1.0, False, False)  # ratio 0.5 < 0.8
+        assert las == 40.0 and src == "Catalogue"
+
+    def test_keeps_component_on_bad_flags(self):
+        """Test that select_angular_size keeps the component size when either bad_flux or bad_image is True."""
+        assert AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, True, False)[0] == 40.0
+        assert AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, False, True)[0] == 40.0
+
+    def test_vectorised(self):
+        """Test that select_angular_size works with vectorised inputs."""
+        las, src = AngularSizeFinder.select_angular_size([40, 20, 40], [55, 55, 55], [1.0, 1.0, 0.5],
+                                                         [1.0, 1.0, 1.0], [False, False, False], [False, False, False])
+        np.testing.assert_array_equal(las, [55, 20, 40])
+        np.testing.assert_array_equal(src, ["Flood-fill", "Catalogue", "Catalogue"])

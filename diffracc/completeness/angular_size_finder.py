@@ -31,6 +31,7 @@ from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.plotting import paper_style
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
+from . import floodfill_size
 
 
 class MakeShape:
@@ -806,6 +807,126 @@ class AngularSizeFinder:
             df.to_csv(output_file, index=False, mode="w")
 
         return fits_indices, np.array(ang_sizes)
+
+
+    # ---------- FLOOD-FILL (PIXEL-BASED) SIZING ----------
+    def measure_floodfill(self,
+                          image: np.ndarray | str | Path,
+                          include: np.ndarray,
+                          exclude: np.ndarray,
+                          rms: float,
+                          peak: float,
+                          total_flux: float,
+                          header: fits.Header | None = None,
+                          component_size: float | None = None,
+                          badflux: float = 0.0,
+                          component_las_from: str = "Catalogue") -> dict:
+        """
+        Measure a source's pixel-based flood-fill size and flux from its image, delegating the geometry to
+        `floodfill_size.measure_source`, and - when a component-based size is supplied - the final LAS via
+        `select_angular_size`.
+
+        Parameters
+        ----------
+        image : np.ndarray | str | Path
+            The 2D cutout image (Jy/beam), or a path to a FITS file to read it (and its header) from.
+        include : np.ndarray
+            The source's own components as `(ra, dec, maj_deg, min_deg, pa_deg)` rows.
+        exclude : np.ndarray
+            Foreign components (same columns) to mask out; may be empty.
+        rms, peak : float
+            The source island rms and peak flux in Jy/beam (setting the threshold `max(4*rms, peak/50)`).
+        total_flux : float
+            The source total flux (same units as the measured flood-fill flux) for the adoption flux-match test.
+        header : astropy.io.fits.Header, optional
+            The 2D FITS header (WCS, `CDELT1/2`, `BMAJ`, `BMIN`). Required when `image` is an array; read from the file
+            when `image` is a path.
+        component_size : float, optional
+            The component-based (catalogue) size in arcsec. When given, the returned dict also carries the hybrid `LAS`
+            and `LAS_from`.
+        badflux : float, optional
+            The minimum credible flood-fill flux in Jy for the `Bad_flux` flag, by default 0.0. LoTSS uses
+            `min(Total_flux)/2000` over the catalogue; the caller should pass that value.
+        component_las_from : str, optional
+            Provenance label reported for `LAS_from` where the flood-fill size is not adopted, by default "Catalogue".
+
+        Returns
+        -------
+        dict
+            `LM_size` (arcsec), `LM_flux` (Jy), `Bad_flux`, `Bad_image`, and - when `component_size` is given - `LAS`
+            (arcsec) and `LAS_from`.
+        """
+        if isinstance(image, (str, Path)):
+            with fits.open(image, memmap=False) as hdul:
+                data = np.squeeze(hdul[0].data)
+                header = hdul[0].header
+        else:
+            data = np.squeeze(np.asarray(image))
+            if header is None:
+                raise ValueError("A FITS header must be provided when `image` is an array.")
+
+        result = floodfill_size.measure_source(data, header, include, exclude, rms, peak, badflux)
+
+        # Select the final LAS if a component-based size is supplied, using the Hardcastle et al. (2023) rule.
+        if component_size is not None:
+            las, las_from = self.select_angular_size(
+                component_size, result["LM_size"], result["LM_flux"], total_flux,
+                result["Bad_flux"], result["Bad_image"], component_las_from=component_las_from)
+            result["LAS"] = las
+            result["LAS_from"] = las_from
+
+        return result
+
+
+    @staticmethod
+    def select_angular_size(component_size: float | np.ndarray,
+                            lm_size: float | np.ndarray,
+                            lm_flux: float | np.ndarray,
+                            total_flux: float | np.ndarray,
+                            bad_flux: bool | np.ndarray,
+                            bad_image: bool | np.ndarray,
+                            component_las_from: str = "Catalogue"):
+        """
+        Choose the final angular size between the component-based estimate and the flood-fill estimate, applying the
+        Hardcastle et al. (2023) rule: take the flood-fill size when it is unflagged, its flux matches the catalogue
+        flux to within 20%, and the component-based size is between 30 and 600 arcsec; otherwise keep the
+        component-based size. Works element-wise on arrays or on scalars.
+
+        Parameters
+        ----------
+        component_size : array-like or float
+            The component-based size in arcsec (`2*DC_Maj` or the `MakeShape` composite size).
+        lm_size : array-like or float
+            The flood-fill size in arcsec (see `measure_floodfill`).
+        lm_flux, total_flux : array-like or float
+            The flood-fill and catalogue total fluxes (same units); their ratio must lie in `(0.8, 1.2)`.
+        bad_flux, bad_image : array-like or bool
+            The flood-fill quality flags; a set flag blocks selection of the flood-fill size.
+        component_las_from : str, optional
+            Provenance label reported where the flood-fill size is not selected, by default "Catalogue".
+
+        Returns
+        -------
+        las : np.ndarray or float
+            The selected size in arcsec.
+        las_from : np.ndarray or str
+            "Flood-fill" where the pixel size is selected, else `component_las_from`.
+        """
+        component_size = np.asarray(component_size, dtype=float)
+        lm_size = np.asarray(lm_size, dtype=float)
+        flux_ratio = np.asarray(lm_flux, dtype=float) / np.asarray(total_flux, dtype=float)
+
+        use_floodfill = (~np.asarray(bad_flux, dtype=bool)
+                         & ~np.asarray(bad_image, dtype=bool)
+                         & (flux_ratio > 0.8) & (flux_ratio < 1.2)
+                         & (component_size > 30) & (component_size < 600))
+
+        las = np.where(use_floodfill, lm_size, component_size)
+        las_from = np.where(use_floodfill, "Flood-fill", component_las_from)
+
+        if np.ndim(use_floodfill) == 0:
+            return float(las), str(las_from)
+        return las, las_from
 
 
 def build_arg_parser():
