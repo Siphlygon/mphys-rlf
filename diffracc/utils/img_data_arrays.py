@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 
 from ..analysis.log_analyzer import get_model_flux, get_rms, get_sigma_clipped_mean, get_sigma_clipped_rms
-from ..las.angular_size_finder import AngularSizeFinder
+from ..las.angular_size_estimator import AngularSizeEstimator
 from ..utils import paths
 from .distributed import DistributedUtils
 from .logger import get_logger
@@ -487,7 +487,7 @@ class ImageDataArrays:
         NamedArrays
             The named catalog arrays and the indexes they correspond to.
         """
-        asf = AngularSizeFinder()
+        asf = AngularSizeEstimator()
         output_file = paths.NP_ARRAY_PARENT / subdir / 'las_values.csv'
         # NOTE: AngularSizeFinder.estimate_angular_sizes returns (indices, angular_sizes) - this assignment order
         # looks swapped relative to that. Pre-existing behaviour, kept as-is here; flagged separately.

@@ -1,82 +1,16 @@
 """
-Unit tests for diffracc/las/angular_size_finder.py.
+Unit tests for diffracc/las/angular_size_estimator.py.
 """
 import numpy as np
-import pandas as pd
 import pytest
 from astropy.io import fits
 
-from diffracc.las.angular_size_finder import AngularSizeFinder
-
-
-class TestFilterComponents:
-    """Tests that AngularSizeFinder._filter_by_flux correctly filters components to reach the flux threshold."""
-
-    def test_keeps_components_until_flux_threshold_reached(self):
-        """Test that _filter_by_flux keeps the brightest components until the flux threshold is reached."""
-        # total flux = 16.5; 0.95 * 16.5 = 15.675 -> top 2 (10+5=15) undershoots, top 3 (10+5+1=16) reaches it.
-        components = [(10.0, 0, 0, 0, 0, 0), (5.0, 0, 0, 0, 0, 0), (1.0, 0, 0, 0, 0, 0), (0.5, 0, 0, 0, 0, 0)]
-
-        filtered = AngularSizeFinder._filter_by_flux(list(components), 0.95)
-
-        assert [c[0] for c in filtered] == [10.0, 5.0, 1.0]
-
-    def test_sorts_components_by_flux_descending_regardless_of_input_order(self):
-        """Test that _filter_by_flux sorts the components by flux in descending order, regardless of input order."""
-        components = [(1.0, 0, 0, 0, 0, 0), (10.0, 0, 0, 0, 0, 0), (5.0, 0, 0, 0, 0, 0)]
-        filtered = AngularSizeFinder._filter_by_flux(list(components), 0.95)
-        assert [c[0] for c in filtered] == [10.0, 5.0, 1.0]
-
-    def test_raises_on_empty_components(self):
-        """Test that _filter_by_flux raises an AssertionError when given an empty list of components."""
-        with pytest.raises(AssertionError):
-            AngularSizeFinder._filter_by_flux([], 0.95)
-
-    def test_raises_on_zero_total_flux(self):
-        """Test that _filter_by_flux raises a ValueError when the total flux of the components is zero."""
-        with pytest.raises(ValueError):
-            AngularSizeFinder._filter_by_flux([(0.0, 0, 0, 0, 0, 0), (0.0, 0, 0, 0, 0, 0)], 0.95)
-
-
-class TestExtractComponentData:
-    """Tests that AngularSizeFinder._read_and_filter correctly reads and filters components from a FITS file."""
-
-    def _write_component_fits(self, path, fluxes, ra, dec, dc_maj, dc_min, pa):
-        """Helper method to write a FITS file with the specified component data for testing."""
-        cols = fits.ColDefs([
-            fits.Column(name='Total_flux', format='E', array=np.asarray(fluxes, dtype=np.float32)),
-            fits.Column(name='RA', format='E', array=np.asarray(ra, dtype=np.float32)),
-            fits.Column(name='DEC', format='E', array=np.asarray(dec, dtype=np.float32)),
-            fits.Column(name='DC_Maj', format='E', array=np.asarray(dc_maj, dtype=np.float32)),
-            fits.Column(name='DC_Min', format='E', array=np.asarray(dc_min, dtype=np.float32)),
-            fits.Column(name='PA', format='E', array=np.asarray(pa, dtype=np.float32)),
-        ])
-        hdu = fits.BinTableHDU.from_columns(cols)
-        fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path)
-
-    def test_reads_and_filters_components_from_fits_file(self, tmp_path):
-        """Test that _read_and_filter reads a FITS file and filters components to reach the flux threshold."""
-        fits_path = tmp_path / "source_1.fits"
-        self._write_component_fits(
-            fits_path,
-            fluxes=[10.0, 5.0, 1.0, 0.5],
-            ra=[10.0, 10.001, 10.002, 10.003],
-            dec=[20.0, 20.001, 20.002, 20.003],
-            dc_maj=[0.001] * 4,
-            dc_min=[0.0005] * 4,
-            pa=[0.0] * 4,
-        )
-
-        components = AngularSizeFinder._read_and_filter(fits_path, 0.95)
-
-        # matches TestFilterComponents' threshold arithmetic: top 3 of 4 components reach 0.95 of total flux.
-        assert len(components) == 3
-        assert components[0][0] == pytest.approx(10.0, rel=1e-5)
+from diffracc.las.angular_size_estimator import AngularSizeEstimator
 
 
 class TestEstimateAngularSizesCache:
     """
-    Tests that AngularSizeFinder.estimate_angular_sizes correctly reads from an existing output file instead of running
+    Tests that AngularSizeEstimator.estimate_angular_sizes correctly reads from an existing output file instead of running
     the full pipeline when the output file exists.
     """
 
@@ -90,8 +24,8 @@ class TestEstimateAngularSizesCache:
         output_file = tmp_path / "sizes.csv"
         output_file.write_text("fits_index,estimated_las_arcsec\n1,12.5\n2,30.0\n")
 
-        finder = AngularSizeFinder(root_dir=fits_dir)
-        indices, sizes = finder.estimate_angular_sizes(fits_dir=fits_dir, output_file=output_file, read_from_file=True)
+        estimator = AngularSizeEstimator(root_dir=fits_dir)
+        indices, sizes = estimator.estimate_angular_sizes(fits_dir=fits_dir, output_file=output_file, read_from_file=True)
 
         np.testing.assert_allclose(sorted(sizes), [12.5, 30.0])
         assert set(indices) == {1, 2}
@@ -132,12 +66,12 @@ class TestEstimateAngularSizesFullPipeline:
                                    dc_maj=[0.0001, 0.0001], dc_min=[0.00005, 0.00005], pa=[0.0, 0.0])
 
         output_file = tmp_path / "sizes.csv"
-        finder = AngularSizeFinder(root_dir=fits_dir)
+        estimator = AngularSizeEstimator(root_dir=fits_dir)
 
         # load_from_catalogue=False keeps the pipeline on the FITS-extraction path (these tmp files), rather than the
         # real DR2 component catalogue.
-        indices, sizes = finder.estimate_angular_sizes(fits_dir=fits_dir, output_file=output_file,
-                                                       load_from_catalogue=False)
+        indices, sizes = estimator.estimate_angular_sizes(fits_dir=fits_dir, output_file=output_file,
+                                                         load_from_catalogue=False)
 
         assert set(indices) == {1, 2}
         by_index = dict(zip(indices, sizes))
@@ -148,38 +82,38 @@ class TestEstimateAngularSizesFullPipeline:
 
 class TestSelectAngularSize:
     """
-    AngularSizeFinder.select_angular_size chooses between the component-based and flood-fill sizes: it takes the
+    AngularSizeEstimator.select_angular_size chooses between the component-based and flood-fill sizes: it takes the
     flood-fill size only when unflagged, the flux matches within 20%, and the component size is in 30-600 arcsec.
     """
 
     def test_selects_floodfill_when_all_gates_pass(self):
         """Test that select_angular_size selects the flood-fill size when all gates pass."""
-        las, src = AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, False, False)
+        las, src = AngularSizeEstimator.select_angular_size(40.0, 55.0, 1.0, 1.0, False, False)
         assert las == 55.0 and src == "Flood-fill"
 
     def test_keeps_component_when_size_below_30(self):
         """Test that select_angular_size keeps the component size when it is below 30 arcsec."""
-        las, src = AngularSizeFinder.select_angular_size(20.0, 55.0, 1.0, 1.0, False, False)
+        las, src = AngularSizeEstimator.select_angular_size(20.0, 55.0, 1.0, 1.0, False, False)
         assert las == 20.0 and src == "Catalogue"
 
     def test_keeps_component_when_size_above_600(self):
         """Test that select_angular_size keeps the component size when it is above 600 arcsec."""
-        las, src = AngularSizeFinder.select_angular_size(700.0, 55.0, 1.0, 1.0, False, False)
+        las, src = AngularSizeEstimator.select_angular_size(700.0, 55.0, 1.0, 1.0, False, False)
         assert las == 700.0 and src == "Catalogue"
 
     def test_keeps_component_on_flux_mismatch(self):
         """Test that select_angular_size keeps the component size when the fluxes mismatch by more than 20%."""
-        las, src = AngularSizeFinder.select_angular_size(40.0, 55.0, 0.5, 1.0, False, False)  # ratio 0.5 < 0.8
+        las, src = AngularSizeEstimator.select_angular_size(40.0, 55.0, 0.5, 1.0, False, False)  # ratio 0.5 < 0.8
         assert las == 40.0 and src == "Catalogue"
 
     def test_keeps_component_on_bad_flags(self):
         """Test that select_angular_size keeps the component size when either bad_flux or bad_image is True."""
-        assert AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, True, False)[0] == 40.0
-        assert AngularSizeFinder.select_angular_size(40.0, 55.0, 1.0, 1.0, False, True)[0] == 40.0
+        assert AngularSizeEstimator.select_angular_size(40.0, 55.0, 1.0, 1.0, True, False)[0] == 40.0
+        assert AngularSizeEstimator.select_angular_size(40.0, 55.0, 1.0, 1.0, False, True)[0] == 40.0
 
     def test_vectorised(self):
         """Test that select_angular_size works with vectorised inputs."""
-        las, src = AngularSizeFinder.select_angular_size([40, 20, 40], [55, 55, 55], [1.0, 1.0, 0.5],
+        las, src = AngularSizeEstimator.select_angular_size([40, 20, 40], [55, 55, 55], [1.0, 1.0, 0.5],
                                                          [1.0, 1.0, 1.0], [False, False, False], [False, False, False])
         np.testing.assert_array_equal(las, [55, 20, 40])
         np.testing.assert_array_equal(src, ["Flood-fill", "Catalogue", "Catalogue"])

@@ -1,14 +1,13 @@
 """
-This module contains the `AngularSizeFinder` class, which is used to estimate the angular size of a set of radio galaxy
-images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files.
+This module contains the `AngularSizeEstimator` class, which is used to estimate the angular size of a set of radio
+galaxy images on a 80x80 grid based on the component data extracted from PyBDSF catalogue FITS files.
 
-The class processes the FITS files, filters the components based on total flux to remove any present noise islands, and
-estimates the angular size of the sources by creating a shape from the components and calculating the maximum distance
-between points on the convex hull of this shape.
+It delegates loading and flux-filtering of the components to `ComponentLoader` and the shape geometry to `MakeShape`;
+its own job is to drive the sizing - the component-based estimate (the convex-hull diameter of the component ellipses)
+and the pixel-based flood-fill estimate - and to select the final size per source.
 """
 import argparse
 import os
-import pickle
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -22,12 +21,12 @@ from tqdm import tqdm
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.plotting import paper_style
-from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 from . import floodfill_size
+from .component_loading import ComponentLoader
 from .make_shape import MakeShape
 
 
-class AngularSizeFinder:
+class AngularSizeEstimator:
     """
     A class to estimate the angular size of a set of radio galaxy images on a 80x80 grid based on the component data
     extracted from PyBDSF catalogue FITS files.
@@ -38,9 +37,8 @@ class AngularSizeFinder:
                  n_points: int = MakeShape.DEFAULT_ELLIPSE_POINTS,
                  num_processes: int = 1):
         """
-        This class processes PyBDSF catalogue FITS files containing Gaussian component data for radio sources, filters
-        the components based on total flux, and estimates the angular size of the sources by creating a shape from the
-        components and calculating the maximum distance between points on the convex hull of this shape.
+        Sizing is driven here; loading and flux-filtering of the components is delegated to `ComponentLoader` (built
+        from `root_dir`, `flux_threshold` and `num_processes`), and the shape geometry to `MakeShape`.
 
         Parameters
         ----------
@@ -57,88 +55,12 @@ class AngularSizeFinder:
             The number of worker processes to use for the (CPU-bound, per-source-independent) size-estimation step, by
             default 1 (serial). Values > 1 dispatch the estimation across a `ProcessPoolExecutor`.
         """
-        self.logger = get_logger("AngularSizeFinder", LoggingLevels.INFO.value)
-        self.root_dir = root_dir
-
-        # Decide a flux threshold for filtering components. PyBDSF can sometimes fit islands to noise and so we sort and
-        # then filter islands based on their fractional total flux. The threshold below represents the fraction of total
-        # flux to keep, so the dimmest islands are removed while keeping total flux above this fractional threshold.
-        self.flux_threshold = flux_threshold
-
+        self.logger = get_logger("AngularSizeEstimator", LoggingLevels.INFO.value)
         self.n_points = n_points
         self.num_processes = num_processes
-
-        self.rfa = RecursiveFileAnalyzer(self.root_dir)
+        self.loader = ComponentLoader(root_dir, flux_threshold=flux_threshold, num_processes=num_processes)
 
     # ---------- ASSEMBLING SIZE ESTIMATES ----------
-    @staticmethod
-    def _read_and_filter(file_path: Path, flux_threshold: float) -> list[tuple]:
-        """
-        Read one PyBDSF catalogue FITS file and return its flux-filtered components.
-
-        A staticmethod taking `flux_threshold` explicitly so it is picklable (i.e., shareable across processes) and can
-        be dispatched to `RecursiveFileAnalyzer`'s process mode for parallel parsing.
-
-        Parameters
-        ----------
-        file_path : Path
-            The path to the FITS file containing the component data for a single source.
-        flux_threshold : float
-            The fraction of total flux to keep when filtering (see `_filter_by_flux`).
-
-        Returns
-        -------
-        list[tuple]
-            The filtered components, each a `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)` tuple.
-        """
-        # Fastest way to read certain columns from the table
-        with fits.open(file_path, memmap=False) as hdul:
-            data = hdul[1].data
-            components = list(zip(data["Total_flux"], data["RA"], data["DEC"],
-                                  data["DC_Maj"], data["DC_Min"], data["PA"]))
-
-        return AngularSizeFinder._filter_by_flux(components, flux_threshold)
-
-    @staticmethod
-    def _filter_by_flux(components: list[tuple], flux_threshold: float) -> list[tuple]:
-        """
-        Keep the brightest components that together reach `flux_threshold` of the total flux, discarding the dimmest -
-        which PyBDSF sometimes fits to noise islands.
-
-        Parameters
-        ----------
-        components : list[tuple]
-            The components, each a tuple whose first element is the total flux, followed by RA, DEC, major axis, minor
-            axis, and position angle.
-        flux_threshold : float
-            The fraction of total flux to keep. The dimmest components are removed while the cumulative flux of those
-            kept stays above this fraction.
-
-        Returns
-        -------
-        list[tuple]
-            The filtered components, brightest first.
-        """
-        assert components, "No components found in the data. Check the FITS file and the expected column names."
-
-        # Sort components by total flux in descending order (a new list, leaving the caller's untouched)
-        components = sorted(components, key=lambda c: c[0], reverse=True)
-
-        sum_flux = sum(component[0] for component in components)
-        if sum_flux == 0:
-            raise ValueError("Total flux of the source is zero. Cannot filter components based on flux threshold.")
-
-        # Keep the brightest components until their cumulative flux reaches the threshold fraction of the total
-        filtered_components = []
-        cumulative_flux = 0
-        for component in components:
-            cumulative_flux += component[0]
-            filtered_components.append(component)
-            if cumulative_flux / sum_flux >= flux_threshold:
-                break
-
-        return filtered_components
-
     @staticmethod
     def _size_worker(components: list[tuple] | None, n: int) -> float:
         """
@@ -176,7 +98,7 @@ class AngularSizeFinder:
         Parameters
         ----------
         components_list : list[tuple] | np.ndarray
-            The per-source filtered component lists (as produced by `_read_and_filter` via the extraction pipeline).
+            The per-source filtered component lists (as produced by `ComponentLoader`).
 
         Returns
         -------
@@ -196,164 +118,6 @@ class AngularSizeFinder:
 
         return [worker(components)
                 for components in tqdm(components_list, desc="Estimating angular sizes", mininterval=1.0)]
-
-    # ---------- EXTRACTION + CONSOLIDATION ----------
-    def _extract_components(self, fits_dir: str | Path | None, pattern: str) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Extract and flux-filter the components from every catalogue FITS under `fits_dir`.
-
-        Reading a PyBDSF binary table is dominated by astropy parsing which binds the GIL, so when `num_processes > 1`
-        this runs across worker processes (`mode="process"`), which the GIL-bound parse actually benefits from;
-        otherwise it stays on the default threaded file mode.
-
-        Parameters
-        ----------
-        fits_dir : str | Path | None
-            The root directory of catalogue FITS files. If `None`, the finder's `root_dir` is used.
-        pattern : str
-            The regex pattern matching the catalogue files, with a capture group for the source index.
-
-        Returns
-        -------
-        PipelineResult
-            The per-source filtered component lists and their extracted indices.
-        """
-        parallel = self.num_processes and self.num_processes > 1
-        return self.rfa.run_pipeline(
-            function=self._read_and_filter,
-            flux_threshold=self.flux_threshold,
-            root_dir=fits_dir if fits_dir else self.root_dir,
-            pattern=pattern,
-            return_nums=True,
-            mode="process" if parallel else "file",
-            num_workers=self.num_processes if parallel else None,
-            progress_bar_desc="Extracting and filtering component data from FITS files",
-        )
-
-    def _load_components_from_catalogue(self,
-                                        fits_indices: np.ndarray,
-                                        source_catalogue_path: str | Path = paths.STRIPPED_CATALOGUE_PATH,
-                                        component_catalogue_path: str | Path = paths.COMPONENT_CATALOGUE_PATH
-                                        ) -> np.ndarray:
-        """
-        Load the per-source components and indices from a pre-existing catalogue, bypassing the extraction step.
-        
-        Parameters
-        ----------
-        fits_indices : np.ndarray
-            The source indices corresponding to the components in the catalogue.
-        source_catalogue_path : str | Path
-            Path to the source catalogue FITS file containing the DR2 catalogue information.
-        component_catalogue_path : str | Path
-            Path to the component catalogue FITS file containing the DR2 components.
-        
-        Returns
-        -------
-        components_list : np.ndarray
-            The per-source filtered component lists.
-        """
-        # Get the Source_Name of each source from the source catalogue
-        self.logger.info(f"Loading source names from {source_catalogue_path}")
-        with fits.open(source_catalogue_path, memmap=False) as hdul:
-            source_data = hdul[1].data
-            source_names = source_data['Source_Name'][fits_indices]
-
-        # Assemble the components for each source from the component catalogue, by matching Source_Name.
-        self.logger.info(f"Loading components from {component_catalogue_path}")
-        with fits.open(component_catalogue_path, memmap=False) as hdul:
-            component_data = hdul[1].data
-
-            # Pull the six columns we need once, as a single contiguous (n_components, 6) float array. The downstream
-            # geometry (MakeShape) was written for PyBDSF cutout catalogues, whose DC_Maj/DC_Min are in DEGREES (it
-            # multiplies them by 3600). This value-added component catalogue instead stores its axes in ARCSEC (and
-            # carries no TUNIT to flag it), so convert them to degrees here to keep that convention.
-            component_values = np.column_stack([
-                np.asarray(component_data['Total_flux'], dtype=float),
-                np.asarray(component_data['RA'], dtype=float),
-                np.asarray(component_data['DEC'], dtype=float),
-                np.asarray(component_data['DC_Maj'], dtype=float) / 3600.0,
-                np.asarray(component_data['DC_Min'], dtype=float) / 3600.0,
-                np.asarray(component_data['PA'], dtype=float),
-            ])
-            parent_source = np.asarray(component_data['Parent_Source'])
-
-        # Group every component's row position by its Parent_Source in a single pass, as dicts (O(1) lookup).
-        rows_by_source = pd.Series(np.arange(len(parent_source))).groupby(parent_source).indices
-
-        empty = np.empty((0, 6), dtype=float)
-        components_list = np.empty(len(source_names), dtype=object)
-        missing = 0
-        for i, source_name in tqdm(enumerate(source_names), desc="Matching components to sources..."):
-            positions = rows_by_source.get(source_name)
-            if positions is None:
-                components_list[i] = empty
-                missing += 1
-            else:
-                components_list[i] = component_values[positions]
-
-        if missing:
-            self.logger.warning(
-                f"{missing} of {len(source_names)} sources had no components in the component catalogue.")
-
-        return components_list
-
-    def _load_or_extract_components(self,
-                                    fits_dir: str | Path | None,
-                                    pattern: str,
-                                    components_cache: str | Path | None,
-                                    load_from_catalogue: bool = False) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Return the per-source components and indices, using a one-time consolidated cache when available.
-
-        Extracting the components re-parses every catalogue FITS (the dominant cost of the whole pipeline). When
-        `components_cache` is given, the extracted result is consolidated into that single file so subsequent runs -
-        e.g. re-estimating with a different `n_points`, or recovering after a downstream failure - skip the parse
-        entirely. This is deliberately local to the finder for now; it may later move into a shared, program-wide
-        consolidation step.
-
-        Parameters
-        ----------
-        fits_dir : str | Path | None
-            The root directory of catalogue FITS files. If `None`, the finder's `root_dir` is used.
-        pattern : str
-            The regex pattern matching the catalogue files.
-        components_cache : str | Path | None
-            Path to the consolidated components file. If it exists, it is loaded instead of re-parsing; if it does not
-            exist, the freshly extracted components are written to it. If `None`, no consolidation is done.
-        load_from_catalogue : bool
-            If `True`, assemble components from the DR2 component catalogue by matching source names; otherwise extract
-            them from the PyBDSF catalogue FITS files under `fits_dir`. By default `False`.
-
-        Returns
-        -------
-        components_list : np.ndarray
-            The per-source filtered component lists.
-        fits_indices : np.ndarray
-            The source indices corresponding to `components_list`.
-        """
-        if components_cache is not None:
-            if os.path.exists(components_cache):
-                self.logger.info(f"Loading consolidated components from {components_cache}")
-                with open(components_cache, "rb") as f:
-                    cached = pickle.load(f)
-                return cached["components"], cached["indices"]
-            self.logger.info(f"No consolidated components found at {components_cache}; extracting from FITS files")
-
-        if load_from_catalogue:
-            self.logger.info("Loading components from the DR2 catalogue")
-            fits_indices = self.rfa.get_unwrapped_list(path=fits_dir,
-                                                       pattern=pattern,
-                                                       return_nums=True).numbers
-            components_list = self._load_components_from_catalogue(fits_indices)
-        else:
-            components_list, fits_indices = self._extract_components(fits_dir, pattern)
-
-        if components_cache is not None:
-            self.logger.info(f"Consolidating extracted components to {components_cache}")
-            with open(components_cache, "wb") as f:
-                pickle.dump({"components": components_list, "indices": fits_indices}, f)
-
-        return components_list, fits_indices
 
     # ---------- RUNNING THE PIPELINE ----------
     def estimate_angular_sizes(self,
@@ -385,7 +149,7 @@ class AngularSizeFinder:
         components_cache : str | Path | None, optional
             Path to a consolidated components file, by default `None`. When given, the extracted components are cached
             to (and reloaded from) this file, so re-runs skip the expensive re-parse of every catalogue FITS. See
-            `_load_or_extract_components`.
+            `ComponentLoader.load`.
 
         Returns
         -------
@@ -414,8 +178,8 @@ class AngularSizeFinder:
                 return fits_indices, ang_sizes
 
         # Extract (or reload consolidated) component data for each FITS file
-        components_list, fits_indices = self._load_or_extract_components(fits_dir, pattern, components_cache,
-                                                                         load_from_catalogue=load_from_catalogue)
+        components_list, fits_indices = self.loader.load(fits_dir, pattern, components_cache,
+                                                         load_from_catalogue=load_from_catalogue)
 
         # Estimate the angular size of each image based on the component data
         ang_sizes = self._estimate_sizes(components_list)
@@ -605,7 +369,7 @@ if __name__ == "__main__":
 
     root = args.root_dir if args.root_dir else _default_root
 
-    asf = AngularSizeFinder(root,
+    asf = AngularSizeEstimator(root,
                             flux_threshold=args.flux_threshold,
                             n_points=args.num_points,
                             num_processes=args.num_processes)
