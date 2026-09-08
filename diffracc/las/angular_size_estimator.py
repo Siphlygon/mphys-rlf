@@ -178,7 +178,7 @@ class AngularSizeEstimator:
                 return fits_indices, ang_sizes
 
         # Extract (or reload consolidated) component data for each FITS file
-        components_list, fits_indices = self.loader.load(fits_dir, pattern, components_cache,
+        components_list, fits_indices = self.loader.load_components(fits_dir, pattern, components_cache,
                                                          load_from_catalogue=load_from_catalogue)
 
         # Estimate the angular size of each image based on the component data

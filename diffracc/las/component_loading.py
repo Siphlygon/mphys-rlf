@@ -217,11 +217,11 @@ class ComponentLoader:
 
         return components_list
 
-    def load(self,
-             fits_dir: str | Path | None,
-             pattern: str,
-             components_cache: str | Path | None,
-             load_from_catalogue: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    def load_components(self,
+                        fits_dir: str | Path | None,
+                        pattern: str = r".*?\D+(\d+)\.fits$",
+                        components_cache: str | Path | None = None,
+                        load_from_catalogue: bool = False) -> tuple[np.ndarray, np.ndarray]:
         """
         Return the per-source components and indices, using a one-time consolidated cache when available.
 
