@@ -84,7 +84,7 @@ def _get_match(path: Path | str,
         The match object containing the extracted values from the log file, or a list of match objects if multiple
         patterns are provided, or None if no match is found.
     """
-    assert isinstance(pattern, (str, list)), "pattern must be a string or a list of strings"
+    assert isinstance(pattern, (str, list, re.Pattern)), "pattern must be a string, compiled pattern, or list thereof"
 
     with open(path, encoding='utf-8') as file:
         filedata = file.read()
@@ -150,7 +150,7 @@ def get_model_flux(path: Path)-> float:
     model_flux: float
         The flux of the model in Jy or arbitrary units (because of 0-1 normalizaiton)
     """
-    match = _get_match(path, _LOG_PATTERNS["model_flux"])
+    match = _get_match(path, _LOG_PATTERNS["model_flux_main"])
     if match is None:
         return 0 # Log won't have this line if no flux is found - so set model flux to 0
     model_flux = float(match.group(1))
