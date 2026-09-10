@@ -90,14 +90,14 @@ def build_log_table(log_dir: Path | str = DEFAULT_LOG_DIR,
     -------
     pd.DataFrame
         The per-cutout fields, indexed by cutout number (`index`), sorted, with failed-to-parse logs dropped: 
-        `sum_flux` (Jy), `model_flux_main` (Jy), `model_flux_allscales` (Jy), `mean` (mJy), `rms` (mJy),
+        `sum_flux` (Jy), `model_flux_main` (Jy), `model_flux_allscales` (Jy), `raw_mean` (mJy), `raw_rms` (mJy),
         `sigma_clipped_mean` (mJy), `sigma_clipped_rms` (mJy), `const_rms` (bool), `oned_warning` (bool).
     """
     if out_csv is not None and Path(out_csv).exists() and not overwrite:
-        logger.info("Loading cached log table from %s", out_csv)
+        logger.info(f"Loading cached log table from {out_csv}")
         return pd.read_csv(out_csv, index_col="index")
 
-    logger.info("Parsing PyBDSF logs under %s", log_dir)
+    logger.info(f"Parsing PyBDSF logs under {log_dir}")
     result = RecursiveFileAnalyzer(log_dir).run_pipeline(function=la.extract_log_fields,
                                                          pattern=_CUTOUT_LOG_PATTERN,
                                                          return_nums=True,
@@ -113,7 +113,7 @@ def build_log_table(log_dir: Path | str = DEFAULT_LOG_DIR,
     df = df.sort_index()
 
     if out_csv is not None:
-        logger.info("Caching log table (%d rows) to %s", len(df), out_csv)
+        logger.info(f"Caching log table ({len(df)} rows) to {out_csv}")
         df.to_csv(out_csv)
     return df
 
@@ -130,16 +130,17 @@ def load_catalogue_values(path: Path | str = paths.STRIPPED_CATALOGUE_PATH) -> p
     Returns
     -------
     pd.DataFrame
-        Columns `peak_flux`, `rms`, `total_flux` of resolved sources from the catalogue, indexed by cutout number
-        (`index`).
+        Columns `cat_peak_flux`, `cat_isl_rms`, `cat_total_flux` of resolved sources from the catalogue, indexed by
+        cutout number (`index`).
     """
+    logger.info(f"Loading catalogue values from {path}")
     with fits.open(path) as hdul:
         d: np.recarray = hdul[1].data
         data = d[d["Resolved"]]
         df = pd.DataFrame({
-            "peak_flux": data["Peak_flux"],
-            "isl_rms": data["Isl_rms"],
-            "total_flux": data["Total_flux"],
+            "cat_peak_flux": data["Peak_flux"],
+            "cat_isl_rms": data["Isl_rms"],
+            "cat_total_flux": data["Total_flux"],
         }, dtype=float)
     df.index.name = "index"
     return df
@@ -224,8 +225,10 @@ def load_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> pd.DataFrame:
         loader = ComponentLoader()
         loader.load_components(fits_dir=paths.PYBDSF_CATALOG_PARENT / "dr2_cutouts_download",
                                components_cache=path) # running this will create the pickle file at the specified path
-
+    logger.info(f"Loading components from {path}")
     obj = pd.read_pickle(path)
+    logger.info(f"Loaded {len(obj['indices'])} cutouts with components from {path}")
+    logger.info(f"Summarising components for {len(obj['indices'])} cutouts")
     summaries = [_summarise_components(rows) for rows in obj["components"]]
     df = pd.DataFrame(summaries, index=np.asarray(obj["indices"]))
     df.index.name = "index"
@@ -250,6 +253,7 @@ def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, 
     dict[int, pd.DataFrame]
         Mapping of cutout index to a DataFrame of its components, columns named per `_COMPONENT_COLUMNS`.
     """
+    logger.info(f"Loading raw components from {path}")
     obj = pd.read_pickle(path)
     return {int(idx): pd.DataFrame.from_records(rows) for idx, rows in zip(obj["indices"], obj["components"])}
 
@@ -265,16 +269,17 @@ def flux_alignment_corr(joined: pd.DataFrame) -> float:
     Parameters
     ----------
     joined : pd.DataFrame
-        A join of the log table and catalogue values, carrying `sum_flux` (Jy) and `total_flux` (mJy).
+        A join of the log table and catalogue values, carrying `sum_flux` (Jy) and `cat_total_flux` (mJy).
 
     Returns
     -------
     float
-        Pearson correlation of `log10(sum_flux)` and `log10(total_flux)` over rows where both are positive.
+        Pearson correlation of `log10(sum_flux)` and `log10(cat_total_flux)` over rows where both are positive.
     """
-    ok = (joined["sum_flux"] > 0) & (joined["total_flux"] > 0)
+    logger.info(f"Computing flux-alignment correlation over {len(joined)} joined cutouts")
+    ok = (joined["sum_flux"] > 0) & (joined["cat_total_flux"] > 0)
     x = np.log10(joined.loc[ok, "sum_flux"])
-    y = np.log10(joined.loc[ok, "total_flux"])
+    y = np.log10(joined.loc[ok, "cat_total_flux"])
     return round(float(np.corrcoef(x, y)[0, 1]), 3)
 
 
@@ -289,8 +294,8 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
         `model_flux_allscales` (Jy), `raw_mean` (mJy), `raw_rms` (mJy), `sigma_clipped_mean` (mJy), `sigma_clipped_rms`
         (mJy), `const_rms` (bool) and `oned_warning` (bool).
     cat : pd.DataFrame
-        The catalogue values from `load_catalogue_values`, carrying `total_flux` (mJy), `peak_flux` (mJy) and `isl_rms`
-        (mJy).
+        The catalogue values from `load_catalogue_values`, carrying `cat_total_flux` (mJy), `cat_peak_flux` (mJy) and
+        `cat_isl_rms` (mJy).
     warn_below : float, optional
         Log a warning if `flux_alignment_corr` falls below this, by default `0.5`.
 
@@ -299,6 +304,7 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
     pd.DataFrame
         The joined table, indexed by cutout number.
     """
+    logger.info(f"Joining {len(logs)} logs and {len(cat)} catalogue rows on cutout index")
     joined = logs.join(cat, how="inner")
     corr = flux_alignment_corr(joined)
     if corr < warn_below:
