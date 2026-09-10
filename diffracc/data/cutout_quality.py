@@ -489,9 +489,9 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
                             resolved_only: bool = True,
                             cutout_size_arcsec: float = CUTOUT_SIZE_ARCSEC,
                             sigma_threshold: float = 5.0,
-                            boundary_sigma: float = None,
+                            boundary_sigma: float | None = None,
                             record_optical: bool = True,
-                            optical_catalogue_path=paths.STRIPPED_CATALOGUE_PATH) -> pd.DataFrame:
+                            output_path = None) -> pd.DataFrame:
     """
     Convenience entry point: load the source catalogue once, run both `flag_foreign_components` and
     `flag_cropped_sources`, and return the combined per-source flags aligned to the (resolved) source order used by the
@@ -509,13 +509,15 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
         Side length of the square cutout in arcsec, by default 120.0.
     sigma_threshold : float, optional
         Foreign-component detection threshold, by default 5.0.
-    boundary_sigma : float, optional
+    boundary_sigma : float | None, optional
         Iso-contour level for the cropping test; by default None (bare FWHM ellipse).
     record_optical : bool, optional
         Also record the soft `foreign_shares_optical_id` mis-split cross-check (see :func:`add_optical_missplit_flag`),
         by default True. Does not change any contamination decision.
     optical_catalogue_path : Path, optional
         Source catalogue carrying `ID_NAME` for the optical cross-check, by default `paths.STRIPPED_CATALOGUE_PATH`.
+    output_path : Path | None, optional
+        Path to save the resulting DataFrame, by default None (no save).
 
     Returns
     -------
@@ -544,13 +546,19 @@ def compute_from_catalogues(source_catalogue_path=paths.STRIPPED_CATALOGUE_PATH,
                                    boundary_sigma=boundary_sigma, components=components)
     flags = pd.concat([foreign, cropped], axis=1)
     if record_optical:
-        flags = add_optical_missplit_flag(flags, source_name, optical_catalogue_path)
+        flags = add_optical_missplit_flag(flags, source_name, source_catalogue_path)
     flags.insert(0, "index", np.arange(len(flags)))
     flags.insert(1, "source_name", _as_str_array(source_name))
     flags.insert(2, "ra", source_ra)
     flags.insert(3, "dec", source_dec)
     flags.insert(4, "peak_flux_mjy", peak_flux_mjy)
     flags.insert(5, "isl_rms_mjy", isl_rms_mjy)
+    
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Writing cutout-quality flags to {output_path}...")
+        flags.to_csv(output_path, index=False)
     return flags
 
 
@@ -559,12 +567,13 @@ if __name__ == "__main__":
     parser.add_argument("--sigma", type=float, default=5.0,
                         help="Foreign-component detection threshold (default 5).")
     parser.add_argument("--boundary-sigma", type=float, default=None,
-                        help="Iso-contour level for the cropping test; omitted uses the FWHM ellipse.")
+                        help="Iso-contour level for the cropping test; omitted uses the FWHM ellipse. Default None.")
     parser.add_argument("--cutout-arcsec", type=float, default=CUTOUT_SIZE_ARCSEC,
                         help=f"Square cutout side length in arcsec (default {CUTOUT_SIZE_ARCSEC:g}).")
     parser.add_argument("--output", type=str,
                         default=str(paths.PREPROCESSING_PARENT / "cutout_quality_flags.csv"),
-                        help="Where to write the per-source flag CSV.")
+                        help="Where to write the per-source flag CSV. By default, writes to the preprocessing parent "
+                        "directory at `cutout_quality_flags.csv`.")
     parser.add_argument("--no-optical", action="store_true",
                         help="Skip the soft optical mis-split cross-check (foreign_shares_optical_id).")
     args = parser.parse_args()
@@ -572,6 +581,5 @@ if __name__ == "__main__":
     result = compute_from_catalogues(cutout_size_arcsec=args.cutout_arcsec,
                                      sigma_threshold=args.sigma,
                                      boundary_sigma=args.boundary_sigma,
-                                     record_optical=not args.no_optical)
-    result.to_csv(args.output, index=False)
-    logger.info(f"Saved contamination + cropping flags to {args.output}")
+                                     record_optical=not args.no_optical,
+                                     output_path=args.output)

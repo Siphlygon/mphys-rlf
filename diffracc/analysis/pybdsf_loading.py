@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from astropy.io import fits
 
+from ..data.cutout_quality import compute_from_catalogues
 from ..las.component_loading import ComponentLoader
 from ..utils import paths
 from ..utils.logger import get_logger
@@ -28,6 +29,7 @@ logger = get_logger("analysis.pybdsf_loading")
 DEFAULT_LOG_DIR = paths.PYBDSF_LOG_PARENT / "dr2_cutouts_download"
 DEFAULT_LOG_TABLE_CSV = paths.STORAGE_PARENT / "pybdsf_logs_extended.csv"
 DEFAULT_COMPONENTS_PKL = paths.STORAGE_PARENT / "dr2_cutouts_pybdsf.pkl"
+DEFAULT_QUALITY_CSV = paths.PREPROCESSING_PARENT / "cutout_quality_flags.csv"
 
 # Regex used to list the per-cutout logs and recover the cutout index from the filename (first capture group).
 _CUTOUT_LOG_PATTERN = r".*?cutout(\d+)\.fits\.pybdsf\.log$"
@@ -146,6 +148,62 @@ def load_catalogue_values(path: Path | str = paths.STRIPPED_CATALOGUE_PATH) -> p
     return df
 
 
+def load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
+    """
+    Load the authoritative per-cutout contamination / cropping flags produced by `diffracc.data.cutout_quality`.
+
+    `foreign_contaminant` marks a cutout containing a foreign (different `Parent_Source`) radio component whose fitted
+    ellipse overlaps the frame and whose peak clears 5 sigma of the source island rms; `cropped` marks a cutout whose
+    own emission crosses the frame. These are the definitive flags - the frame-overlap + `Parent_Source` test - used to
+    restrict the PyBDSF analyses to clean cutouts, rather than a beam/size association approximation.
+
+    Parameters
+    ----------
+    path : Path | str, optional
+        Path to the flags CSV, by default `DEFAULT_QUALITY_CSV`.
+
+    Returns
+    -------
+    pd.DataFrame
+        The flag columns indexed by cutout number (`index`); notably the booleans `foreign_contaminant` and `cropped`.
+    """
+    if not Path(path).exists():
+        logger.info(f"Cutout-quality flags CSV {path} not found; building it from the cutout-quality analysis.")
+        compute_from_catalogues(output_path=path)
+    logger.info(f"Loading cutout-quality flags from {path}")
+    return pd.read_csv(path, index_col="index")
+
+
+def select_clean(df: pd.DataFrame, quality: pd.DataFrame, drop_cropped: bool = True) -> pd.DataFrame:
+    """
+    Restrict a cutout-indexed frame to the clean cutouts - those not flagged foreign-contaminated (and, by default, not
+    cropped) by `load_cutout_quality`.
+
+    Applying this to the log/catalogue join and the component summary before the analyses isolates PyBDSF's behaviour on
+    the target source from foreign flux, matching the exclusion the LAS method uses. Rows of `df` with no entry in
+    `quality` are dropped (treated as not-known-clean).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Any frame indexed by cutout number.
+    quality : pd.DataFrame
+        A `load_cutout_quality` result.
+    drop_cropped : bool, optional
+        Also drop cropped cutouts, by default True.
+
+    Returns
+    -------
+    pd.DataFrame
+        `df` restricted to the clean cutout indices, with its columns unchanged.
+    """
+    bad = quality["foreign_contaminant"].astype(bool)
+    if drop_cropped:
+        bad = bad | quality["cropped"].astype(bool)
+    clean_index = quality.index[~bad]
+    return df.loc[df.index.isin(clean_index)]
+
+
 def _summarise_components(rows: np.recarray) -> dict[str, float]:
     """
     Reduce one source's component record array to the per-source scalars the analysis uses.
@@ -197,6 +255,8 @@ def _summarise_components(rows: np.recarray) -> dict[str, float]:
         "n_point": int(is_point.sum()),                                # number of point components (minor=0, major=0)
         "n_below_5sigma": int((~keep_snr5).sum()),                     # number of components below 5-sigma significance
         "min_snr": float(snr.min()) if len(snr) else float("nan"),     # the weakest component's SNR
+        "max_peak_flux": float(peak.max()) * 1e3,                      # the strongest component's peak flux, in mJy
+        "max_peak_rms": float(isl_rms[np.argmax(peak)]) * 1e3,         # the island rms of the strongest component
     }
 
 
@@ -306,6 +366,11 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
     """
     logger.info(f"Joining {len(logs)} logs and {len(cat)} catalogue rows on cutout index")
     joined = logs.join(cat, how="inner")
+    
+    # make every column name lowercase; allows names that match the official components catalogue in the `las` pipeline,
+    # while retaining lower-case names for our custom fields here.
+    joined.columns = joined.columns.str.lower()
+    
     corr = flux_alignment_corr(joined)
     if corr < warn_below:
         logger.warning("Flux-alignment correlation is %.3f (< %.2f): logs and catalogue may be misaligned.",
