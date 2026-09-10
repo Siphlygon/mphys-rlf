@@ -32,10 +32,6 @@ DEFAULT_COMPONENTS_PKL = paths.STORAGE_PARENT / "dr2_cutouts_pybdsf.pkl"
 # Regex used to list the per-cutout logs and recover the cutout index from the filename (first capture group).
 _CUTOUT_LOG_PATTERN = r".*?cutout(\d+)\.fits\.pybdsf\.log$"
 
-# TODO: is this needed?
-# Column layout of one component row in the pkl, in degrees for the axes.
-_C_TFLUX, _C_RA, _C_DEC, _C_DC_MAJ, _C_DC_MIN, _C_PA = range(6)
-
 # Detection threshold PyBDSF applied (thresh_pix); the island threshold thresh_isl was 4. Used only to report the
 # implied 5-sigma peak level alongside a source, never to re-decide detection.
 THRESH_PIX = 5.0
@@ -93,7 +89,9 @@ def build_log_table(log_dir: Path | str = DEFAULT_LOG_DIR,
     Returns
     -------
     pd.DataFrame
-        The per-cutout fields, indexed by cutout number (`index`), sorted, with failed-to-parse logs dropped.
+        The per-cutout fields, indexed by cutout number (`index`), sorted, with failed-to-parse logs dropped: 
+        `sum_flux` (Jy), `model_flux_main` (Jy), `model_flux_allscales` (Jy), `mean` (mJy), `rms` (mJy),
+        `sigma_clipped_mean` (mJy), `sigma_clipped_rms` (mJy), `const_rms` (bool), `oned_warning` (bool).
     """
     if out_csv is not None and Path(out_csv).exists() and not overwrite:
         logger.info("Loading cached log table from %s", out_csv)
@@ -140,40 +138,64 @@ def load_catalogue_values(path: Path | str = paths.STRIPPED_CATALOGUE_PATH) -> p
         data = d[d["Resolved"]]
         df = pd.DataFrame({
             "peak_flux": data["Peak_flux"],
-            "rms": data["Isl_rms"],
+            "isl_rms": data["Isl_rms"],
             "total_flux": data["Total_flux"],
         }, dtype=float)
     df.index.name = "index"
     return df
 
 
-def _summarise_components(rows: np.ndarray) -> dict[str, float]:
+def _summarise_components(rows: np.recarray) -> dict[str, float]:
     """
-    Reduce one source's component array to the per-source scalars the analysis uses.
+    Reduce one source's component record array to the per-source scalars the analysis uses.
 
     A 1-D degenerate ("ridge") component has a deconvolved minor axis of exactly zero but a non-zero major axis - this
     is what is meant by "1-D" in the PyBDSF log. A point component has both axes zero.
 
     Parameters
     ----------
-    rows : np.ndarray
-        The source's components, shape `(n, 6)`: `Total_flux` (Jy), RA, DEC, `DC_Maj`, `DC_Min`, PA (degrees).
+    rows : np.recarray
+        The source's components, a structured array whose fields follow `component_loading._COMPONENT_COLUMNS`
+        (accessed here by name: `DC_Maj`, `DC_Min`, `Total_flux`).
 
     Returns
     -------
     dict[str, float]
-        `n_comp`, total `model_flux_mjy`, `model_flux_no_oned_mjy` (excluding ridge components), and the ridge/point
-        counts `n_oned` / `n_point`.
+        Per-source scalars, all in one row:
+          * `n_comp`, `n_main` (Wave_id==0), `n_atrous` (Wave_id>0), `n_islands` (distinct Isl_id);
+          * fluxes in mJy: `model_flux_mjy` (all), `model_flux_no_oned_mjy` (excluding 1-D ridges),
+            `model_flux_snr5_mjy` (only components at >=5 sigma), `atrous_flux_mjy` (Wave_id>0 components);
+          * counts: `n_oned` (ridges) split into `n_ridge_atrous` / `n_ridge_main`, `n_point`, `n_below_5sigma`;
+          * `min_snr`, the weakest component's Peak_flux/Isl_rms.
     """
-    rows = np.asarray(rows, dtype=float)
-    is_ridge = (rows[:, _C_DC_MIN] == 0) & (rows[:, _C_DC_MAJ] > 0)
-    is_point = (rows[:, _C_DC_MIN] == 0) & (rows[:, _C_DC_MAJ] == 0)
+    maj = np.asarray(rows["DC_Maj"], dtype=float)
+    minor = np.asarray(rows["DC_Min"], dtype=float)
+    tflux = np.asarray(rows["Total_flux"], dtype=float)
+    peak = np.asarray(rows["Peak_flux"], dtype=float)
+    isl_rms = np.asarray(rows["Isl_rms"], dtype=float)
+    wave = np.asarray(rows["Wave_id"], dtype=int)
+
+    is_ridge = (minor == 0) & (maj > 0)
+    is_point = (minor == 0) & (maj == 0)
+    is_atrous = wave > 0
+    # Per-component significance; a zero island rms (should not occur) maps to +inf so it is never counted sub-threshold.
+    snr = np.divide(peak, isl_rms, out=np.full_like(peak, np.inf), where=isl_rms > 0)
+    keep_snr5 = snr >= THRESH_PIX
     return {
-        "n_comp": len(rows),
-        "model_flux_mjy": rows[:, _C_TFLUX].sum() * 1e3,
-        "model_flux_no_oned_mjy": rows[~is_ridge, _C_TFLUX].sum() * 1e3,
-        "n_oned": int(is_ridge.sum()),
-        "n_point": int(is_point.sum()),
+        "n_comp": len(rows),                                           # total number of components
+        "n_main": int((~is_atrous).sum()),                             # number of Wave_id==0 components
+        "n_atrous": int(is_atrous.sum()),                              # number of Wave_id>0 components
+        "n_islands": int(np.unique(np.asarray(rows["Isl_id"])).size),  # number of distinct Isl_id
+        "model_flux_mjy": tflux.sum() * 1e3,                           # total flux of all components, in mJy
+        "model_flux_no_oned_mjy": tflux[~is_ridge].sum() * 1e3,        # total flux excluding 1-D ridges, in mJy
+        "model_flux_snr5_mjy": tflux[keep_snr5].sum() * 1e3,           # total flux of components at >=5 sigma, in mJy
+        "atrous_flux_mjy": tflux[is_atrous].sum() * 1e3,               # total flux of Wave_id>0 components, in mJy
+        "n_oned": int(is_ridge.sum()),                                 # number of 1-D ridges (minor=0, major>0)
+        "n_ridge_atrous": int((is_ridge & is_atrous).sum()),           # number of 1-D ridges that are Wave_id>0
+        "n_ridge_main": int((is_ridge & ~is_atrous).sum()),            # number of 1-D ridges that are Wave_id==0
+        "n_point": int(is_point.sum()),                                # number of point components (minor=0, major=0)
+        "n_below_5sigma": int((~keep_snr5).sum()),                     # number of components below 5-sigma significance
+        "min_snr": float(snr.min()) if len(snr) else float("nan"),     # the weakest component's SNR
     }
 
 
@@ -210,9 +232,13 @@ def load_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> pd.DataFrame:
     return df.sort_index()
 
 
-def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, np.ndarray]:
+def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, pd.DataFrame]:
     """
-    Load the components as raw `(n, 6)` arrays keyed by cutout index, for inspecting a single source.
+    Load the components keyed by cutout index, one named-column DataFrame per source, for inspecting a single source.
+
+    Each source's structured record array (fields per `component_loading._COMPONENT_COLUMNS`) is returned as a
+    DataFrame, so columns keep their names and native dtypes (the numeric columns stay numeric; `S_code` stays a
+    string) rather than being coerced to a single dtype.
 
     Parameters
     ----------
@@ -221,11 +247,11 @@ def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, 
 
     Returns
     -------
-    dict[int, np.ndarray]
-        Mapping of cutout index to its component array (`Total_flux`, RA, DEC, `DC_Maj`, `DC_Min`, PA).
+    dict[int, pd.DataFrame]
+        Mapping of cutout index to a DataFrame of its components, columns named per `_COMPONENT_COLUMNS`.
     """
     obj = pd.read_pickle(path)
-    return {int(idx): np.asarray(rows, dtype=float) for idx, rows in zip(obj["indices"], obj["components"])}
+    return {int(idx): pd.DataFrame.from_records(rows) for idx, rows in zip(obj["indices"], obj["components"])}
 
 
 def flux_alignment_corr(joined: pd.DataFrame) -> float:
@@ -259,9 +285,12 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
     Parameters
     ----------
     logs : pd.DataFrame
-        The (extended) log table from `build_log_table`.
+        The (extended) log table from `build_log_table`, carrying `sum_flux` (Jy), `model_flux_main` (Jy) and
+        `model_flux_allscales` (Jy), `raw_mean` (mJy), `raw_rms` (mJy), `sigma_clipped_mean` (mJy), `sigma_clipped_rms`
+        (mJy), `const_rms` (bool) and `oned_warning` (bool).
     cat : pd.DataFrame
-        The catalogue values from `load_catalogue_values`.
+        The catalogue values from `load_catalogue_values`, carrying `total_flux` (mJy), `peak_flux` (mJy) and `isl_rms`
+        (mJy).
     warn_below : float, optional
         Log a warning if `flux_alignment_corr` falls below this, by default `0.5`.
 
