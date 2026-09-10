@@ -107,8 +107,7 @@ class TestEstimateSize:
         Test that estimate_size returns the same buffered length as MakeShape(...).length() for the given components.
         """
         dc_maj_deg, dc_min_deg = 0.01, 0.005
-        components = [(10.0, 10.0, 20.0, dc_maj_deg, dc_min_deg, 0.0)]
-
+        components = pd.DataFrame([{'RA': 10.0, 'DEC': 20.0, 'DC_Maj': dc_maj_deg, 'DC_Min': dc_min_deg, 'PA': 0.0}])
         size = MakeShape.estimate_size(components)
 
         expected = 2 * (dc_maj_deg * 3600 + 0.1)

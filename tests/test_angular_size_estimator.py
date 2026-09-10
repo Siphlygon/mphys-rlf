@@ -34,15 +34,25 @@ class TestEstimateAngularSizesCache:
 class TestEstimateAngularSizesFullPipeline:
     """Covers the non-cache branch: scanning FITS files, extracting/filtering components, and estimating sizes."""
 
-    def _write_component_fits(self, path, fluxes, ra, dec, dc_maj, dc_min, pa):
+    def _write_component_fits(self, path,
+                              ra=[0.0], dec=[0.0], dc_maj=[0.0], dc_min=[0.0], pa=[0.0],
+                              gaus_id=[""], isl_id=[""], source_id=[""], wave_id=[""], s_code=[""],
+                              tot_fluxes=[0.0], peak_fluxes=[0.0], isl_rms=[0.0]):
         """Helper method to write a FITS file with the specified component data for testing."""
         cols = fits.ColDefs([
-            fits.Column(name='Total_flux', format='E', array=np.asarray(fluxes, dtype=np.float32)),
             fits.Column(name='RA', format='E', array=np.asarray(ra, dtype=np.float32)),
             fits.Column(name='DEC', format='E', array=np.asarray(dec, dtype=np.float32)),
             fits.Column(name='DC_Maj', format='E', array=np.asarray(dc_maj, dtype=np.float32)),
             fits.Column(name='DC_Min', format='E', array=np.asarray(dc_min, dtype=np.float32)),
             fits.Column(name='PA', format='E', array=np.asarray(pa, dtype=np.float32)),
+            fits.Column(name='Gaus_id', format='A', array=np.asarray(gaus_id, dtype=str)),
+            fits.Column(name='Isl_id', format='A', array=np.asarray(isl_id, dtype=str)),
+            fits.Column(name='Source_id', format='A', array=np.asarray(source_id, dtype=str)),
+            fits.Column(name='Wave_id', format='A', array=np.asarray(wave_id, dtype=str)),
+            fits.Column(name='S_Code', format='A', array=np.asarray(s_code, dtype=str)),
+            fits.Column(name='Total_flux', format='E', array=np.asarray(tot_fluxes, dtype=np.float32)),
+            fits.Column(name='Peak_flux', format='E', array=np.asarray(peak_fluxes, dtype=np.float32)),
+            fits.Column(name='Isl_rms', format='E', array=np.asarray(isl_rms, dtype=np.float32)),
         ])
         hdu = fits.BinTableHDU.from_columns(cols)
         fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path)
@@ -56,13 +66,17 @@ class TestEstimateAngularSizesFullPipeline:
         # 2*DC_Maj_deg*3600 directly (no MakeShape/_ellipse +0.1 arcsec buffer).
         dc_maj_deg_1 = 0.002  # 7.2 arcsec
         self._write_component_fits(fits_dir / "source_1.fits",
-                                   fluxes=[1.0], ra=[10.0], dec=[20.0],
+                                   source_id=["source_1"], wave_id=["wave_1"], s_code=["s_code_1"],
+                                   tot_fluxes=[1.0], peak_fluxes=[1.0], isl_rms=[0.1],
+                                   ra=[10.0], dec=[20.0],
                                    dc_maj=[dc_maj_deg_1], dc_min=[0.001], pa=[0.0])
 
         # source_2: two equal-flux, widely-separated (1 degree = 3600 arcsec) components both survive filtering ->
         # goes through MakeShape, and the ~3600 arcsec separation should dominate the estimated size.
         self._write_component_fits(fits_dir / "source_2.fits",
-                                   fluxes=[1.0, 1.0], ra=[0.0, 1.0], dec=[0.0, 0.0],
+                                   source_id=["source_2", "source_2"], wave_id=["wave_2", "wave_2"], s_code=["s_code_2", "s_code_2"],
+                                   tot_fluxes=[1.0, 1.0], peak_fluxes=[1.0, 1.0], isl_rms=[0.1, 0.1],
+                                   ra=[0.0, 1.0], dec=[0.0, 0.0],
                                    dc_maj=[0.0001, 0.0001], dc_min=[0.00005, 0.00005], pa=[0.0, 0.0])
 
         output_file = tmp_path / "sizes.csv"
@@ -71,10 +85,11 @@ class TestEstimateAngularSizesFullPipeline:
         # load_from_catalogue=False keeps the pipeline on the FITS-extraction path (these tmp files), rather than the
         # real DR2 component catalogue.
         indices, sizes = estimator.estimate_angular_sizes(fits_dir=fits_dir, output_file=output_file,
-                                                         load_from_catalogue=False)
+                                                          read_from_file=True, load_from_catalogue=False)
 
         assert set(indices) == {1, 2}
         by_index = dict(zip(indices, sizes))
+        print(by_index)
         assert by_index[1] == pytest.approx(2 * dc_maj_deg_1 * 3600, rel=1e-3)
         assert by_index[2] == pytest.approx(3600.0, rel=0.01)
         assert output_file.exists()

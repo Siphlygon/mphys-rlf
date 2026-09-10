@@ -98,8 +98,9 @@ class MakeShape:
 
         Parameters
         ----------
-        components : array-like
-            The source's components, as rows of `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)`.
+        components : np.recarray | pd.DataFrame
+            The source's components as a structured array (or DataFrame) with the fields `RA`, `DEC`, `DC_Maj`,
+            `DC_Min`, `PA` (degrees); any further columns are ignored.
         n : int, optional
             The number of points used to sample each component ellipse's boundary, by default `DEFAULT_ELLIPSE_POINTS`.
 
@@ -108,10 +109,10 @@ class MakeShape:
         float
             The estimated angular size in arcseconds.
         """
-        comp = np.asarray(components, dtype=float)
-        assert comp.size, "No components to create shape from. Check the filtering step and the input data."
+        assert len(components), "No components to create shape from. Check the filtering step and the input data."
 
-        points = cls._ellipse_points(comp[:, 1], comp[:, 2], comp[:, 3], comp[:, 4], comp[:, 5], n)
+        points = cls._ellipse_points(components['RA'], components['DEC'], components['DC_Maj'],
+                                     components['DC_Min'], components['PA'], n)
         _, mdist2 = cls._furthest_pair(cls._hull_vertices(points))
         return float(np.sqrt(mdist2))
 

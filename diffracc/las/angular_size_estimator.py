@@ -62,34 +62,34 @@ class AngularSizeEstimator:
 
     # ---------- ASSEMBLING SIZE ESTIMATES ----------
     @staticmethod
-    def _size_worker(components: list[tuple] | None, n: int) -> float:
+    def _size_worker(components: np.recarray | None, n: int) -> float:
         """
         Estimate one source's angular size (arcseconds), applying the pipeline's per-source conventions and delegating
         the geometry to `MakeShape`. A staticmethod so it can be pickled and dispatched to a `ProcessPoolExecutor`.
 
         Parameters
         ----------
-        components : list[tuple] | None
-            The filtered components, each a `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)` tuple. `None` (a failed file
-            read that `RecursiveFileAnalyzer` turned into `None`) yields `NaN` rather than crashing the whole run.
+        components : np.recarray | None
+            The source's components as a structured record array with fields per `_COMPONENT_COLUMNS` (accessed by name
+            here: `DC_Maj`). `None` (a failed file read that `RecursiveFileAnalyzer` turned into `None`) yields `NaN`
+            rather than crashing the whole run.
         n : int
             Number of boundary points per ellipse.
 
         Returns
         -------
         float
-            The estimated angular size in arcseconds, or `NaN` if `components` is `None`.
+            The estimated angular size in arcseconds, or `NaN` if `components` is `None` or empty.
         """
-        if components is None:
+        if components is None or len(components) == 0:
             return float("nan")
-        comp = np.asarray(components, dtype=float)
 
         # A single surviving component: return twice the (unbuffered) major axis directly. This is a pipeline
         # convention that deliberately skips the ellipse-buffer path MakeShape uses for multi-component shapes.
-        if len(comp) == 1:
-            return 2 * comp[0, 3] * 3600
+        if len(components) == 1:
+            return 2 * float(components['DC_Maj'][0]) * 3600
 
-        return MakeShape.estimate_size(comp, n)
+        return MakeShape.estimate_size(components, n)
 
     def _estimate_sizes(self, components_list: list[tuple] | np.ndarray) -> list[float]:
         """

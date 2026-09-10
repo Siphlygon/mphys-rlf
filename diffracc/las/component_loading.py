@@ -3,8 +3,10 @@ Loading and flux-filtering the radio-source components that `AngularSizeFinder` 
 
 `ComponentLoader` can extract and flux-filter components from PyBDSF catalogue FITS files, assemble them from the DR2
 value-added component catalogue by matching source names, or reload a previously consolidated set from a pickle cache.
-Every route returns the same per-source component lists (rows of `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)`) and their
-source indices.
+
+The PyBDSF-FITS route returns per-source component lists whose columns follow `_COMPONENT_COLUMNS`, plus their source
+indices. (The value-added-catalogue route currently emits only the geometry+flux subset - see
+`_load_components_from_catalogue` - and needs reconciling with `_COMPONENT_COLUMNS`.)
 """
 import os
 import pickle
@@ -18,6 +20,18 @@ from tqdm import tqdm
 from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
+
+# Which columns to extract from the PyBDSF FITS table, and the order they take in every component tuple. This MUST be an
+# ordered sequence, not a set: components are stored positionally (in the pickle and downstream), so a set - whose
+# string iteration order changes between processes - would make the column at a given index differ from run to run.
+_COMPONENT_COLUMNS = (
+    "RA", "DEC", "DC_Maj", "DC_Min", "PA",                    # geometry used for MakeShape
+    "Gaus_id", "Isl_id", "Source_id", "Wave_id", "S_code",    # identification and classification
+    "Total_flux", "Peak_flux", "Isl_rms",                     # measured PyBDSF properties
+)
+
+# Column name -> position in each component tuple, so consumers index by name instead of a magic number.
+_COMPONENT_INDEX = {name: i for i, name in enumerate(_COMPONENT_COLUMNS)}
 
 
 class ComponentLoader:
@@ -49,9 +63,9 @@ class ComponentLoader:
         self.rfa = RecursiveFileAnalyzer(self.root_dir)
 
     @staticmethod
-    def _read_and_filter(file_path: Path, flux_threshold: float) -> list[tuple]:
+    def _read_and_filter(file_path: Path, flux_threshold: float) -> np.recarray:
         """
-        Read one PyBDSF catalogue FITS file and return its flux-filtered components.
+        Read one PyBDSF catalogue FITS file and return its components as a structured record array.
 
         A staticmethod taking `flux_threshold` explicitly so it is picklable (i.e., shareable across processes) and can
         be dispatched to `RecursiveFileAnalyzer`'s process mode for parallel parsing.
@@ -61,20 +75,21 @@ class ComponentLoader:
         file_path : Path
             The path to the FITS file containing the component data for a single source.
         flux_threshold : float
-            The fraction of total flux to keep when filtering (see `_filter_by_flux`).
+            The fraction of total flux to keep when filtering (see `_filter_by_flux`). Currently unused - flux filtering
+            is disabled - but retained so re-enabling `_filter_by_flux` needs no signature change.
 
         Returns
         -------
-        list[tuple]
-            The filtered components, each a `(Total_flux, RA, DEC, DC_Maj, DC_Min, PA)` tuple.
+        np.recarray
+            The source's components, a structured record array with one field per `_COMPONENT_COLUMNS`.
         """
-        # Fastest way to read certain columns from the table
+        # Read the needed columns into a structured record array. This keeps each column's native dtype - so the string
+        # S_code does not coerce the numeric columns to strings and gives name-based access.
         with fits.open(file_path, memmap=False) as hdul:
             data = hdul[1].data
-            components = list(zip(data["Total_flux"], data["RA"], data["DEC"],
-                                  data["DC_Maj"], data["DC_Min"], data["PA"]))
+            components = np.rec.fromarrays([data[col] for col in _COMPONENT_COLUMNS], names=list(_COMPONENT_COLUMNS))
 
-        return ComponentLoader._filter_by_flux(components, flux_threshold)
+        return components
 
     @staticmethod
     def _filter_by_flux(components: list[tuple], flux_threshold: float) -> list[tuple]:
@@ -85,8 +100,7 @@ class ComponentLoader:
         Parameters
         ----------
         components : list[tuple]
-            The components, each a tuple whose first element is the total flux, followed by RA, DEC, major axis, minor
-            axis, and position angle.
+            The components, each a tuple laid out as `_COMPONENT_COLUMNS`.
         flux_threshold : float
             The fraction of total flux to keep. The dimmest components are removed while the cumulative flux of those
             kept stays above this fraction.
@@ -98,10 +112,11 @@ class ComponentLoader:
         """
         assert components, "No components found in the data. Check the FITS file and the expected column names."
 
+        flux = _COMPONENT_INDEX["Total_flux"]
         # Sort components by total flux in descending order (a new list, leaving the caller's untouched)
-        components = sorted(components, key=lambda c: c[0], reverse=True)
+        components = sorted(components, key=lambda c: c[flux], reverse=True)
 
-        sum_flux = sum(component[0] for component in components)
+        sum_flux = sum(component[flux] for component in components)
         if sum_flux == 0:
             raise ValueError("Total flux of the source is zero. Cannot filter components based on flux threshold.")
 
@@ -109,7 +124,7 @@ class ComponentLoader:
         filtered_components = []
         cumulative_flux = 0
         for component in components:
-            cumulative_flux += component[0]
+            cumulative_flux += component[flux]
             filtered_components.append(component)
             if cumulative_flux / sum_flux >= flux_threshold:
                 break
@@ -183,24 +198,23 @@ class ComponentLoader:
         with fits.open(component_catalogue_path, memmap=False) as hdul:
             component_data = hdul[1].data
 
-            # Pull the six columns we need once, as a single contiguous (n_components, 6) float array. The downstream
-            # geometry (MakeShape) was written for PyBDSF cutout catalogues, whose DC_Maj/DC_Min are in DEGREES (it
-            # multiplies them by 3600). This value-added component catalogue instead stores its axes in ARCSEC (and
-            # carries no TUNIT to flag it), so convert them to degrees here to keep that convention.
-            component_values = np.column_stack([
+            # The downstream geometry (MakeShape) was written for PyBDSF cutout catalogues, whose DC_Maj/DC_Min are in
+            # DEGREES (it multiplies them by 3600). This value-added component catalogue instead stores its axes in
+            # ARCSEC, so convert them to degrees here to keep that convention.
+            component_values = np.rec.fromarrays([
                 np.asarray(component_data['Total_flux'], dtype=float),
                 np.asarray(component_data['RA'], dtype=float),
                 np.asarray(component_data['DEC'], dtype=float),
                 np.asarray(component_data['DC_Maj'], dtype=float) / 3600.0,
                 np.asarray(component_data['DC_Min'], dtype=float) / 3600.0,
                 np.asarray(component_data['PA'], dtype=float),
-            ])
+            ], names=["Total_flux", "RA", "DEC", "DC_Maj", "DC_Min", "PA"])
             parent_source = np.asarray(component_data['Parent_Source'])
 
         # Group every component's row position by its Parent_Source in a single pass, as dicts (O(1) lookup).
         rows_by_source = pd.Series(np.arange(len(parent_source))).groupby(parent_source).indices
 
-        empty = np.empty((0, 6), dtype=float)
+        empty = component_values[:0]  # a 0-length record array carrying the same named fields
         components_list = np.empty(len(source_names), dtype=object)
         missing = 0
         for i, source_name in tqdm(enumerate(source_names), desc="Matching components to sources..."):
@@ -264,8 +278,11 @@ class ComponentLoader:
                                                        pattern=pattern,
                                                        return_nums=True).numbers
             components_list = self._load_components_from_catalogue(fits_indices)
-        else:
-            components_list, fits_indices = self._extract_components(fits_dir, pattern)
+            return components_list, fits_indices
+
+        # Otherwise, extract the components from the PyBDSF catalogue FITS files under `fits_dir`.
+        self.logger.info(f"Extracting components from FITS files under {fits_dir if fits_dir else self.root_dir}")
+        components_list, fits_indices = self._extract_components(fits_dir, pattern)
 
         if components_cache is not None:
             self.logger.info(f"Consolidating extracted components to {components_cache}")
