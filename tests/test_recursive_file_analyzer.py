@@ -221,41 +221,8 @@ class TestGetUnwrappedList:
             rfa.get_unwrapped_list(pattern=r".*\.fits$", return_nums=False, numeric_range=(0, 10))
 
 
-class Test_Batcher:
-    """Tests for the _batcher method of the RecursiveFileAnalyzer class, which splits an iterable into batches."""
-
-    def _get_batcher(self, tmp_path):
-        """Helper method to create a RecursiveFileAnalyzer instance and return its _batcher method."""
-        return RecursiveFileAnalyzer(tmp_path)._batcher
-
-    def test_splits_into_exact_batches(self, tmp_path):
-        """
-        Test that an iterable is split into batches of the specified size when the total number of items is divisible by
-        the batch size.
-        """
-        batcher = self._get_batcher(tmp_path)
-        batches = list(batcher(range(6), 2))
-        assert batches == [[0, 1], [2, 3], [4, 5]]
-
-    def test_includes_final_partial_batch(self, tmp_path):
-        """Test that the final batch is included even if it has fewer items than the specified batch size."""
-        batcher = self._get_batcher(tmp_path)
-        batches = list(batcher(range(5), 2))
-        assert batches == [[0, 1], [2, 3], [4]]
-
-    def test_empty_iterable_yields_no_batches(self, tmp_path):
-        """Test that an empty iterable yields no batches."""
-        batcher = self._get_batcher(tmp_path)
-        assert list(batcher([], 3)) == []
-
-    def test_batch_size_one_yields_singletons(self, tmp_path):
-        """Test that a batch size of one yields each item in its own batch."""
-        batcher = self._get_batcher(tmp_path)
-        assert list(batcher([1, 2], 1)) == [[1], [2]]
-
-
-class TestProcessFileAndBatch:
-    """Tests for the _process_file and _process_batch methods of the RecursiveFileAnalyzer class."""
+class TestProcessFile:
+    """Tests for the _process_file method of the RecursiveFileAnalyzer class."""
 
     def test_process_file_returns_function_result(self, tmp_path):
         """Test that _process_file returns the result of applying the provided function to the file path."""
@@ -272,24 +239,6 @@ class TestProcessFileAndBatch:
         result = rfa._process_file("x", _raise)
         assert result is None
 
-    def test_process_batch_applies_function_to_each_and_preserves_order(self, tmp_path):
-        """Test that _process_batch applies the function to each item and preserves the order of results."""
-        rfa = RecursiveFileAnalyzer(tmp_path)
-        results = rfa._process_batch([1, 2, 3], lambda x: x * 10)
-        assert results == [10, 20, 30]
-
-    def test_process_batch_returns_none_for_failing_items_without_stopping(self, tmp_path):
-        """Test that _process_batch returns None for items where the function raises an exception, without stopping."""
-        rfa = RecursiveFileAnalyzer(tmp_path)
-
-        def _fn(x):
-            if x == 2:
-                raise ValueError("boom")
-            return x
-
-        results = rfa._process_batch([1, 2, 3], _fn)
-        assert results == [1, None, 3]
-
 
 class TestRunPipeline:
     """Tests for the run_pipeline method of the RecursiveFileAnalyzer class."""
@@ -299,42 +248,23 @@ class TestRunPipeline:
         for name, content in contents.items():
             (tmp_path / name).write_text(content)
 
-    def test_batch_mode_applies_function_to_every_matched_file(self, tmp_path):
-        """Test that in batch mode, the function is applied to every matched file and results are returned."""
+    def test_file_mode_applies_function_to_every_matched_file(self, tmp_path):
+        """Test that in file mode, the function is applied to every matched file and results are returned."""
         self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2", "c.txt": "3"})
         rfa = RecursiveFileAnalyzer(tmp_path)
         result = rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$",
-                                  mode="batch", progress_bar_desc=None)
+                                  mode="file", progress_bar_desc=None)
         assert sorted(result.results.tolist()) == [1, 2, 3]
         assert result.numbers is None
-
-    def test_file_mode_applies_function_to_every_matched_file(self, tmp_path):
-        """Test that in file mode, the function is applied to every matched file and results are returned."""
-        self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2"})
-        rfa = RecursiveFileAnalyzer(tmp_path)
-        result = rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$",
-                                  mode="file", progress_bar_desc=None)
-        assert sorted(result.results.tolist()) == [1, 2]
 
     def test_return_nums_true_gives_results_aligned_with_sorted_numbers(self, tmp_path):
         """Test that when return_nums=True, the results are aligned with the sorted numbers extracted from filenames."""
         self._make_text_files(tmp_path, {"item2.txt": "b", "item1.txt": "a", "item3.txt": "c"})
         rfa = RecursiveFileAnalyzer(tmp_path)
         result = rfa.run_pipeline(function=lambda p: p.read_text(), pattern=r".*?(\d+)\.txt$",
-                                  return_nums=True, mode="batch", num_workers=1, progress_bar_desc=None)
+                                  return_nums=True, mode="file", num_workers=1, progress_bar_desc=None)
         assert list(result.numbers) == [1, 2, 3]
         assert list(result.results) == ["a", "b", "c"]
-
-    def test_output_file_writes_results_instead_of_returning_them(self, tmp_path):
-        """Test that when an output file is specified, results are written to the file instead of being returned."""
-        self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2"})
-        rfa = RecursiveFileAnalyzer(tmp_path)
-        out_file = tmp_path / "out.log"
-        result = rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$",
-                                  mode="batch", output_file=out_file, progress_bar_desc=None)
-        assert result.results.tolist() == []
-        written = {line.strip() for line in out_file.read_text().splitlines()}
-        assert written == {"1", "2"}
 
     def test_file_paths_override_bypasses_scanning(self, tmp_path):
         """
@@ -345,7 +275,7 @@ class TestRunPipeline:
         rfa = RecursiveFileAnalyzer(tmp_path)
         override = [tmp_path / "a.txt", tmp_path / "b.txt"]
         result = rfa.run_pipeline(function=lambda p: int(p.read_text()), file_paths_override=override,
-                                  mode="batch", progress_bar_desc=None)
+                                  mode="file", progress_bar_desc=None)
         assert sorted(result.results.tolist()) == [1, 2]
 
     def test_file_paths_override_with_return_nums_raises(self, tmp_path):
@@ -370,16 +300,6 @@ class TestRunPipeline:
         with pytest.raises(AssertionError):
             rfa.run_pipeline(function=lambda p: p, pattern=r".*\.txt$", mode="not_a_mode", progress_bar_desc=None)
 
-    def test_batch_mode_default_progress_bar_desc_still_returns_results(self, tmp_path):
-        """Test that in batch mode, using the default progress_bar_desc still returns results correctly."""
-        # progress_bar_desc="default" exercises both the default-description string and the tqdm-wrapped
-        # iterator path in _run_batch_mode (run_pipeline's own default is None, which skips both).
-        self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2"})
-        rfa = RecursiveFileAnalyzer(tmp_path)
-        result = rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$", mode="batch",
-                                  progress_bar_desc="default")
-        assert sorted(result.results.tolist()) == [1, 2]
-
     def test_file_mode_default_progress_bar_desc_still_returns_results(self, tmp_path):
         """Test that in file mode, using the default progress_bar_desc still returns results correctly."""
         self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2"})
@@ -402,15 +322,15 @@ class TestRunPipeline:
         written = {line.strip() for line in out_file.read_text().splitlines()}
         assert written == {"1", "2"}
 
-    def test_output_file_with_default_progress_bar_desc_in_batch_mode(self, tmp_path):
+    def test_output_file_with_default_progress_bar_desc_in_file_mode(self, tmp_path):
         """
-        Test that when an output file is specified in batch mode with the default progress_bar_desc, results are written
+        Test that when an output file is specified in file mode with the default progress_bar_desc, results are written
         to the file instead of being returned.
         """
         self._make_text_files(tmp_path, {"a.txt": "1", "b.txt": "2"})
         rfa = RecursiveFileAnalyzer(tmp_path)
         out_file = tmp_path / "out.log"
-        rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$", mode="batch",
+        rfa.run_pipeline(function=lambda p: int(p.read_text()), pattern=r".*\.txt$", mode="file",
                          output_file=out_file, progress_bar_desc="default")
         written = {line.strip() for line in out_file.read_text().splitlines()}
         assert written == {"1", "2"}

@@ -774,6 +774,11 @@ class RecursiveFileAnalyzer:
         """
         assert mode in ("file", "process"), "Mode must be 'file or 'process'"
 
+        # Callers (e.g. ComponentLoader) pass num_workers=None to mean "use the default worker count"; honour that
+        # here rather than leaking None into ThreadPoolExecutor/ProcessPoolExecutor and the "%d workers" log line.
+        if num_workers is None:
+            num_workers = 8
+
         file_paths, numbers = self._resolve_file_paths(return_nums=return_nums,
                                                        numeric_range=numeric_range,
                                                        root_dir=root_dir,
