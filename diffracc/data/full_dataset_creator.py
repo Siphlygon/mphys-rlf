@@ -39,7 +39,7 @@ if __name__ == "__main__":
     if not args.no_download:
         # Step 1: Download the Hardcastle catalogue
         logger.info("Starting download of Hardcastle catalogue.")
-        CatalogueDownloader().main()
+        CatalogueDownloader().download_hardcastle_catalogue()
         logger.info("Finished download of Hardcastle catalogue.")
 
         # Step 2: Download the cutouts based on the catalogue positions

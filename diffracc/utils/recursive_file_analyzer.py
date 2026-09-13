@@ -1,16 +1,21 @@
 """
-This file defines the RecursiveFileAnalyzer class, which is used to analyze files in a directory recursively.
+Recursively analyse files in a directory, with optional regex pattern matching and numeric range filtering.
 
-It provides methods to get an unwrapped list of all files in the directory, optionally matching a regex pattern and
-filtering by a numeric range extracted from the file names. It also provides methods to process files in parallel using
-either file mode (one file per task) or batch mode (one batch per task), with options for progress display and output to
-a file.
+This module provides the `RecursiveFileAnalyzer` class, which can be used to recursively scan a directory for files,
+optionally filtering them based on a regex pattern and a numeric range extracted from the file names. It also provides
+methods to process files in parallel using different modes ('file' mode and 'process' mode), with options for progress
+display and output to a file.
+
+'file' mode uses `ThreadPoolExecutor` to process one file per task, which is very efficient for I/O-bound or light-parse
+work. 'process' mode uses `ProcessPoolExecutor` to process one file per task, which is suitable for CPU-bound work that 
+eleases the GIL but has more overhead due to process creation and inter-process communication. 
+
+This module is used extensively throughout the diffracc codebase for file access and processing.
 """
 from __future__ import annotations
 
 import os
 import re
-import time
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import nullcontext
@@ -27,8 +32,6 @@ from tqdm import tqdm
 from .logger import LoggingLevels, get_logger
 
 _module_logger = get_logger("RecursiveFileAnalyzer", LoggingLevels.DEBUG.value)
-
-
 
 
 def _safe_call(function: Callable, path: str | Path) -> Any:
@@ -219,7 +222,6 @@ else:
         numbers: object
 
 
-
 class RecursiveFileAnalyzer:
     """
     A class to recursively analyse files in a given directory. It provides methods to get an unwrapped list of all files
@@ -243,7 +245,6 @@ class RecursiveFileAnalyzer:
             path = Path(path)
         self.path = path
         self.logger = get_logger("RecursiveFileAnalyzer", log_level)
-
 
     @overload
     def get_unwrapped_list(self,
@@ -305,7 +306,6 @@ class RecursiveFileAnalyzer:
 
         file_paths = list(self._quick_scan(path=path, pattern=pattern, numeric_range=numeric_range))
         return ScanResult(paths=file_paths, numbers=None)
-
 
     @overload
     def _quick_scan(self,
@@ -406,34 +406,6 @@ class RecursiveFileAnalyzer:
                                 continue
                         yield Path(entry)
 
-
-    def _batcher(self, iterable: Iterable, batch_size: int) -> Iterator[list]:
-        """
-        A generator function to yield batches of a specified size from an iterable, necessary for `_run_batch_mode` to
-        schedule one batch per task.
-
-        Parameters
-        ----------
-        iterable : Iterable
-            The iterable to batch.
-        batch_size : int
-            The size of each batch.
-
-        Yields
-        ------
-        Iterator[list]
-            A batch of items from the iterable.
-        """
-        batch = []
-        for item in iterable:
-            batch.append(item)
-            if len(batch) == batch_size:
-                yield batch
-                batch = []
-        if batch:
-            yield batch
-
-
     def _process_file(self, path: str | Path, function: Callable) -> Any:
         """
         Processes a single file with the given function, handling exceptions and logging warnings if any occur.
@@ -467,49 +439,23 @@ class RecursiveFileAnalyzer:
             self.logger.warning("Error processing %s: %s", path, e)
             return None
 
-
-    def _process_batch(self, file_batch: Sequence[str | Path], function: Callable) -> list[Any]:
+    def _iter_file_mode(self,
+                        *args,
+                        function: Callable,
+                        num_workers: int = 8,
+                        file_paths: Sequence[str | Path],
+                        **kwargs) -> Iterator[Any]:
         """
-        Processes a batch of files with the given function, handling exceptions and logging warnings if any occur.
-        
-        Runs `_process_file` on each file in the batch, which handles exceptions and logging. Returns a list of results.
+        Stream per-file results in submission order, scheduling one file per task across a thread pool.
 
-        Parameters
-        ----------
-        file_batch : Sequence[str | Path]
-            A list of file paths to be processed.
-        function : Callable
-            The function (or partial) to apply to each file. See `_process_file` for details on the function.
+        This is a streaming primitive that yields results as they are completed in the same order as 'file_paths',
+        regardless of completion order. Any caller using this function can therefore e.g., copy the result into a 
+        preallocated array to avoid duplicating the list in memory. `_run_file_mode` instead materialises the results
+        into a list which is useful for e.g., when the full number of results is not known, or when one wants to avoid
+        handling the collection loop manually.
 
-        Returns
-        -------
-        list[Any]
-            A list of results from applying `function` to each file in the batch.
-        """
-        results = []
-        for path in file_batch:
-            results.append(self._process_file(path, function))
-        return results
-
-
-    def _run_file_mode(self,
-                       *args,
-                       function: Callable,
-                       num_workers: int = 16,
-                       output_file: str | Path | None = None,
-                       progress_bar_desc: str | None = "default",
-                       file_paths: Sequence[str | Path],
-                       **kwargs) -> list[Any]:
-        """
-        Process files by scheduling one file per task, using a thread pool for concurrent processing.
-        
-        The function is combined with any provided positional and keyword arguments using `functools.partial`, and then
-        applied to each file in `file_paths`. Results are collected and optionally written to an output file. A progress
-        bar can be displayed using `tqdm`.
-        
-        This is the simplest mode, and is appropriate for I/O-bound or light-parse work (e.g. reading image data blocks
-        or small text logs). For CPU-bound per-file work dominated by GIL-holding Python (e.g. astropy parsing of
-        many-column FITS binary tables), use `_run_process_mode` instead.
+        The `ThreadPoolExecutor` stays open for the lifetime of the generator. A caller that stops before exhausting it
+        should close the generator (or let it be garbage-collected) so the pool is shut down.
 
         Parameters
         ----------
@@ -518,7 +464,53 @@ class RecursiveFileAnalyzer:
         function : Callable
             The function to apply to each file.
         num_workers : int, optional
-            The number of worker threads to use for concurrent processing, by default 16.
+            The number of worker threads to use for concurrent processing, by default 8.
+        file_paths : Sequence[str | Path]
+            A list of file paths to be processed.
+        **kwargs : dict[str, Any]
+            Additional keyword arguments to pass to `function`.
+
+        Yields
+        ------
+        Any
+            The result of applying `function` to each file, in `file_paths` order, with `None` in place of any file
+            that errored (see `_process_file`).
+        """
+        # Create a partial function with the provided args and kwargs
+        func_with_args = partial(function, *args, **kwargs)
+
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            self.logger.info("Processing %d files with %d workers", len(file_paths), num_workers)
+            yield from executor.map(self._process_file, file_paths, repeat(func_with_args))
+
+    def _run_file_mode(self,
+                       *args,
+                       function: Callable,
+                       num_workers: int = 8,
+                       output_file: str | Path | None = None,
+                       progress_bar_desc: str | None = "default",
+                       file_paths: Sequence[str | Path],
+                       **kwargs) -> list[Any]:
+        """
+        Process files by scheduling one file per task, using a thread pool for concurrent processing.
+
+        The function is combined with any provided positional and keyword arguments using `functools.partial`, and then
+        applied to each file in `file_paths`. Results are materialised from the `_iter_file_mode` stream into a list and
+        optionally written to an output file. A progress bar can be displayed using `tqdm`.
+
+        This is the simplest mode, and is appropriate for I/O-bound or light-parse work (e.g. reading image data blocks
+        or small text logs). For CPU-bound per-file work dominated by GIL-holding Python (e.g. astropy parsing of
+        many-column FITS binary tables), use `_run_process_mode` instead. To consume results one at a time without
+        holding the whole list in memory, use `iter_pipeline` (the streaming counterpart of `run_pipeline`) instead.
+
+        Parameters
+        ----------
+        *args : list[Any]
+            Positional arguments to pass to `function`.
+        function : Callable
+            The function to apply to each file.
+        num_workers : int, optional
+            The number of worker threads to use for concurrent processing, by default 8.
         output_file : str | Path | None, optional
             Optional path to a file where results will be written. If `None`, results are not written to a file. By
             default `None`.
@@ -535,20 +527,19 @@ class RecursiveFileAnalyzer:
         list[Any]
             A list of results from applying `function` to each file in `file_paths`.
         """
-        results = []
-        # Create a partial function with the provided args and kwargs
-        func_with_args = partial(function, *args, **kwargs)
-
         if progress_bar_desc == "default":
             progress_bar_desc = f"Processing files (file mode, workers={num_workers})"
 
-        with (open(output_file, "a", encoding="utf-8") if output_file else nullcontext()) as out_handle, \
-        ThreadPoolExecutor(max_workers=num_workers) as executor:
-            self.logger.info("Processing %d files with %d workers", len(file_paths), num_workers)
-            iterator = executor.map(self._process_file, file_paths, repeat(func_with_args))
-            if progress_bar_desc is not None:
-                iterator = tqdm(iterator, total=len(file_paths), mininterval=1.0, desc=progress_bar_desc)
+        iterator: Iterable[Any] = self._iter_file_mode(*args,
+                                                       function=function,
+                                                       num_workers=num_workers,
+                                                       file_paths=file_paths,
+                                                       **kwargs)
+        if progress_bar_desc is not None:
+            iterator = tqdm(iterator, total=len(file_paths), mininterval=1.0, desc=progress_bar_desc)
 
+        results = []
+        with (open(output_file, "a", encoding="utf-8") if output_file else nullcontext()) as out_handle:
             for result in iterator:
                 if out_handle:
                     out_handle.write(f"{result}\n")
@@ -556,7 +547,6 @@ class RecursiveFileAnalyzer:
                     results.append(result)
 
         return results
-
 
     def _run_process_mode(self,
                           *args,
@@ -571,9 +561,9 @@ class RecursiveFileAnalyzer:
         Process files by scheduling them across worker processes rather than threads.
 
         This is appropriate for CPU-bound per-file work dominated by GIL-holding Python (e.g. astropy parsing of
-        many-column FITS binary tables), which threads cannot parallelise because of the GIL. Threads remain the right
-        choice for I/O-bound or light-parse work (e.g. reading image data blocks or small text logs), where process
-        startup and the pickling of arguments/return values would cost more than they save.
+        many-column FITS binary tables -- NOT simple image reading), which threads cannot parallelise because of the
+        GIL. Threads remain the right choice for I/O-bound or light-parse work (e.g. reading image data blocks or small
+        text logs), where process startup and the pickling of arguments/return values would cost more than they save.
 
         `function` (with any bound *args/**kwargs) and its return value must be picklable, and `function` must be
         importable by qualified name - a module-level function or a static/classmethod, not a local closure or lambda.
@@ -630,76 +620,57 @@ class RecursiveFileAnalyzer:
 
         return results
 
-
-    def _run_batch_mode(self,
-                        *args,
-                        function: Callable,
-                        num_workers: int = 8,
-                        batch_size: int = 500,
-                        output_file: str | Path | None = None,
-                        progress_bar_desc: str | None = "default",
-                        file_paths: Sequence[str | Path],
-                        **kwargs) -> list[Any]:
+    def _resolve_file_paths(self,
+                            *,
+                            return_nums: bool,
+                            numeric_range: tuple[int, int] | None,
+                            root_dir: Path | str | None,
+                            pattern: str | None,
+                            file_paths_override: Sequence[str | Path] | None
+                            ) -> tuple[Sequence[str | Path], NumberArray | None]:
         """
-        Process files by scheduling one batch of batch_size per task, using a thread pool for concurrent processing.
-        
-        This can be faster than file mode for many small files, because it reduces the per-task scheduling overhead. It
-        is also a thread-based mode, so it is appropriate for I/O-bound or light-parse work (e.g. reading image data
-        blocks or small text logs). For CPU-bound per-file work dominated by GIL-holding Python (e.g. astropy parsing of
-        many-column FITS binary tables), use `_run_process_mode` instead.
+        Resolve the files to process (and their extracted numbers) for `run_pipeline` and `iter_pipeline`.
+
+        Either scans `root_dir` for files matching `pattern` (extracting numbers when `return_nums=True`) or uses a
+        caller-supplied `file_paths_override`. Shared by the materialising (`run_pipeline`) and streaming
+        (`iter_pipeline`) entry points so the two resolve their inputs identically.
 
         Parameters
         ----------
-        *args : list[Any]
-            Positional arguments to pass to `function`.
-        function : Callable
-            The function to apply to each file.
-        file_paths : Sequence[str | Path]
-            A list of file paths to be processed, fed in batches to `function`.
-        num_workers : int, optional
-            The number of worker threads to use for concurrent processing, by default 8.
-        batch_size : int, optional
-            The number of files to process in each batch, by default 500.
-        output_file : str | Path | None, optional
-            Optional path to a file where results will be written. If `None`, results are not written to a file. By
-            default `None`.
-        progress_bar_desc : str | None, optional
-            Description for the `tqdm` progress bar. If `None`, no progress bar is shown. If `"default"`, a basic
-            description is used. By default `"default"`.
-        **kwargs : dict[str, Any]
-            Additional keyword arguments to pass to `function`.
+        return_nums : bool
+            Whether to also extract file numbers from the file names.
+        numeric_range : tuple[int, int] | None
+            The range of numeric values to consider, or `None` to consider all values.
+        root_dir : Path | str | None
+            The root directory to search, or `None` to use `self.path`.
+        pattern : str | None
+            The regex pattern to match files.
+        file_paths_override : Sequence[str | Path] | None
+            An explicit list of files to use instead of scanning. Cannot be combined with `return_nums=True`, since
+            numbers cannot be derived from an overridden file list.
 
         Returns
         -------
-        list[Any]
-            A list of results from applying `function` to each file in `file_paths`.
+        tuple[Sequence[str | Path], NumberArray | None]
+            The files to process, and their extracted numbers if `return_nums=True`, else `None`.
         """
-        results = []
-        batches = list(self._batcher(file_paths, batch_size))
+        if root_dir is None:
+            root_dir = self.path
 
-        if progress_bar_desc == "default":
-            progress_bar_desc = f"Processing files (batch mode, workers={num_workers}, batch size={batch_size})"
+        if file_paths_override is not None:
+            #todo: functionality for the below can be implemented if needed, but we rarely use file_paths_override
+            assert not return_nums, (
+                "file_paths_override cannot be combined with return_nums=True, since numbers cannot be derived "
+                "from an overridden file list")
+            self.logger.info("Using provided list of file paths with %d entries", len(file_paths_override))
+            return file_paths_override, None
 
-        # Create a partial function with the provided args and kwargs
-        func_with_args = partial(function, *args, **kwargs)
-
-        with (open(output_file, "a", encoding="utf-8") if output_file else nullcontext()) as out_handle, \
-        ThreadPoolExecutor(max_workers=num_workers) as executor:
-            self.logger.info("Processing %d files in %d batches with batch size %d using %d workers",
-                                len(file_paths), len(batches), batch_size, num_workers)
-            iterator = executor.map(self._process_batch, batches, repeat(func_with_args))
-            if progress_bar_desc is not None:
-                iterator = tqdm(iterator, total=len(batches), desc=progress_bar_desc)
-
-            for batch_results in iterator:
-                if out_handle:
-                    for result in batch_results:
-                        out_handle.write(f"{result}\n")
-                else:
-                    results.extend(batch_results)
-
-        return results
-
+        scan_result = self.get_unwrapped_list(path=root_dir,
+                                              pattern=pattern,
+                                              return_nums=return_nums,
+                                              numeric_range=numeric_range)
+        self.logger.info("Found %d files matching pattern '%s' in %s", len(scan_result.paths), pattern, root_dir)
+        return scan_result.paths, scan_result.numbers
 
     @overload
     def run_pipeline(
@@ -710,10 +681,9 @@ class RecursiveFileAnalyzer:
         numeric_range: tuple[int, int] | None = None,
         root_dir: Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
-        batch_size: int = 500,
-        num_workers: int | None = None,
+        num_workers: int = 8,
         output_file: str | Path | None = None,
-        mode: str = "batch",
+        mode: str = "file",
         progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[None]: ...
@@ -726,10 +696,9 @@ class RecursiveFileAnalyzer:
         numeric_range: tuple[int, int] | None = None,
         root_dir: Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
-        batch_size: int = 500,
-        num_workers: int | None = None,
+        num_workers: int = 8,
         output_file: str | Path | None = None,
-        mode: str = "batch",
+        mode: str = "file",
         progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[NumberArray]: ...
@@ -742,10 +711,9 @@ class RecursiveFileAnalyzer:
         numeric_range: tuple[int, int] | None = None,
         root_dir: Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
-        batch_size: int = 500,
-        num_workers: int | None = None,
+        num_workers: int = 8,
         output_file: str | Path | None = None,
-        mode: str = "batch",
+        mode: str = "file",
         progress_bar_desc: str | None = None,
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult[NumberArray] | PipelineResult[None]: ...
@@ -757,17 +725,17 @@ class RecursiveFileAnalyzer:
         numeric_range: tuple[int, int] | None = None,
         root_dir: Path | str | None = None,
         pattern: str | None = r".*?\.fits$",
-        batch_size: int = 500,
-        num_workers: int | None = None,
+        num_workers: int = 8,
         output_file: str | Path | None = None,
-        mode: str = "batch",
+        mode: str = "file",
         progress_bar_desc: str | None = "default",
         file_paths_override: Sequence[str | Path] | None = None,
         **kwargs) -> PipelineResult:
         """
         A method to run a processing pipeline, applying `function` to files found in the `root_dir`, with options for
-        `"file"`, `"batch"`, or `"process"` mode, setting a progress display, and output to a `output_file`. It can also
-        return file numbers extracted from the file names using a regex `pattern`.
+        `"file"` (multiple threads, one process under GIL) or `"process"` (worker processes sidestepping GIL) mode,
+        setting a progress display, and output to a `output_file`. It can also return file numbers extracted from the
+        file names using a regex `pattern`.
 
         Parameters
         ----------
@@ -783,18 +751,13 @@ class RecursiveFileAnalyzer:
             The root directory to search for files, by default `None`, which searches the directory in `self.path`.
         pattern : str | None, optional
             The regex pattern to match files, by default `r".*?\.fits$"`.
-        batch_size : int, optional
-            The number of files to process in each batch if using batch mode, by default 500.
-        num_workers : int | None, optional
-            The number of worker processes to use, by default `None`. If `None`, defaults to 16 for file mode, or 8 for
-            batch and process modes.
+        num_workers : int, optional
+            The number of worker processes to use, by default 8.
         output_file : str | Path | None, optional
             The file to write output to, by default `None`, which doesn't write to a file.
         mode : str, optional
-            The mode to run the pipeline in, by default `"batch"`. `"file"` and `"batch"` schedule work across threads
-            (one task per file, or per batch of files); `"process"` schedules one task per file across worker processes,
-            for CPU-bound per-file work that the GIL prevents threads from parallelising (see `_run_process_mode` for
-            the picklability requirements it imposes on `function`).
+            The mode to run the pipeline in, must be `"file"` or `"process"`, by default `"file"`. See `_run_file_mode`
+            and `_run_process_mode` for details on the differences between the two modes.
         progress_bar_desc : str | None, optional
             Description for the `tqdm` progress bar, by default `"default"`. If `None`, no progress bar is shown. If
             `"default"`, a basic description is used.
@@ -809,37 +772,20 @@ class RecursiveFileAnalyzer:
         PipelineResult
             The per-file results, and their extracted numbers in `.numbers` if `return_nums=True`, else `None`.
         """
-        assert mode in ("file", "batch", "process"), "Mode must be 'file', 'batch', or 'process'"
+        assert mode in ("file", "process"), "Mode must be 'file or 'process'"
 
-        if root_dir is None:
-            root_dir = self.path
+        # Callers (e.g. ComponentLoader) pass num_workers=None to mean "use the default worker count"; honour that
+        # here rather than leaking None into ThreadPoolExecutor/ProcessPoolExecutor and the "%d workers" log line.
+        if num_workers is None:
+            num_workers = 8
 
-        if file_paths_override is not None:
-            #todo: functionality for the below can be implemented if needed, but we rarely use file_paths_override
-            assert not return_nums, (
-                "file_paths_override cannot be combined with return_nums=True, since numbers cannot be derived "
-                "from an overridden file list")
-            self.logger.info("Using provided list of file paths with %d entries", len(file_paths_override))
-            file_paths = file_paths_override
-            numbers = None
-        else:
-            scan_result = self.get_unwrapped_list(path=root_dir,
-                                                  pattern=pattern,
-                                                  return_nums=return_nums,
-                                                  numeric_range=numeric_range)
-            file_paths, numbers = scan_result.paths, scan_result.numbers
-            self.logger.info("Found %d files matching pattern '%s' in %s", len(file_paths), pattern, root_dir)
+        file_paths, numbers = self._resolve_file_paths(return_nums=return_nums,
+                                                       numeric_range=numeric_range,
+                                                       root_dir=root_dir,
+                                                       pattern=pattern,
+                                                       file_paths_override=file_paths_override)
 
         assert file_paths, "No files found to process. Check the root_dir and pattern (if specified) parameters."
-
-        if num_workers is None:
-            match mode:
-                case "file":
-                    num_workers = 16
-                case "process":
-                    num_workers = 8
-                case "batch":
-                    num_workers = 8
 
         if mode == "file":
             return_values = self._run_file_mode(
@@ -851,24 +797,11 @@ class RecursiveFileAnalyzer:
                 file_paths=file_paths,
                 **kwargs
            )
-
-        elif mode == "process":
+        else:
             return_values = self._run_process_mode(
                 *args,
                 function=function,
                 num_workers=num_workers,
-                output_file=output_file,
-                progress_bar_desc=progress_bar_desc,
-                file_paths=file_paths,
-                **kwargs
-           )
-
-        else:
-            return_values = self._run_batch_mode(
-                *args,
-                function=function,
-                num_workers=num_workers,
-                batch_size=batch_size,
                 output_file=output_file,
                 progress_bar_desc=progress_bar_desc,
                 file_paths=file_paths,
@@ -880,158 +813,107 @@ class RecursiveFileAnalyzer:
         return PipelineResult(results=_to_array(return_values), numbers=numbers)  # type: ignore[arg-type]
 
 
-    # deprecated: was used to benchmark the pipeline with different numbers of workers and batch sizes, but is no longer
-    # used in the current codebase.
-    def benchmark_pipeline(
-        self,
-        function: Callable,
-        *args,
-        return_nums: bool = False,
-        root_dir: Path | str | None = None,
-        pattern: str | None = r".*?\.fits$",
-        numeric_range: tuple[int, int] | None = None,
-        worker_options: tuple[int, ...] = (8, 16, 24, 32),
-        batch_size_options: tuple[int, ...] = (25, 50, 100, 250, 500),
-        sample_size: int | None = 5000,
-        repeats: int = 1,
-        output_csv: str | Path | None = None,
-        progress_bar_desc: str | None = None,
-        **kwargs) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """
-        Runs a benchmark on the provided function using different numbers of workers and batch sizes, and returns the
-        results as a list of dictionaries and the best result as a dictionary. Optionally, the results can be written
-        to a CSV file.
+    @overload
+    def iter_pipeline(self,
+                      *args,
+                      function: Callable,
+                      return_nums: Literal[False] = False,
+                      numeric_range: tuple[int, int] | None = None,
+                      root_dir: Path | str | None = None,
+                      pattern: str | None = r".*?\.fits$",
+                      num_workers: int = 8,
+                      progress_bar_desc: str | None = None,
+                      file_paths_override: Sequence[str | Path] | None = None,
+                      **kwargs) -> Iterator[Any]: ...
+    @overload
+    def iter_pipeline(self,
+                      *args,
+                      function: Callable,
+                      return_nums: Literal[True],
+                      numeric_range: tuple[int, int] | None = None,
+                      root_dir: Path | str | None = None,
+                      pattern: str | None = r".*?\.fits$",
+                      num_workers: int = 8,
+                      progress_bar_desc: str | None = None,
+                      file_paths_override: Sequence[str | Path] | None = None,
+                      **kwargs) -> Iterator[tuple[int, Any]]: ...
+    def iter_pipeline(self,
+                      *args,
+                      function: Callable,
+                      return_nums: bool = False,
+                      numeric_range: tuple[int, int] | None = None,
+                      root_dir: Path | str | None = None,
+                      pattern: str | None = r".*?\.fits$",
+                      num_workers: int = 8,
+                      progress_bar_desc: str | None = None,
+                      file_paths_override: Sequence[str | Path] | None = None,
+                      **kwargs) -> Iterator[Any] | Iterator[tuple[int, Any]]:
+        r"""
+        Stream per-file results in file-number order without materialising them all in memory.
+
+        The streaming counterpart to `run_pipeline`; file mode only (threaded). Yields each result as it completes, in
+        `file_paths` order. When `return_nums=True` it yields `(number, result)` pairs, where `number` is taken from
+        the pattern's capture group, so a caller can place each result by index - e.g. into a preallocated,
+        index-aligned array - and never hold the whole stack at once.This is the memory-safe path for very large runs
+        whose results are folded away as they arrive; for a materialised `results` array plus its `numbers`, or for
+        process modes, use `run_pipeline` instead.
+
+        The underlying thread pool stays open for the lifetime of the generator, so fully consume it (or close it) to
+        shut the pool down.
 
         Parameters
         ----------
+        args : list[Any]
+            Positional arguments to pass to `function`.
         function : Callable
-            The function to benchmark. It should accept a file path as its first argument, followed by any additional
-            arguments and keyword arguments provided in *args and **kwargs.
+            The function to apply to each file.
         return_nums : bool, optional
-            Whether to return the number of files processed, by default False
+            Whether to yield `(number, result)` pairs rather than bare results, by default `False`. Requires `pattern`
+            to contain a capture group, and cannot be combined with `file_paths_override`.
+        numeric_range : tuple[int, int] | None, optional
+            The range of numeric values to consider, by default `None`, which considers all values.
         root_dir : Path | str | None, optional
-            The root directory to search for files, by default None
+            The root directory to search for files, by default `None`, which searches the directory in `self.path`.
         pattern : str | None, optional
-            The regex pattern to match files, by default r".*?\.fits$"
-        numeric_range : tuple[int,int] | None, optional
-            The range of numeric values to consider, by default None
-        worker_options : tuple[int, ...], optional
-            The options for the number of workers to use, by default (8, 16, 24, 32)
-        batch_size_options : tuple[int, ...], optional
-            The options for the batch size to use, by default (25, 50, 100, 250, 500)
-        sample_size : int | None, optional
-            The number of files to sample for benchmarking, by default 5000
-        repeats : int, optional
-            The number of times to repeat each benchmark, by default 1
-        output_csv : str | Path | None, optional
-            The path to the CSV file to write the results to, by default None
+            The regex pattern to match files, by default `r".*?\.fits$"`.
+        num_workers : int, optional
+            The number of worker threads to use, by default `8`.
         progress_bar_desc : str | None, optional
-            Description for the tqdm progress bar, by default None. If None, no progress bar is shown. If "default", a
-            default description is used.
+            Description for the `tqdm` progress bar, by default `None`, which shows no bar. If `"default"`, a basic
+            description is used. The bar's total is the number of files found.
+        file_paths_override : Sequence[str | Path] | None, optional
+            A sequence of file paths to override the default file search, by default `None`. Cannot be combined with
+            `return_nums=True`, since numbers cannot be derived from an overridden file list.
+        **kwargs : dict[str, Any]
+            Additional keyword arguments to pass to `function`.
 
-        Returns
-        -------
-        tuple[list[dict[str, Any]], dict[str, Any]]
-            A list of dictionaries containing the benchmark results and a dictionary containing the best result
-
-        Raises
+        Yields
         ------
-        ValueError
-            If no files are found for benchmarking.
+        Any | tuple[int, Any]
+            Each per-file result in `file_paths` order, or `(number, result)` if `return_nums=True`. Failed files
+            yield `None` in the result position (see `_process_file`).
         """
-        if root_dir is None:
-            root_dir = self.path
+        file_paths, numbers = self._resolve_file_paths(return_nums=return_nums,
+                                                       numeric_range=numeric_range,
+                                                       root_dir=root_dir,
+                                                       pattern=pattern,
+                                                       file_paths_override=file_paths_override)
 
-        # Numbers are not used in the return of this function, but return_nums is accepted here so callers can
-        # benchmark the performance of the number-extraction code path too.
-        file_paths = self.get_unwrapped_list(path=root_dir,
-                                             pattern=pattern,
-                                             return_nums=return_nums,
-                                             numeric_range=numeric_range).paths
+        assert file_paths, "No files found to process. Check the root_dir and pattern (if specified) parameters."
 
-        # Limit files to a subset for benchmarking if specified
-        if sample_size is not None:
-            file_paths = file_paths[:sample_size]
+        results = self._iter_file_mode(*args,
+                                       function=function,
+                                       num_workers=num_workers,
+                                       file_paths=file_paths,
+                                       **kwargs)
 
-        if not file_paths:
-            raise ValueError("No files found for benchmarking.")
+        # numbers is a NumberArray exactly when return_nums=True (guaranteed by _resolve_file_paths), so the zip below
+        # is only reached with a real array; the type: ignore covers the None-typed branch the checker can't rule out.
+        stream: Iterable[Any] = zip(numbers, results) if return_nums else results  # type: ignore[arg-type]
 
-        rows = []
-        total_files = len(file_paths)
+        if progress_bar_desc is not None:
+            if progress_bar_desc == "default":
+                progress_bar_desc = f"Processing files (streaming, workers={num_workers})"
+            stream = tqdm(stream, total=len(file_paths), mininterval=1.0, desc=progress_bar_desc)
 
-        self.logger.info("Benchmarking %d files", total_files)
-
-        for workers in worker_options:
-            best_seconds = float("inf")
-
-            # Running file mode benchmark
-            for _ in range(repeats):
-                t0 = time.perf_counter()
-                self.run_pipeline(
-                    function,
-                    *args,
-                    root_dir=root_dir,
-                    num_workers=workers,
-                    mode="file",
-                    progress_bar_desc=progress_bar_desc,
-                    file_paths_override=file_paths,
-                    **kwargs
-               )
-                elapsed = time.perf_counter() - t0
-                best_seconds = min(best_seconds, elapsed)
-
-            rows.append(
-                {
-                    "mode": "file",
-                    "workers": workers,
-                    "batch_size": None,
-                    "seconds": best_seconds,
-                    "files_per_second": total_files / best_seconds,
-                }
-           )
-
-            # Running batch mode benchmarks for each batch size
-            for batch_size in batch_size_options:
-                best_seconds = float("inf")
-                for _ in range(repeats):
-                    t0 = time.perf_counter()
-                    self.run_pipeline(
-                        function,
-                        *args,
-                        root_dir=root_dir,
-                        batch_size=batch_size,
-                        num_workers=workers,
-                        mode="batch",
-                        progress_bar_desc=progress_bar_desc,
-                        file_paths_override=file_paths,
-                        **kwargs
-                   )
-                    elapsed = time.perf_counter() - t0
-                    best_seconds = min(best_seconds, elapsed)
-
-                rows.append(
-                    {
-                        "mode": "batch",
-                        "workers": workers,
-                        "batch_size": batch_size,
-                        "seconds": best_seconds,
-                        "files_per_second": total_files / best_seconds,
-                    }
-               )
-
-        rows_sorted = sorted(rows, key=lambda x: x["seconds"])
-        best_row = rows_sorted[0]
-
-        if output_csv:
-            csv_path = Path(output_csv)
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                f.write("mode,workers,batch_size,seconds,files_per_second\n")
-                for row in rows_sorted:
-                    batch_value = "" if row["batch_size"] is None else row["batch_size"]
-                    f.write(
-                        f"{row['mode']},{row['workers']},{batch_value},"
-                        f"{row['seconds']:.6f},{row['files_per_second']:.3f}\n"
-                   )
-
-        return rows_sorted, best_row
+        yield from stream

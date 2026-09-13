@@ -4,7 +4,6 @@ import time
 from pathlib import Path
 
 import astropy.units as u
-import h5py
 import numpy as np
 import pandas as pd
 from astropy.cosmology import FlatLambdaCDM
@@ -17,6 +16,8 @@ from ..utils import paths
 from ..utils.logger import LoggingLevels, get_logger
 from ..utils.recursive_file_analyzer import RecursiveFileAnalyzer
 from . import cutout_quality
+
+_NUM_RES_SOURCES = 314969  # number of resolved sources in the Hardcastle 2023 catalogue
 
 
 class CutoutPreprocessor:
@@ -74,8 +75,6 @@ class CutoutPreprocessor:
         self.drop_foreign_contaminated = drop_foreign_contaminated
         self.drop_cropped = drop_cropped
 
-        self.num_counts = 314969
-
         config = configparser.ConfigParser()
         config.read(paths.PROGRAM_CONFIG)
         config = config['DEFAULT']
@@ -86,9 +85,7 @@ class CutoutPreprocessor:
         self.Om0 = float(config['Om0']) # matter density parameter at z=0
         self.cosmo = FlatLambdaCDM(self.h * 100 * u.km / u.s / u.Mpc, Tcmb0=self.Tcmb0 * u.K, Om0=self.Om0)
 
-
     # --------- DATA LOADING ----------
-    # depricated
     def _load_catalogue_from_fits(self,
                                   memmap: bool=True,
                                   catalogue_path: Path = paths.RAW_CATALOGUE_PATH)-> tuple[fits.FITS_rec, fits.ColDefs]:
@@ -114,107 +111,87 @@ class CutoutPreprocessor:
             cat_info = hdul[1].data
             cat_columns = hdul[1].columns
 
-            # Filter for resolved sources
+            # Filter for resolved sources -- focus of this work, as the unresolved sources are not suitable for training the diffusion model.
             cat_info = cat_info[cat_info['Resolved']]
             self.logger.debug(f"Loaded {len(cat_info)} resolved sources from the catalogue.")
 
         return cat_info, cat_columns
 
-
-    def _load_catalogue_from_hdf5(self, catalogue_path: Path = paths.STRIPPED_CATALOGUE_PATH) -> np.ndarray:
-        """
-        Loads the Hardcastle catalogue from an HDF5 file, extracting the relevant catalogue information.
-        
-        Parameters
-        ----------
-        catalogue_path : Path, optional
-            The path to the HDF5 file containing the Hardcastle catalogue, by default paths.STRIPPED_CATALOGUE_PATH.
-
-        Returns
-        -------
-        np.ndarray
-            The catalogue information for each source in the dataset.
-        """
-        with h5py.File(catalogue_path, 'r') as h5file:
-            cat_info: np.ndarray = h5file['cat_info'][:]
-            self.logger.debug(f"Loaded {len(cat_info)} resolved sources from the HDF5 catalogue.")
-
-        return cat_info
-
-
     def _load_cutout_images(self, folder_path: Path = paths.CUTOUTS_PATH)-> np.ndarray:
         """
-        Loads all cutout images from a specified folder, returning the pixel values.
+        Loads all cutout images from a specified folder, returning the pixel values as one index-aligned array.
+
+        Each cutout is streamed from disk and copied straight into its slot in a single preallocated
+        `(num_counts, 80, 80)` float32 array, so that array is the only large structure ever held. Cutouts whose files
+        are missing, failed to load, or carry an out-of-range number are simply never written, and so are left as NaN.
 
         Parameters
         ----------
         folder_path : Path, optional
-            The path to the folder containing the cutout FITS files, by default paths.CUTOUTS_PATH.
+            The path to the folder containing the cutout FITS files, by default `paths.CUTOUTS_PATH`.
 
         Returns
         -------
         np.ndarray
-            The loaded cutout images as a numpy array of pixel values.
+            The loaded cutout images as an index-aligned `(num_counts, 80, 80)` float32 array, NaN where a cutout is
+            missing.
         """
         rfa = RecursiveFileAnalyzer(folder_path)
-        values, indices = rfa.run_pipeline(function=du.load_single_cutout,
-                                           pattern=r'.*?cutout(\d+)\.fits$',
-                                           return_nums=True,
-                                           mode="file",
-                                           # kwargs for load_single_cutout
-                                           logger=self.logger)
-        # values are alr in f32 from load_single_cutout, but we can cast indices
-        indices = indices.astype(np.int32)
 
-        # Guard against cutout numbers outside the expected range before using them to place images into the full,
-        # index-aligned array below (an out-of-range index would otherwise raise from the scatter assignment).
-        in_range = (indices >= 0) & (indices < self.num_counts)
-        if not in_range.all():
-            self.logger.warning(f"{int((~in_range).sum())} cutout indices fall outside "
-                                f"[0, {self.num_counts}); ignoring them.")
-            indices = indices[in_range]
-            values = values[in_range]
+        # The single large array; each cutout is copied into full[number] as it streams in and then dropped.
+        full = np.full((_NUM_RES_SOURCES, 80, 80), np.nan, dtype=np.float32)
+        present = np.zeros(_NUM_RES_SOURCES, dtype=bool)
+        out_of_range = 0
 
-        found = len(indices)
-        self.logger.info(f"Total cutouts expected: {self.num_counts}, found: {found}")
+        stream = rfa.iter_pipeline(function=du.load_single_cutout,
+                                   pattern=r'.*?cutout(\d+)\.fits$',
+                                   return_nums=True,
+                                   progress_bar_desc="Loading cutout images",
+                                   # kwargs for load_single_cutout
+                                   logger=self.logger)
+        for idx, image in stream:
+            if not (0 <= idx < _NUM_RES_SOURCES):
+                out_of_range += 1
+                continue
+            if image is None:  # load error, already logged by the pipeline; leave the slot as NaN
+                continue
+            # load_single_cutout returns f32; the assignment copies the 80x80 block into the slot (recasting if needed).
+            full[idx] = image
+            present[idx] = True
 
-        # Fast path: every cutout present and already index-aligned, can straight up return it
-        expected_order = np.arange(self.num_counts, dtype=indices.dtype)
-        if found == self.num_counts and np.array_equal(indices, expected_order):
-            return values  # type: ignore
+        found = int(present.sum())
+        if out_of_range:
+            self.logger.warning(f"{out_of_range} cutout indices fall outside [0, {_NUM_RES_SOURCES}); ignoring them.")
+        self.logger.info(f"Total cutouts expected: {_NUM_RES_SOURCES}, found: {found}")
 
-        # Otherwise scatter the loaded cutouts into one index-aligned array, leaving missing positions as NaN.
-        present = np.zeros(self.num_counts, dtype=bool)
-        present[indices] = True
         missing_idx = np.flatnonzero(~present)
-        self.logger.warning(f"Missing {len(missing_idx)} cutout images; filling those positions with NaNs.")
-        self.logger.debug(f"Missing cutout indices: {missing_idx.tolist()}")
+        if missing_idx.size:
+            self.logger.warning(f"Missing {missing_idx.size} cutout images; those positions are left as NaNs.")
+            self.logger.debug(f"Missing cutout indices: {missing_idx.tolist()}")
 
-        full = np.full((self.num_counts, 80, 80), np.nan, dtype=np.float32)
-        full[indices] = values
         return full
-
 
     def _build_dataframe(self, images: np.ndarray) -> pd.DataFrame:
         """
         Builds a pandas DataFrame from a list of images, extracting pixel values and initialising other columns to
-        default values.
+        default values. Also identifies broken and incomplete images based on the presence of NaN values added by
+        `du.load_single_cutout` at earlier stages.
 
         Parameters
         ----------
         images : np.ndarray
-            A 2D numpy array representing the pixel values of each image in the dataset.
+            A 3D numpy array representing the 2D pixel values of each image in the dataset.
 
         Returns
         -------
         pd.DataFrame
-            A pandas DataFrame containing the extracted pixel values and initialized columns.
+            A pandas DataFrame containing the extracted pixel values and initialised columns.
         """
         n_images = images.shape[0]
         per_image = images.shape[1] * images.shape[2]
 
         # Count NaNs per image in chunks as to avoid large memory spikes.
-        nan_counts = np.empty(n_images, dtype=np.int64)
+        nan_counts = np.empty(n_images, dtype=np.int32)
         chunk = 20000
         for start in range(0, n_images, chunk):
             block = images[start:start + chunk]
@@ -241,66 +218,46 @@ class CutoutPreprocessor:
             'pixel_values': list(images),
             'broken': broken,
             'incomplete': incomplete,
-            'size': 0.0,
+            'size': -99.9,
             'foreign_contaminant': False,
             'cropped': False,
-            'peak_flux': 0.0,
-            'S/N': 0.0,
+            'peak_flux': -99.9,
+            'S/N': -99.9,
             'rlagn': False,
         })
-
         return dataset
-
 
     def _load_initial_dataset(self,
                               catalogue_path: Path = paths.STRIPPED_CATALOGUE_PATH) \
-                            -> tuple[pd.DataFrame, np.ndarray | fits.FITS_rec, fits.ColDefs]:
+                            -> tuple[pd.DataFrame, fits.FITS_rec, fits.ColDefs]:
         """
-        Loads the initial dataset with pixel values from a .h5 or .fits file.
+        Loads the initial dataset with pixel values from a .fits file.
         
         Parameters
         ----------
         catalogue_path : Path, optional
-            The path to the initial catalogue file with pixel values, by default paths.STRIPPED_CATALOGUE_PATH
+            The path to the catalogue file, by default `paths.STRIPPED_CATALOGUE_PATH`.
 
         Returns
         -------
         dataset : pd.DataFrame
             The dataset containing the pixel values and other information for each source.
-        cat_info : np.ndarray | fits.FITS_rec
-            The catalogue information for each source, either as a numpy array (for .h5 files) or a FITS record (for
-            .fits files).
+        cat_info : fits.FITS_rec
+            The catalogue information for each source, as a FITS record (for .fits files).
         cat_columns : fits.ColDefs
             The column definitions of the Hardcastle catalogue FITS file.
-
-        Raises
-        ------
-        ValueError
-            If the file format of the dataset is not supported (not .h5 or .fits).
         """
-        if catalogue_path.suffix == '.h5':
-            self.logger.info("Loading Hardcastle data from H5 file...")
-            cat_info = self._load_catalogue_from_hdf5(catalogue_path)
-            cat_columns = None  # No column definitions for HDF5
-
-        elif catalogue_path.suffix == '.fits':
-            # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and
-            # so we can disable memmap
-            try:
-                cat_info, cat_columns = self._load_catalogue_from_fits(memmap=True, catalogue_path=catalogue_path)
-            except Exception as e:
-                self.logger.error(f"Error loading catalogue data with memmap: {e}. Retrying without memmap...")
-                cat_info, cat_columns = self._load_catalogue_from_fits(memmap=False, catalogue_path=catalogue_path)
-
-        else:
-            raise ValueError(
-                f"Unsupported file format for dataset: {catalogue_path.suffix}. Please provide a .h5 or .fits file.")
+        # Memmap is much faster when it's available; on limited-memory nodes, loading the whole file may crash, and
+        # so we can disable memmap
+        try:
+            cat_info, cat_columns = self._load_catalogue_from_fits(memmap=True, catalogue_path=catalogue_path)
+        except Exception as e:
+            self.logger.error(f"Error loading catalogue data with memmap: {e}. Retrying without memmap...")
+            cat_info, cat_columns = self._load_catalogue_from_fits(memmap=False, catalogue_path=catalogue_path)
 
         # Now load the cutout images and build the dataset DataFrame
         images = self._load_cutout_images(folder_path=paths.CUTOUTS_PATH)
-
         return self._build_dataframe(images), cat_info, cat_columns
-
 
     # ---------- FLAGS ----------
     def _calculate_snr_vectorised(self,
@@ -327,10 +284,9 @@ class CutoutPreprocessor:
         with np.errstate(divide='ignore', invalid='ignore'):
             return np.where(noise_levels != 0, peak_fluxes / noise_levels, -1)
 
-
     def _calculate_snr_single(self,
-                             noise_level: float,
-                             peak_flux: float) -> float:
+                              noise_level: float,
+                              peak_flux: float) -> float:
         """
         Calculates the S/N ratio for a given image based on the noise level and peak flux.
 
@@ -349,9 +305,7 @@ class CutoutPreprocessor:
         if noise_level == 0:
             self.logger.warning("Noise level is zero, cannot calculate S/N ratio. Returning -1.")
             return -1
-
         return peak_flux / noise_level
-
 
     def _identify_incomplete_image_single(self, image: np.ndarray) -> bool:
         """
@@ -370,7 +324,6 @@ class CutoutPreprocessor:
         """
         return np.isnan(image).any() and not np.isnan(image).all()
 
-
     def _identify_broken_source_single(self, image: np.ndarray) -> bool:
         """
         Identifies whether an image is "broken" (all NaN values) based on the presence of NaN values added at earlier
@@ -387,7 +340,6 @@ class CutoutPreprocessor:
             Whether the image is broken (True) or not (False).
         """
         return np.isnan(image).all()
-
 
     def _select_sources(self,
                         wise1_mag: np.ndarray | float,
@@ -434,23 +386,21 @@ class CutoutPreprocessor:
     # ---------- MAIN PROCESSING ----------
     def _compute_vectorised_flags(self,
                                   dataset: pd.DataFrame,
-                                  cat_info: np.ndarray | list[tuple]):
+                                  cat_info: fits.FITS_rec):
         """
         Compute the flags for each image in the dataset and overwrite the dataset with the new flags. This will be used
         to filter the dataset in the next step.
         
-        This is similar processing to compute_iterative_flags, except it's vectorised, which is expected to be better
+        This is similar processing to `compute_iterative_flags`, except it's vectorised, which is expected to be better
         performing on high-memory nodes. It may crash on low-memory nodes due to the large size of the dataset.
 
         Parameters
         ----------
         dataset : pd.DataFrame
             The dataset containing the pixel values and other information for each source.
-        cat_info : np.ndarray | list[tuple]
+        cat_info : fits.FITS_rec
             The catalogue information for each source.
         """
-        # len() rather than .shape[0]: cat_info is a plain list when it comes from an HDF5 catalogue or a caller
-        # building records by hand, and only a FITS_rec/ndarray has .shape.
         assert dataset.shape[0] == len(cat_info), (
             "Dataset and catalogue information must have the same number of entries.")
 
@@ -477,8 +427,7 @@ class CutoutPreprocessor:
         peak_fluxes = images.max(axis=(1, 2)) * 1000 # convert from Jy/beam to mJy/beam
         # No np.where(valid_mask, ...) here: every array in this block is already restricted to the valid rows, so
         # mixing in the full-length mask would broadcast a length-n_valid result against length-n_total and blow up
-        # as soon as a single image is broken or incomplete. Invalid rows keep the defaults _build_dataframe set,
-        # which is what the iterative path leaves them at too.
+        # as soon as a single image is broken or incomplete.
         snr_list = self._calculate_snr_vectorised(noise_levels, peak_fluxes)
         self.logger.info(f"S/N ratio flags created in {time.time() - start_time} seconds")
 
@@ -506,7 +455,6 @@ class CutoutPreprocessor:
         dataset.loc[valid_mask, 'S/N'] = snr_list
         dataset.loc[valid_mask, 'peak_flux'] = peak_fluxes
         dataset.loc[valid_mask, 'rlagn'] = rlagn_mask
-
 
     def _compute_iterative_flags(self,
                                  dataset: pd.DataFrame,
@@ -557,7 +505,6 @@ class CutoutPreprocessor:
         dataset.loc[valid_indices, 'rlagn'] = rlagn_list
         dataset.loc[valid_indices, 'peak_flux'] = peak_flux_list
 
-
     def _compute_contamination_flags(self, dataset: pd.DataFrame):
         """
         Compute the foreign-contamination and cropping flags from the value-added component catalogue and write them
@@ -600,15 +547,15 @@ class CutoutPreprocessor:
         Parameters
         ----------
         vectorised : bool, optional
-            Whether to use the vectorised approach for computing flags, by default False
+            Whether to use the vectorised approach for computing flags, by default False,
         save_hdf5 : bool, optional
-            Whether to save the cleaned dataset as an HDF5 file (True) or a FITS file (False), by default True
+            Whether to save the cleaned dataset as an HDF5 file (True) or a FITS file (False), by default True,
         catalogue_path : Path, optional
-            The path to the catalogue file, by default paths.STRIPPED_CATALOGUE_PATH
+            The path to the catalogue file, by default `paths.STRIPPED_CATALOGUE_PATH`.
         output_file_path : Path | str | None, optional
             The path to save the cleaned dataset file, by default None, which will save to the default
-            paths.DATASET_PATH_H5 or paths.DATASET_PATH_FITS based on the save_hdf5 flag. If set to "default", it will
-            save to a file named based on the filtering criteria in the paths.DATASET_PARENT directory.
+            `paths.DATASET_PATH_H5` or `paths.DATASET_PATH_FITS` based on the `save_hdf5` flag. If set to "default", it
+            will save to a file named based on the filtering criteria in the `paths.DATASET_PARENT` directory.
         """
         if output_file_path is None:
             if save_hdf5:
