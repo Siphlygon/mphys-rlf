@@ -341,7 +341,12 @@ def _load_sampling_model(args: SampleArgs, model_sampler: sampler.Sampler) -> to
     _check_context_matches_model(model_config, args)
     if not args.use_cpu:
         model, _ = device_utils.distribute_model(model, model_sampler.settings["n_devices"])
-    return model.eval()
+    model = model.eval()
+    # Compile the resident model once here rather than in quick_sample: this entrypoint calls quick_sample once per batch
+    # with distribute_model=False, so compiling inside quick_sample would re-trace every batch.
+    if not args.use_cpu:
+        model = model_utils.maybe_compile_model(model, enabled=model_sampler.settings.get("compile_model", False))
+    return model
 
 
 def _normalise_image(image: np.ndarray) -> np.ndarray:
