@@ -154,8 +154,7 @@ def load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
 
     `foreign_contaminant` marks a cutout containing a foreign (different `Parent_Source`) radio component whose fitted
     ellipse overlaps the frame and whose peak clears 5 sigma of the source island rms; `cropped` marks a cutout whose
-    own emission crosses the frame. These are the definitive flags - the frame-overlap + `Parent_Source` test - used to
-    restrict the PyBDSF analyses to clean cutouts, rather than a beam/size association approximation.
+    own emission crosses the frame.
 
     Parameters
     ----------
@@ -174,7 +173,7 @@ def load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
     return pd.read_csv(path, index_col="index")
 
 
-def select_clean(df: pd.DataFrame, quality: pd.DataFrame, drop_cropped: bool = True) -> pd.DataFrame:
+def select_clean(df: pd.DataFrame, quality: pd.DataFrame | None, drop_cropped: bool = True) -> pd.DataFrame:
     """
     Restrict a cutout-indexed frame to the clean cutouts - those not flagged foreign-contaminated (and, by default, not
     cropped) by `load_cutout_quality`.
@@ -197,6 +196,10 @@ def select_clean(df: pd.DataFrame, quality: pd.DataFrame, drop_cropped: bool = T
     pd.DataFrame
         `df` restricted to the clean cutout indices, with its columns unchanged.
     """
+    # Keep the load_cutout_quality exposed in case of further use, but use here otherwise
+    if quality is None:
+        quality = load_cutout_quality(path=DEFAULT_QUALITY_CSV)
+
     bad = quality["foreign_contaminant"].astype(bool)
     if drop_cropped:
         bad = bad | quality["cropped"].astype(bool)
@@ -292,7 +295,12 @@ def load_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> pd.DataFrame:
     summaries = [_summarise_components(rows) for rows in obj["components"]]
     df = pd.DataFrame(summaries, index=np.asarray(obj["indices"]))
     df.index.name = "index"
-    return df.sort_index()
+    df.sort_index()
+
+    # filter for only clean cutotus
+    df = select_clean(df, quality=None, drop_cropped=True)
+
+    return df
 
 
 def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, pd.DataFrame]:
@@ -366,11 +374,14 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
     """
     logger.info(f"Joining {len(logs)} logs and {len(cat)} catalogue rows on cutout index")
     joined = logs.join(cat, how="inner")
-    
+
     # make every column name lowercase; allows names that match the official components catalogue in the `las` pipeline,
     # while retaining lower-case names for our custom fields here.
     joined.columns = joined.columns.str.lower()
-    
+
+    # Filter for only clean cutouts
+    joined = select_clean(joined, quality=None, drop_cropped=True)
+
     corr = flux_alignment_corr(joined)
     if corr < warn_below:
         logger.warning("Flux-alignment correlation is %.3f (< %.2f): logs and catalogue may be misaligned.",
