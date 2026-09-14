@@ -38,7 +38,9 @@ class TestInit:
     def test_settings_not_save_list(self):
         """Test that the settings_not_save list contains the expected keys."""
         s = Sampler()
-        assert set(s.settings_not_save) == {"n_samples", "n_devices", "samples_per_device", "flux_transform"}
+        assert set(s.settings_not_save) == {
+            "n_samples", "n_devices", "samples_per_device", "flux_transform"
+        }
 
 
 class TestGetLabels:
