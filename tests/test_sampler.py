@@ -39,7 +39,7 @@ class TestInit:
         """Test that the settings_not_save list contains the expected keys."""
         s = Sampler()
         assert set(s.settings_not_save) == {
-            "n_samples", "n_devices", "samples_per_device", "flux_transform"
+            "n_samples", "n_devices", "samples_per_device", "flux_transform", "compile_model"
         }
 
 
