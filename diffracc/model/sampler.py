@@ -1,4 +1,5 @@
 import inspect
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -71,11 +72,35 @@ class Sampler:
             "S_min": 0,
             "S_max": torch.inf,
             "S_noise": 1,
+            # Performance setup (CUDA only; no-ops on CPU). use_amp/amp_dtype run the UNet forward passes in mixed
+            # precision (recorded in the output attrs since they slightly affect the pixels); compile_model wraps the
+            # model with torch.compile.
+            "use_amp": True,
+            "amp_dtype": "float16",
+            "compile_model": True,
         }
-        self.settings_not_save = ["n_samples", "n_devices", "samples_per_device", "flux_transform"]
+        self.settings_not_save = [
+            "n_samples", "n_devices", "samples_per_device", "flux_transform", "compile_model"
+        ]
 
         # Update settings with user input
         self.settings.update(settings)
+
+
+    @staticmethod
+    def _configure_perf_backends() -> None:
+        """
+        Enable CUDA math backends that speed up inference without meaningfully affecting results.
+
+        Mirrors the trainer's setup (see `Trainer.__init__`): TF32 accelerates the float32 matmuls that run outside
+        autocast, and `cudnn.benchmark` autotunes convolution kernels for our fixed sampling input shape (the same
+        `CUDNN_BENCHMARK` env var can disable it if the extra workspace VRAM is a problem). All are no-ops off CUDA.
+        """
+        if not torch.cuda.is_available():
+            return
+        torch.backends.cudnn.benchmark = os.environ.get("CUDNN_BENCHMARK", "true").lower() == "true"
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
 
     def sample(
@@ -262,6 +287,9 @@ class Sampler:
             else:
                 raise ValueError(f"Setting <{key}> not recognized.")
 
+        # Enable TF32 / cuDNN autotuning for the sampling run (no-op on CPU)
+        self._configure_perf_backends()
+
         # If inputs are passed, they determine the number of samples
         if context is not None or labels is not None:
             self.logger.info(
@@ -316,6 +344,15 @@ class Sampler:
                 model, self.settings["n_devices"], device_ids=device_ids
             )
         model = model.eval()
+
+        # Compile only when this call owns the model's device lifecycle (distribute_model=True), so the compiled graph
+        # is reused across the internal batch loop below. When a caller passes a resident model with
+        # distribute_model=False (e.g. the FITS entrypoint, which calls quick_sample once per batch), it must compile
+        # once itself - compiling here would re-trace on every call.
+        if distribute_model:
+            model = model_utils.maybe_compile_model(
+                model, enabled=self.settings["compile_model"] and torch.cuda.is_available()
+            )
 
         # Sampling
         batch_list = []

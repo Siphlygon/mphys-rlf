@@ -11,6 +11,54 @@ from .config import ModelConfig
 logger = get_logger(__name__)
 
 
+def maybe_compile_model(model: nn.Module, enabled: bool = True, recompile_limit: int = 64) -> nn.Module:
+    """
+    Optionally wrap a model with `torch.compile` for faster inference.
+
+    `torch.compile` traces the forward pass into a fused graph, cutting Python/launch overhead. It pays a one-time
+    tracing cost on the first forward call (slowing the first batch), then reuses the compiled graph - worthwhile for
+    the many-batch sampling runs but not for a handful of images. If compilation is unavailable or fails for any reason,
+    the original eager model is returned so sampling still proceeds.
+
+    The UNet uses many distinct channel widths across its down/up blocks, so Dynamo traces a separate graph per width.
+    That exceeds the default recompile limit of 8 (after which Dynamo silently falls back to eager for the remaining
+    blocks - "hit config.recompile_limit"), so we raise it. These recompilations are keyed on the static per-block
+    channel dims, not the batch, so they happen once during the first batch and are then reused.
+
+    Parameters
+    ----------
+    model : nn.Module
+        The model to compile.
+    enabled : bool, optional
+        Whether to attempt compilation. If False the model is returned unchanged. Defaults to True.
+    recompile_limit : int, optional
+        Maximum number of distinct traced graphs Dynamo may cache before falling back to eager. Raised above the default
+        8 so every UNet block width gets compiled. Defaults to 64.
+
+    Returns
+    -------
+    nn.Module
+        The compiled model, or the original model if compilation is disabled or fails.
+    """
+    if not enabled:
+        return model
+    try:
+        import torch._dynamo  # noqa: PLC0415 - imported lazily so a torch without dynamo still loads the module
+        logger.warning(
+            "torch.compile is enabled: the FIRST batch will appear to hang at 'Sampling... 0%' for a few minutes "
+            "while the graph is traced and compiled. This is expected, happens only once, and every batch after it is "
+            "faster. Set compile_model=False to disable."
+        )
+        # Attribute name differs across torch versions (recompile_limit in >=2.x recent, cache_size_limit earlier).
+        for attr in ("recompile_limit", "cache_size_limit"):
+            if hasattr(torch._dynamo.config, attr):
+                setattr(torch._dynamo.config, attr, max(getattr(torch._dynamo.config, attr), recompile_limit))
+        return torch.compile(model)
+    except Exception as exc:  # noqa: BLE001 - compilation is best-effort; never let it break sampling
+        logger.warning(f"torch.compile failed ({exc}); continuing with eager execution.")
+        return model
+
+
 def load_model(
     source: str | Path,
     load_weights: bool = True,
