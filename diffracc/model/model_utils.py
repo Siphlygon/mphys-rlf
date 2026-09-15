@@ -44,7 +44,11 @@ def maybe_compile_model(model: nn.Module, enabled: bool = True, recompile_limit:
         return model
     try:
         import torch._dynamo  # noqa: PLC0415 - imported lazily so a torch without dynamo still loads the module
-        logger.info("Compiling model with torch.compile (the first batch will be slower while it traces)...")
+        logger.warning(
+            "torch.compile is enabled: the FIRST batch will appear to hang at 'Sampling... 0%' for a few minutes "
+            "while the graph is traced and compiled. This is expected, happens only once, and every batch after it is "
+            "faster. Set compile_model=False to disable."
+        )
         # Attribute name differs across torch versions (recompile_limit in >=2.x recent, cache_size_limit earlier).
         for attr in ("recompile_limit", "cache_size_limit"):
             if hasattr(torch._dynamo.config, attr):
