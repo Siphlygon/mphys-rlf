@@ -148,7 +148,7 @@ def load_catalogue_values(path: Path | str = paths.STRIPPED_CATALOGUE_PATH) -> p
     return df
 
 
-def load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
+def _load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
     """
     Load the authoritative per-cutout contamination / cropping flags produced by `diffracc.data.cutout_quality`.
 
@@ -173,7 +173,7 @@ def load_cutout_quality(path: Path | str = DEFAULT_QUALITY_CSV) -> pd.DataFrame:
     return pd.read_csv(path, index_col="index")
 
 
-def select_clean(df: pd.DataFrame, quality: pd.DataFrame | None, drop_cropped: bool = True) -> pd.DataFrame:
+def _select_clean(df: pd.DataFrame, quality: pd.DataFrame | None, drop_cropped: bool = True) -> pd.DataFrame:
     """
     Restrict a cutout-indexed frame to the clean cutouts - those not flagged foreign-contaminated (and, by default, not
     cropped) by `load_cutout_quality`.
@@ -198,7 +198,7 @@ def select_clean(df: pd.DataFrame, quality: pd.DataFrame | None, drop_cropped: b
     """
     # Keep the load_cutout_quality exposed in case of further use, but use here otherwise
     if quality is None:
-        quality = load_cutout_quality(path=DEFAULT_QUALITY_CSV)
+        quality = _load_cutout_quality(path=DEFAULT_QUALITY_CSV)
 
     bad = quality["foreign_contaminant"].astype(bool)
     if drop_cropped:
@@ -240,7 +240,7 @@ def _summarise_components(rows: np.recarray) -> dict[str, float]:
     is_ridge = (minor == 0) & (maj > 0)
     is_point = (minor == 0) & (maj == 0)
     is_atrous = wave > 0
-    # Per-component significance; a zero island rms (should not occur) maps to +inf so it is never counted sub-threshold.
+    # Per-component significance; a zero island rms (should not occur) maps to +inf so it is never counted sub-threshold
     snr = np.divide(peak, isl_rms, out=np.full_like(peak, np.inf), where=isl_rms > 0)
     keep_snr5 = snr >= THRESH_PIX
     return {
@@ -268,8 +268,7 @@ def load_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> pd.DataFrame:
     Load the per-cutout PyBDSF component list and reduce it to one summary row per detected source. Only cutouts with at
     least one fitted component appear (i.e. the detections).
     
-    This differs from `load_raw_components` in that it returns a DataFrame of summary statistics, rather than the raw
-    `(n, 6)` direct arrays.
+    This differs from `load_raw_components` in that it returns a DataFrame of summary statistics.
     
     Parameters
     ----------
@@ -295,38 +294,10 @@ def load_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> pd.DataFrame:
     summaries = [_summarise_components(rows) for rows in obj["components"]]
     df = pd.DataFrame(summaries, index=np.asarray(obj["indices"]))
     df.index.name = "index"
-    df.sort_index()
-
-    # filter for only clean cutotus
-    df = select_clean(df, quality=None, drop_cropped=True)
-
-    return df
+    return df.sort_index()
 
 
-def load_raw_components(path: Path | str = DEFAULT_COMPONENTS_PKL) -> dict[int, pd.DataFrame]:
-    """
-    Load the components keyed by cutout index, one named-column DataFrame per source, for inspecting a single source.
-
-    Each source's structured record array (fields per `component_loading._COMPONENT_COLUMNS`) is returned as a
-    DataFrame, so columns keep their names and native dtypes (the numeric columns stay numeric; `S_code` stays a
-    string) rather than being coerced to a single dtype.
-
-    Parameters
-    ----------
-    path : Path | str, optional
-        Path to the components pickle, by default `DEFAULT_COMPONENTS_PKL`.
-
-    Returns
-    -------
-    dict[int, pd.DataFrame]
-        Mapping of cutout index to a DataFrame of its components, columns named per `_COMPONENT_COLUMNS`.
-    """
-    logger.info(f"Loading raw components from {path}")
-    obj = pd.read_pickle(path)
-    return {int(idx): pd.DataFrame.from_records(rows) for idx, rows in zip(obj["indices"], obj["components"])}
-
-
-def flux_alignment_corr(joined: pd.DataFrame) -> float:
+def _flux_alignment_corr(joined: pd.DataFrame) -> float:
     """
     Log-space correlation between the image's summed pixel flux and the catalogue total flux, as an alignment check.
 
@@ -351,9 +322,10 @@ def flux_alignment_corr(joined: pd.DataFrame) -> float:
     return round(float(np.corrcoef(x, y)[0, 1]), 3)
 
 
-def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float = 0.5) -> pd.DataFrame:
+def join_dataframes(logs: pd.DataFrame, cat: pd.DataFrame, comp: pd.DataFrame, warn_below: float = 0.5) -> pd.DataFrame:
     """
-    Inner-join the log table and catalogue values on cutout index, warning if the flux alignment looks broken.
+    Inner-join the log table, catalogue values, and component records on cutout index, warning if the flux alignment
+    looks broken.
 
     Parameters
     ----------
@@ -364,6 +336,8 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
     cat : pd.DataFrame
         The catalogue values from `load_catalogue_values`, carrying `cat_total_flux` (mJy), `cat_peak_flux` (mJy) and
         `cat_isl_rms` (mJy).
+    comp : pd.DataFrame
+        The components values from `load_components`, carry all columns described in `_summarise_components`.
     warn_below : float, optional
         Log a warning if `flux_alignment_corr` falls below this, by default `0.5`.
 
@@ -373,16 +347,28 @@ def join_logs_catalogue(logs: pd.DataFrame, cat: pd.DataFrame, warn_below: float
         The joined table, indexed by cutout number.
     """
     logger.info(f"Joining {len(logs)} logs and {len(cat)} catalogue rows on cutout index")
-    joined = logs.join(cat, how="inner")
+    joined: pd.DataFrame = logs.join(cat, how="inner").join(comp, how="left")
+    joined["detected"] = joined["n_comp"].notna()
 
     # make every column name lowercase; allows names that match the official components catalogue in the `las` pipeline,
     # while retaining lower-case names for our custom fields here.
     joined.columns = joined.columns.str.lower()
 
     # Filter for only clean cutouts
-    joined = select_clean(joined, quality=None, drop_cropped=True)
+    joined = _select_clean(joined, quality=None, drop_cropped=True)
 
-    corr = flux_alignment_corr(joined)
+    # Move the index to a column for record purposes, before resetting the index to a default RangeIndex
+    joined["cutout_index"] = joined.index
+    joined.reset_index(drop=True, inplace=True)
+
+    # Drop a number of columns which carry the same information from the logs and PyBDSF components
+    # Favour the components version as the log rounds early -- except for the rms, which is undefined in a no-detection
+    # case (there's no isl_rms without islands) but is defined in the log file pre-fitting.
+    # Also drops const rms, as we know that to be the case for this analysis
+    joined.drop(columns=["n_gauss_main", "model_flux_allscales", "model_flux_main", "max_peak_rms", "const_rms"],
+                inplace=True, errors="ignore")
+
+    corr = _flux_alignment_corr(joined)
     if corr < warn_below:
         logger.warning("Flux-alignment correlation is %.3f (< %.2f): logs and catalogue may be misaligned.",
                       corr, warn_below)
