@@ -241,7 +241,11 @@ def flag_foreign_components(source_ra: np.ndarray,
             continue
         cand = np.asarray(cand)
         # Keep components whose fitted ellipse's bounding box overlaps the square cutout (centre may be outside it).
-        x0 = (comp_ra[cand] - source_ra[i]) * np.cos(np.radians(source_dec[i])) * 3600.0
+        # Calculates the shortest change in RA, as rather than thinking of e.g., RA = 270 deg as 270 degrees away from
+        # RA = 0, it's actually 90 degrees away in the other direction. This is important for sources near the RA=0h
+        # seam. So we wrap the difference to [-180, 180] deg before projecting to arcsec.
+        dra_deg = (comp_ra[cand] - source_ra[i] + 180.0) % 360.0 - 180.0
+        x0 = dra_deg * np.cos(np.radians(source_dec[i])) * 3600.0
         y0 = (comp_dec[cand] - source_dec[i]) * 3600.0
         d_ra, d_dec = _ellipse_halfwidths(comp_maj[cand], comp_min[cand], comp_pa[cand])
         overlaps = ((x0 - d_ra <= half) & (x0 + d_ra >= -half)
@@ -378,7 +382,11 @@ def flag_cropped_sources(source_ra: np.ndarray,
         n_own[i] = own.size
 
         cos_dec = np.cos(np.radians(source_dec[i]))
-        x0 = (comp_ra[own] - source_ra[i]) * cos_dec * 3600.0
+        # Calculates the shortest change in RA, as rather than thinking of e.g., RA = 270 deg as 270 degrees away from
+        # RA = 0, it's actually 90 degrees away in the other direction. This is important for sources near the RA=0h
+        # seam. So we wrap the difference to [-180, 180] deg before projecting to arcsec.
+        dra_deg = (comp_ra[own] - source_ra[i] + 180.0) % 360.0 - 180.0
+        x0 = dra_deg * cos_dec * 3600.0
         y0 = (comp_dec[own] - source_dec[i]) * 3600.0
         maj = comp_maj[own]
         minr = comp_min[own]
@@ -402,7 +410,6 @@ def flag_cropped_sources(source_ra: np.ndarray,
     })
     logger.info(f"Flagged {int(cropped.sum())} / {n} cutouts ({cropped.mean() * 100:.1f}%) as cropped.")
     return result
-
 
 
 def _lookup_id_name(query_names: np.ndarray, sorted_names: np.ndarray, sorted_ids: np.ndarray) -> np.ndarray:
@@ -456,7 +463,7 @@ def add_optical_missplit_flag(flags: pd.DataFrame,
     target_source_name : array-like
         The `Source_Name` of each cutout's target, in the same row order as `flags`.
     optical_catalogue_path : Path, optional
-        Source catalogue carrying `Source_Name` and `ID_NAME` for the lookup, by default `paths.STRIPPED_CATALOGUE_PATH`.
+        Source catalogue carrying `Source_Name` and `ID_NAME` for the lookup, by default `paths.STRIPPED_CATALOGUE_PATH`
 
     Returns
     -------
