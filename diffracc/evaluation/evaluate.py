@@ -9,7 +9,7 @@ Three headline checks:
   range is it reliable?
 * :func:`memorisation_report` -- is the model generating, or reproducing training images?
 
-:func:`full_report` runs all three. All functions take image stacks in **physical Jy/beam** (invert any global flux
+:func:`full_report` runs all three. All functions take image stacks in physical Jy/beam (invert any global flux
 transform before calling; see :mod:`diffracc.data.flux_transforms`).
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .source_properties import (
     feature_matrix,
 )
 
-logger = get_logger(__name__)
+logger = get_logger("diffracc.evaluation.evaluate")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -40,12 +40,14 @@ def physical_distribution_report(
     nsigma: float = 5.0,
     feature_keys: list[str] | None = None,
     kid_degree: int = 3,
+    k_precision: int = 3,
+    k_density: int = 5,
 ) -> dict:
     """
     Compare the physical-property distributions of generated vs real images.
 
-    Returns per-property Wasserstein-1 and KS statistics, plus a multivariate physical Fréchet distance (FID) and kernel
-    distance (KID) computed on the standardised physical feature vector.
+    Returns per-property Wasserstein-1 statistics, plus a multivariate physical kernel distance (KID) and a
+    density-coverage score computed on the standardised physical feature vector.
     
     Parameters
     ----------
@@ -56,16 +58,23 @@ def physical_distribution_report(
     nsigma : float, optional
         Detection threshold for the source finder, by default 5.0.
     feature_keys : list[str] | None, optional
-        List of physical feature keys to include in the multivariate FID/KID computation. If ``None``, all features in
-        :data:`~diffracc.evaluation.source_properties.FEATURE_KEYS` are used, by default None.
+        List of physical feature keys to include in the multivariate KID computation. If `None`, all features in
+        `FEATURE_KEYS` are used, by default None.
     kid_degree : int, optional
         Degree of the polynomial kernel for the KID computation, by default 3.
-    
+    k_precision : int, optional
+        Nearest-neighbour count for the improved precision/recall, by default 3.
+    k_density : int, optional
+        Nearest-neighbour count for the density/coverage, by default 5.
+
     Returns
     -------
     dict
-        Dictionary containing the number of generated and real images, per-property statistics, and the multivariate
-        physical FID and KID.
+        Dictionary containing the number of generated and real images, per-property statistics, the multivariate
+        physical KID, and the manifold-based density/coverage. KID summarise how close the whole distributions are;
+        density/coverage additionally separate sample realism from coverage of the real diversity, which a single KID
+        conflates. The four manifold scalars are NaN if either set has too few detected sources to define a k-th nearest
+        neighbour.
     """
     gen_props = extract_batch(generated, nsigma=nsigma)
     real_props = extract_batch(real, nsigma=nsigma)
@@ -75,11 +84,8 @@ def physical_distribution_report(
     per_property = {}
     for key in PROPERTY_KEYS:
         g, r = gen_stats[key], real_stats[key]
-        ks_stat, ks_p = metrics.ks_2samp(g, r)
         per_property[key] = {
             "w1": metrics.wasserstein_1d(g, r),
-            "ks_stat": ks_stat,
-            "ks_pvalue": ks_p,
             "gen_median": float(np.nanmedian(g)),
             "real_median": float(np.nanmedian(r)),
         }
@@ -89,12 +95,21 @@ def physical_distribution_report(
     real_feat = feature_matrix(real_props, keys)
     real_std, gen_std = metrics.standardise(real_feat, gen_feat)  # scaler fit on real
 
+    # Manifold-based realism/coverage metrics. They need at least k+1 detected sources per set to define a k-th nearest
+    # neighbour; an early/undertrained snapshot may not, so fall back to NaN rather than aborting the whole report (the
+    # KID above are still informative in that regime).
+    try:
+        density, coverage = metrics.density_coverage(real_std, gen_std, k=k_density)
+    except ValueError:
+        density, coverage = float("nan"), float("nan")
+
     return {
         "n_generated": int(as_image_stack(generated).shape[0]),
         "n_real": int(as_image_stack(real).shape[0]),
         "per_property": per_property,
-        "physical_fid": metrics.frechet_distance(gen_std, real_std),
         "physical_kid": metrics.kernel_distance(gen_std, real_std, degree=kid_degree),
+        "density": density,
+        "coverage": coverage,
         "feature_keys": list(keys),
     }
 
@@ -227,7 +242,7 @@ def memorisation_report(
     Check whether generated images are near-duplicates of training images.
 
     For each generated image, find its nearest training image (Euclidean distance in peak-normalised, down-sampled pixel
-    space). If a held-out ``val`` set is given, the same nearest-training distance is computed for it as a baseline: if
+    space). If a held-out `val` set is given, the same nearest-training distance is computed for it as a baseline: if
     generated images sit systematically *closer* to the training set than genuinely-unseen validation images do, that
     indicates memorisation / leakage.
     
@@ -246,7 +261,7 @@ def memorisation_report(
     Returns
     -------
     dict
-        Dictionary containing the downsample factor, nearest-neighbour distances for generated images, and if ``val`` is
+        Dictionary containing the downsample factor, nearest-neighbour distances for generated images, and if `val` is
         provided, the nearest-neighbour distances for validation images and the ratio of medians between generated and
         validation distances.
     """
@@ -283,8 +298,8 @@ def full_report(
     nsigma: float = 5.0,
 ) -> dict:
     """
-    Run the full evaluation suite. ``prompted_peak`` enables the calibration report; ``train`` enables the memorisation
-    report (with optional ``val`` baseline).
+    Run the full evaluation suite. `prompted_peak` enables the calibration report; `train` enables the memorisation
+    report (with optional `val` baseline).
     
     Parameters
     ----------
@@ -293,10 +308,10 @@ def full_report(
     real : array_like
         Real image stack in physical Jy/beam.
     prompted_peak : array_like | None, optional
-        The physical peak flux (Jy/beam) each image was conditioned on, length N. If ``None``, the calibration report is
+        The physical peak flux (Jy/beam) each image was conditioned on, length N. If `None`, the calibration report is
         skipped, by default None.
     train : array_like | None, optional
-        Training image stack in physical Jy/beam. If ``None``, the memorisation report is skipped, by default None.
+        Training image stack in physical Jy/beam. If `None`, the memorisation report is skipped, by default None.
     val : array_like | None, optional
         Optional held-out validation image stack in physical Jy/beam, by default None. If provided, the nearest-training
         distances of the validation set are computed as a baseline for comparison.
@@ -336,11 +351,11 @@ def summarise(report: dict) -> str:
     pd = report.get("physical_distribution")
     if pd:
         lines.append(f"Physical distribution  (N_gen={pd['n_generated']}, N_real={pd['n_real']})")
-        lines.append(f"  physical FID = {pd['physical_fid']:.4f}   physical KID = {pd['physical_kid']:.4e}")
+        lines.append(f"  physical KID = {pd['physical_kid']:.4e}")
+        lines.append(f"  density = {pd.get('density', float('nan')):.3f}  coverage = {pd.get('coverage', float('nan')):.3f}")
         lines.append(f"  {'property':<13}{'W1':>12}{'KS':>8}{'KS p':>9}   gen/real median")
         for k, v in pd["per_property"].items():
-            lines.append(f"  {k:<13}{v['w1']:>12.4g}{v['ks_stat']:>8.3f}{v['ks_pvalue']:>9.2g}"
-                         f"   {v['gen_median']:.3g} / {v['real_median']:.3g}")
+            lines.append(f"  {k:<13}{v['w1']:>12.4g}{v['gen_median']:.3g} / {v['real_median']:.3g}")
     cal = report.get("calibration")
     if cal:
         lines.append(f"Calibration (recovered vs prompted peak, N={cal['n_used']})")

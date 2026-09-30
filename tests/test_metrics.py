@@ -51,68 +51,6 @@ class TestWasserstein1d:
         assert metrics.wasserstein_1d(sample1, sample2) == pytest.approx(0.0, abs=1e-9)
 
 
-class TestKS2samp:
-    """Tests for the ks_2samp function, which computes the two-sample Kolmogorov-Smirnov test statistic and p-value."""
-
-    def test_identical_samples_give_zero_statistic_and_pvalue_one(self):
-        """Test that the KS statistic is zero and the p-value is one for two identical samples."""
-        sample = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        stat, pvalue = metrics.ks_2samp(sample, sample)
-        assert stat == pytest.approx(0.0)
-        assert pvalue == pytest.approx(1.0)
-
-    def test_returns_plain_floats(self):
-        """Test that the KS statistic and p-value are returned as plain Python floats."""
-        stat, pvalue = metrics.ks_2samp(np.array([1.0, 2.0]), np.array([10.0, 20.0]))
-        assert isinstance(stat, float)
-        assert isinstance(pvalue, float)
-
-    def test_well_separated_samples_give_large_statistic_and_small_pvalue(self):
-        """Test that well-separated samples yield a large KS statistic and a small p-value."""
-        rng = np.random.default_rng(0)
-        sample1 = rng.normal(loc=0.0, scale=1.0, size=200)
-        sample2 = rng.normal(loc=100.0, scale=1.0, size=200)
-        stat, pvalue = metrics.ks_2samp(sample1, sample2)
-        assert stat == pytest.approx(1.0)
-        assert pvalue < 0.01
-
-
-class TestFrechetDistance:
-    """
-    Tests for the frechet_distance function, which computes the Fréchet distance between two multivariate distributions.
-    """
-
-    def test_zero_for_identical_feature_matrices(self):
-        """Test that the Fréchet distance is zero for two identical feature matrices."""
-        rng = np.random.default_rng(0)
-        x = rng.normal(size=(50, 3))
-        assert metrics.frechet_distance(x, x) == pytest.approx(0.0, abs=1e-6)
-
-    def test_matches_squared_mean_shift_for_equal_covariance_1d(self):
-        """Test that the Fréchet distance matches the squared mean shift for 1-D distributions with equal covariance."""
-        # x and y=x+delta share identical covariance exactly (same samples, shifted), so the trace term vanishes
-        # and the Frechet distance reduces to the squared mean shift, delta**2.
-        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]).reshape(-1, 1)
-        delta = 2.5
-        y = x + delta
-        assert metrics.frechet_distance(x, y) == pytest.approx(delta**2, rel=1e-6)
-
-    def test_symmetric(self):
-        """Test that the Fréchet distance is symmetric with respect to its inputs."""
-        rng = np.random.default_rng(1)
-        x = rng.normal(size=(30, 2))
-        y = rng.normal(loc=1.0, size=(30, 2))
-        assert metrics.frechet_distance(x, y) == pytest.approx(metrics.frechet_distance(y, x), rel=1e-6)
-
-    def test_larger_for_more_separated_distributions(self):
-        """Test that the Fréchet distance is larger for more separated distributions."""
-        rng = np.random.default_rng(2)
-        x = rng.normal(loc=0.0, scale=1.0, size=(100, 2))
-        y_close = rng.normal(loc=0.1, scale=1.0, size=(100, 2))
-        y_far = rng.normal(loc=10.0, scale=1.0, size=(100, 2))
-        assert metrics.frechet_distance(x, y_far) > metrics.frechet_distance(x, y_close)
-
-
 class TestKernelDistance:
     """
     Tests for the kernel_distance function, which computes the polynomial-kernel MMD (KID) between two distributions.
@@ -169,3 +107,71 @@ class TestStandardise:
         std_ref, = metrics.standardise(reference)
         assert np.all(np.isfinite(std_ref))
         np.testing.assert_allclose(std_ref[:, 0], 0.0)  # (3-3)/1.0 (sigma guarded to 1.0), not (3-3)/0
+
+
+class TestDensityCoverage:
+    """
+    Tests for density/coverage (Naeem et al. 2020): density counts real k-NN balls each generated point falls into
+    (normalised by k), coverage is the fraction of real samples with a generated neighbour in their own ball.
+    """
+
+    def test_identical_sets_give_full_coverage(self):
+        """With generated == real, every real ball contains its twin, so coverage = 1 and density > 0."""
+        rng = np.random.default_rng(0)
+        x = rng.standard_normal((300, 4))
+        d, c = metrics.density_coverage(x, x.copy(), k=5)
+        assert c == pytest.approx(1.0)
+        assert d > 0.0
+
+    def test_matched_distributions_density_near_one(self):
+        """Two independent draws from the same distribution give density ~ 1 (generated sit where real is dense)."""
+        rng = np.random.default_rng(1)
+        real = rng.standard_normal((1000, 3))
+        gen = rng.standard_normal((1000, 3))
+        d, c = metrics.density_coverage(real, gen, k=5)
+        assert 0.7 < d < 1.3
+        assert c > 0.6
+
+    def test_far_apart_sets_give_zero_density_and_coverage(self):
+        """Disjoint, far-separated clouds: no generated point lands in any real ball."""
+        rng = np.random.default_rng(2)
+        real = rng.standard_normal((300, 4))
+        gen = rng.standard_normal((300, 4)) + 100.0
+        d, c = metrics.density_coverage(real, gen, k=5)
+        assert d == pytest.approx(0.0)
+        assert c == pytest.approx(0.0)
+
+    def test_coverage_in_unit_interval_density_nonnegative(self):
+        """Coverage is a fraction in [0, 1]; density is non-negative."""
+        rng = np.random.default_rng(3)
+        real = rng.standard_normal((200, 5))
+        gen = rng.standard_normal((200, 5)) * 1.2
+        d, c = metrics.density_coverage(real, gen, k=5)
+        assert d >= 0.0
+        assert 0.0 <= c <= 1.0
+
+    def test_too_few_samples_raises(self):
+        """Fewer than k+1 real samples cannot define the k-NN balls."""
+        real = np.zeros((4, 2))
+        gen = np.zeros((10, 2))
+        with pytest.raises(ValueError, match="need at least"):
+            metrics.density_coverage(real, gen, k=5)
+
+
+class TestKnnRadii:
+    """Tests for the _knn_radii helper underpinning the manifold metrics."""
+
+    def test_excludes_self_and_returns_kth_distance(self):
+        """On collinear points spaced by 1, the 1st-NN distance is 1 for interior points (self is excluded)."""
+        x = np.array([[0.0], [1.0], [2.0], [3.0]])
+        radii = metrics._knn_radii(x, k=1)
+        # nearest non-self neighbour is at distance 1 for all four points
+        np.testing.assert_allclose(radii, [1.0, 1.0, 1.0, 1.0])
+
+    def test_second_neighbour(self):
+        """k=2 returns the distance to the second-nearest non-self neighbour."""
+        x = np.array([[0.0], [1.0], [2.0], [3.0]])
+        radii = metrics._knn_radii(x, k=2)
+        # for point 0: neighbours at 1, 2, 3 -> 2nd nearest is 2; for point 1: neighbours at 1,1,2 -> 2nd nearest is 1
+        assert radii[0] == pytest.approx(2.0)
+        assert radii[1] == pytest.approx(1.0)

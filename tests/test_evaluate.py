@@ -46,13 +46,12 @@ class TestPhysicalDistributionReport:
         assert report["n_generated"] == 3
         assert report["n_real"] == 3
         assert set(report["per_property"].keys()) == set(PROPERTY_KEYS)
-        assert "physical_fid" in report
         assert "physical_kid" in report
 
     def test_per_property_entries_have_expected_fields(self):
         """
-        Test that each property in the report includes the expected fields, such as KS statistic and p-value, and the
-        median values for generated and real images.
+        Test that each property in the report includes the expected fields, such as W1 statistics, and the median values
+        for generated and real images.
         """
         rng = np.random.default_rng(0)
         peaks = 10 ** rng.uniform(-0.5, 0.5, 15)
@@ -60,29 +59,19 @@ class TestPhysicalDistributionReport:
         real = _make_batch(peaks)
         report = evaluate.physical_distribution_report(generated, real)
         peak_stats = report["per_property"]["peak"]
-        assert set(peak_stats.keys()) == {"w1", "ks_stat", "ks_pvalue", "gen_median", "real_median"}
+        assert set(peak_stats.keys()) == {"w1", "gen_median", "real_median"}
 
-    def test_fid_and_kid_are_small_for_matched_distributions(self):
+    def test_kid_is_small_for_matched_distributions(self):
         """
-        Test that the Frechet Inception Distance (FID) and Kernel Inception Distance (KID) are small when the generated
-        and real distributions are closely matched.
+        Test that the Kernel Inception Distance (KID) are small when the generated and real distributions are closely
+        matched.
         """
         rng = np.random.default_rng(0)
         peaks = 10 ** rng.uniform(-0.5, 0.5, 40)
         generated = _make_batch(peaks)
         real = _make_batch(peaks)
         report = evaluate.physical_distribution_report(generated, real)
-        assert report["physical_fid"] < 0.5
         assert abs(report["physical_kid"]) < 0.5
-
-    def test_fid_is_larger_for_clearly_different_distributions(self):
-        """Test that the Frechet Inception Distance (FID) is larger for clearly different distributions."""
-        rng = np.random.default_rng(0)
-        real_peaks = 10 ** rng.uniform(-0.5, 0.5, 40)
-        gen_peaks = 10 ** rng.uniform(1.5, 2.5, 40)  # systematically much brighter
-        matched_report = evaluate.physical_distribution_report(_make_batch(real_peaks), _make_batch(real_peaks))
-        different_report = evaluate.physical_distribution_report(_make_batch(gen_peaks), _make_batch(real_peaks))
-        assert different_report["physical_fid"] > matched_report["physical_fid"]
 
     def test_respects_custom_feature_keys(self):
         """Test that the report respects custom feature keys when provided."""
