@@ -153,9 +153,8 @@ def kernel_distance(
     """
     Unbiased polynomial-kernel MMD^2 between two feature matrices -- the KID computation.
 
-    Unlike :func:`frechet_distance` it makes no Gaussian assumption and is unbiased, so it is more reliable at modest
-    sample sizes (e.g., in our brief evaluation). Lower is better; can be slightly negative due to the unbiased
-    estimator.
+    Makes no Gaussian assumption and is unbiased, so it is reliable at the modest sample sizes typical here. Lower is
+    better; can be slightly negative due to the unbiased estimator.
 
     Parameters
     ----------

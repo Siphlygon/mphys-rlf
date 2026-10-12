@@ -40,7 +40,6 @@ def physical_distribution_report(
     nsigma: float = 5.0,
     feature_keys: list[str] | None = None,
     kid_degree: int = 3,
-    k_precision: int = 3,
     k_density: int = 5,
 ) -> dict:
     """
@@ -62,8 +61,6 @@ def physical_distribution_report(
         `FEATURE_KEYS` are used, by default None.
     kid_degree : int, optional
         Degree of the polynomial kernel for the KID computation, by default 3.
-    k_precision : int, optional
-        Nearest-neighbour count for the improved precision/recall, by default 3.
     k_density : int, optional
         Nearest-neighbour count for the density/coverage, by default 5.
 
