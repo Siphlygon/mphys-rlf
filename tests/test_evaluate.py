@@ -13,10 +13,8 @@ def _make_batch(peaks, size=30, noise_scale=0.01, seed_offset=0):
     same peak value, so the max - and hence the recovered peak - is unaffected by blob shape).
 
     Source morphology (blob count and size) is varied across the batch, not just peak flux. A single fixed-shape
-    source at a fixed location leaves n_components/source_area/extent/concentration exactly constant across the
-    whole batch, which makes the feature covariance matrix singular regardless of sample count - that's numerically
-    borderline for frechet_distance's scipy.linalg.sqrtm (succeeds on some BLAS/LAPACK builds, raises SqrtmError on
-    others), not something more samples alone fixes.
+    source at a fixed location leaves n_components/source_area/extent/concentration exactly constant across the whole
+    batch - a degenerate, non-representative feature matrix that the multivariate metrics shouldn't be tested against.
     """
     imgs = []
     for i, peak in enumerate(peaks):
