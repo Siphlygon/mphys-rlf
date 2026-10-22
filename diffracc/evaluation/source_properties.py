@@ -1,9 +1,9 @@
 """
 Per-image physical source properties for radio cut-outs.
 
-A fast, dependency-light source finder used to turn an image (in physical Jy/beam) into a vector of interpretable
-quantities: peak/total flux, background rms, S/N, number of components, size and concentration. These feed both the 1-D
-distribution comparisons and the multivariate physical FID/KID.
+A fast, dependency-light source finder used to turn an image (in physical Jy/beam) into a small, interpretable
+feature vector: peak flux, background-subtracted total flux, source size (extent) and number of components. These feed
+both the per-property distribution comparisons and the multivariate metrics (KID, density/coverage).
 
 The default backend is pure numpy/scipy (plus astropy's sigma-clipped stats if available, to match the paper's S/N
 definition). A PyBDSF backend can be substituted for publication-grade source finding via :func:`extract_batch`'s
@@ -18,15 +18,16 @@ import numpy as np
 from astropy.stats import sigma_clipped_stats
 from scipy import ndimage
 
-# Order of scalar properties returned per image.
-PROPERTY_KEYS = [
-    "peak", "total_flux", "rms", "snr", "n_components", "source_area", "extent", "concentration", "bg_median",
-]
+# The physical quantities the metrics are computed on:
+# - peak brightness as the model is conditioned on it;
+# - total flux as the scientifically interesting quantity;
+# - extent as a size proxy (a convex-hull LAS later);
+# - n_components as a structure count.
+METRIC_KEYS = ["peak", "total_flux", "extent", "n_components"]
 
-# Features used for the multivariate physical FID/KID. Flux-like quantities are log-scaled (they span OoMs);
-# counts/sizes/ratios are used linearly. See :func:`feature_matrix`.
-FEATURE_KEYS = ["peak", "total_flux", "rms", "snr", "n_components", "extent", "concentration"]
-_LOG_FEATURES = {"peak", "total_flux", "rms", "snr"}
+# Features for the multivariate metrics (KID, density/coverage) -- the same basis as the per-property panel. Flux-like
+# quantities are log-scaled (they span orders of magnitude); the size and count are used linearly. See feature_matrix.
+_LOG_FEATURES = {"peak", "total_flux"}
 
 
 
@@ -81,38 +82,23 @@ def _background_stats(img: np.ndarray) -> tuple[float, float]:
 @dataclass
 class SourceProperties:
     """
-    Container for per-image source properties.
-    
+    Container for the per-image source properties the evaluation metrics are computed on.
+
     Attributes
     ----------
     peak : float
-        Peak flux in Jy/beam.
+        Peak flux (brightest pixel) in Jy/beam.
     total_flux : float
-        Total integrated flux in Jy.
-    rms : float
-        Background RMS in Jy/beam.
-    snr : float
-        Signal-to-noise ratio (peak - background median) / rms.
+        Background-subtracted integrated flux over the source mask.
+    extent : float
+        Flux-weighted second-moment size (a size proxy) in pixels.
     n_components : int
         Number of connected components in the source mask.
-    source_area : int
-        Area of the source mask in pixels.
-    extent : float
-        Flux-weighted second-moment size (LAS-like extent) in pixels.
-    concentration : float
-        Peak-to-integrated flux ratio, a measure of compactness.
-    bg_median : float
-        Background median in Jy/beam.
     """
     peak: float
     total_flux: float
-    rms: float
-    snr: float
-    n_components: int
-    source_area: int
     extent: float
-    concentration: float
-    bg_median: float
+    n_components: int
 
 
     def to_dict(self) -> dict[str, float]:
@@ -122,9 +108,9 @@ class SourceProperties:
         Returns
         -------
         dict[str, float]
-            Dictionary of source properties keyed by :data:`PROPERTY_KEYS`.
+            Dictionary of source properties keyed by :data:`METRIC_KEYS`.
         """
-        return {key: getattr(self, key) for key in PROPERTY_KEYS}
+        return {key: getattr(self, key) for key in METRIC_KEYS}
 
 
     def to_array(self, keys: list[str] | None = None) -> np.ndarray:
@@ -134,14 +120,14 @@ class SourceProperties:
         Parameters
         ----------
         keys : list[str], optional
-            Subset of keys to include in the array. Defaults to :data:`PROPERTY_KEYS`.
+            Subset of keys to include in the array. Defaults to :data:`METRIC_KEYS`.
         
         Returns
         -------
         np.ndarray
             Array of source properties in the order of the specified keys.
         """
-        keys = keys or PROPERTY_KEYS
+        keys = keys or METRIC_KEYS
         return np.array([getattr(self, key) for key in keys], dtype=float)
 
 
@@ -151,21 +137,21 @@ class SourceProperties:
         Collate a batch of instances into a dict of arrays, one per key.
 
         This is the array-oriented view used for per-property vectorised statistics (e.g. W1/KS tests across a batch);
-        for a per-image feature matrix use :func:`feature_matrix` instead.
+        for a per-image feature matrix use `feature_matrix` instead.
 
         Parameters
         ----------
         props : sequence of SourceProperties
-            Per-image properties, e.g. as returned by :func:`extract_batch`.
+            Per-image properties, e.g. as returned by `extract_batch`.
         keys : list[str], optional
-            Subset of keys to collate. Defaults to :data:`PROPERTY_KEYS`.
+            Subset of keys to collate. Defaults to `METRIC_KEYS`.
 
         Returns
         -------
         dict[str, np.ndarray]
             Arrays of shape (N,), one per requested key.
         """
-        keys = keys or PROPERTY_KEYS
+        keys = keys or METRIC_KEYS
         return {key: np.array([getattr(p, key) for p in props], dtype=float) for key in keys}
 
 
@@ -235,23 +221,19 @@ def extract_properties(image: np.ndarray, nsigma: float = 5.0) -> SourceProperti
         A SourceProperties instance containing the extracted properties.
     """
     img = as_image_stack(image)[0]
-    med, std = _background_stats(img)
+    med, std = _background_stats(img)  # robust background; needed to threshold and background-subtract
     peak = float(img.max())
-    rms = float(std)
-    snr = float(peak - med) / rms if rms > 0 else np.nan
 
     mask = img > (med + nsigma * std)
-    # If no pixels are above the threshold, return zeroed properties with NaN concentration.
+    # If no pixels are above the threshold, there is no detected source: zero flux, size and component count.
     if not mask.any():
-        return SourceProperties(peak=peak, total_flux=0.0, rms=rms, snr=snr, n_components=0,
-                                source_area=0, extent=0.0, concentration=np.nan, bg_median=med)
+        return SourceProperties(peak=peak, total_flux=0.0, extent=0.0, n_components=0)
 
     total_flux = float((img[mask] - med).sum())  # background-subtracted integrated flux
     _, n_components = ndimage.label(mask)  # number of connected components in the source mask
-    source_area = int(mask.sum())
 
-    # Flux-weighted second-moment size (a LAS-like extent, in pixels).
-    # Compute the flux-weighted centroid and variance, then take the square root of the variance to get the extent.
+    # Flux-weighted second-moment size (a LAS-like extent, in pixels): flux-weighted centroid and variance, then the
+    # square root of the variance.
     ys, xs = np.nonzero(mask)
     w = np.clip(img[mask] - med, 0.0, None)
     wsum = float(w.sum()) + 1e-30
@@ -259,10 +241,8 @@ def extract_properties(image: np.ndarray, nsigma: float = 5.0) -> SourceProperti
     cx = float((w * xs).sum() / wsum)
     var = float((w * ((ys - cy) ** 2 + (xs - cx) ** 2)).sum() / wsum)
     extent = float(2.0 * np.sqrt(max(var, 0.0)))
-    concentration = float((peak - med) / (total_flux + 1e-30))  # peak / integrated ~ compactness
 
-    return SourceProperties(peak=peak, total_flux=total_flux, rms=rms, snr=snr, n_components=n_components,
-                            source_area=source_area, extent=extent, concentration=concentration, bg_median=med)
+    return SourceProperties(peak=peak, total_flux=total_flux, extent=extent, n_components=n_components)
 
 
 def extract_batch(
@@ -293,7 +273,7 @@ def extract_batch(
 
 def feature_matrix(props: Sequence[SourceProperties], keys: list[str] | None = None) -> np.ndarray:
     """
-    Assemble the (N, D) feature matrix for the multivariate physical FID/KID.
+    Assemble the (N, D) feature matrix for the multivariate physical KID.
 
     Flux-like features are log10-scaled (with a small positive floor, since detections are positive) so their OoMs of
     range don't dominate; other features are used linearly. Rows with any non-finite feature are dropped.
@@ -303,14 +283,14 @@ def feature_matrix(props: Sequence[SourceProperties], keys: list[str] | None = N
     props : sequence of SourceProperties
         Per-image properties, e.g. as returned by :func:`extract_batch`.
     keys : list of str, optional
-        Subset of keys to include in the feature matrix. Defaults to :data:`FEATURE_KEYS`.
+        Subset of keys to include in the feature matrix. Defaults to :data:`METRIC_KEYS`.
 
     Returns
     -------
     np.ndarray
         Feature matrix of shape (N, D) with finite rows only.
     """
-    keys = keys or FEATURE_KEYS
+    keys = keys or METRIC_KEYS
     if not props:
         return np.empty((0, len(keys)))
 

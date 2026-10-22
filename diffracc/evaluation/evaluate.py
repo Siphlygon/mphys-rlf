@@ -20,8 +20,7 @@ from sklearn.neighbors import NearestNeighbors
 from ..utils.logger import get_logger
 from . import metrics
 from .source_properties import (
-    FEATURE_KEYS,
-    PROPERTY_KEYS,
+    METRIC_KEYS,
     SourceProperties,
     as_image_stack,
     extract_batch,
@@ -58,7 +57,7 @@ def physical_distribution_report(
         Detection threshold for the source finder, by default 5.0.
     feature_keys : list[str] | None, optional
         List of physical feature keys to include in the multivariate KID computation. If `None`, all features in
-        `FEATURE_KEYS` are used, by default None.
+        `METRIC_KEYS` are used, by default None.
     kid_degree : int, optional
         Degree of the polynomial kernel for the KID computation, by default 3.
     k_density : int, optional
@@ -79,7 +78,7 @@ def physical_distribution_report(
     real_stats = SourceProperties.stack(real_props)
 
     per_property = {}
-    for key in PROPERTY_KEYS:
+    for key in METRIC_KEYS:
         g, r = gen_stats[key], real_stats[key]
         per_property[key] = {
             "w1": metrics.wasserstein_1d(g, r),
@@ -87,7 +86,7 @@ def physical_distribution_report(
             "real_median": float(np.nanmedian(r)),
         }
 
-    keys = feature_keys or FEATURE_KEYS
+    keys = feature_keys or METRIC_KEYS
     gen_feat = feature_matrix(gen_props, keys)
     real_feat = feature_matrix(real_props, keys)
     real_std, gen_std = metrics.standardise(real_feat, gen_feat)  # scaler fit on real

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from diffracc.evaluation import evaluate
-from diffracc.evaluation.source_properties import PROPERTY_KEYS
+from diffracc.evaluation.source_properties import METRIC_KEYS
 
 
 def _make_batch(peaks, size=30, noise_scale=0.01, seed_offset=0):
@@ -43,7 +43,7 @@ class TestPhysicalDistributionReport:
 
         assert report["n_generated"] == 3
         assert report["n_real"] == 3
-        assert set(report["per_property"].keys()) == set(PROPERTY_KEYS)
+        assert set(report["per_property"].keys()) == set(METRIC_KEYS)
         assert "physical_kid" in report
 
     def test_per_property_entries_have_expected_fields(self):
