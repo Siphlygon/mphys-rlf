@@ -1,17 +1,11 @@
 """
-A script to evaluate the convergence/training of a diffusion model by sampling images from several snapshots an
-comparing them to a real image set.
+A script to evaluate the convergence/training of a diffusion model by sampling images from several snapshots and
+comparing them to a held-out real image set.
 
-Experience shows (and this is a maxim in ML training anyway) that validation loss is not always a good progress metre.
-Especially for our diffusion models, we found that although validation loss may barely decrease between e.g., 34k and
-100k iterations, the quality of the generated samples can improve dramatically - from static noise to clean, physical
-radio galaxies. So "the loss is flat" cannot be used to argue convergence, and the only way to decide whether more
-iterations are worth the GPU-hours is to evaluate sample quality directly as a function of iteration.
+This script samples from each of several snapshots and runs the evaluation (diffracc.evaluation.evaluate.full_report)
+against a held-out real image set, emitting:
 
-This script samples N images from each of several snapshots and runs the evaluation against a real image set
-(diffracc.evaluation.evaluate.full_report) emitting:
-
-* a metric-vs-iteration table (and CSV) - physical FID/KID, plus calibration and memorisation scalars when available
+* a metric-vs-iteration table (and CSV) - physical KID, plus calibration and memorisation scalars
 * a multi-row PNG contact sheet, one row per snapshot, for the qualitative view alongside the numbers
 
 Note:
@@ -21,14 +15,6 @@ other by construction and will look near-identical regardless of real progress. 
 * everything is in physical units (Jy/beam) - the evaluation suite requires it, and it is the only way a
 transform-trained and a raw-trained model can be put on the same axis. Inversion is handled automatically via the flux
 transform recorded in each model's config (see sample_snapshot_grid's --invert).
-
-Usage (from the repo root):
-    python -m diffracc.scripts.snapshot_convergence_sweep --model-name snr15_inclusive_las_old \\
-        --real-data-path /path/to/snr_15_peak_500_inclusive.h5 --snapshots 50000 70000 85000 100000
-
-    # auto-pick N evenly-spaced snapshots across the whole run instead of listing them
-    python -m diffracc.scripts.snapshot_convergence_sweep --model-name snr15_inclusive_las_old \\
-        --real-data-path /path/to/data.h5 --n-snapshots 5 --n 256
 """
 import argparse
 import csv
@@ -42,19 +28,31 @@ import numpy as np
 import torch
 
 from ..data import flux_transforms as ft
+from ..data.datasets import ImagePathDataset
+from ..data.splits import load_split
 from ..evaluation.evaluate import full_report
 from ..model import diffusion
+from ..model.config import ModelConfig
 from ..utils import paths
 from ..utils.logger import get_logger
 from .sample_snapshot_grid import _find_snapshot, _load_model
 
 logger = get_logger(__name__)
 
+# Context column names, mirroring diffracc.training.trainer / diffracc.evaluation.compare_models.
+_PEAK_KEY = "max_values_tr"
+_LAS_KEY = "las_values_tr"
+
+# sampling always uses 25 EDM steps and the deployed EMA weights (the default of diffracc.model.model_utils.load_model).
+_TIMESTEPS = 25
+_WEIGHTS_KEY = "ema_model"
+
 # Scalars pulled out of the nested full_report dict for the summary table, as (column name, report section, key within
 # that section). Sections that were skipped (e.g. calibration without prompted peaks) are simply absent from the table.
 _TABLE_METRICS = [
-    ("physical_fid", "physical_distribution", "physical_fid"),
     ("physical_kid", "physical_distribution", "physical_kid"),
+    ("density", "physical_distribution", "density"),
+    ("coverage", "physical_distribution", "coverage"),
     ("calib_slope", "calibration", "slope"),
     ("calib_r2", "calibration", "r2"),
     ("calib_scatter_dex", "calibration", "scatter_dex"),
@@ -94,86 +92,135 @@ def _available_snapshots(model_dir: Path) -> list[int]:
     return iters
 
 
-def _pick_evenly_spaced(available: list[int], n_snapshots: int) -> list[int]:
+def _load_reference_cutouts(dataset_path: Path,
+                    idx: np.ndarray,
+                    n: int | None,
+                    seed: int,
+                    images_key: str = "images") -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Choose n_snapshots evenly-spaced iterations from those available, always including the latest.
-
-    The EMA's ~10k-iteration averaging window makes adjacent late snapshots look near-identical regardless of genuine
-    progress, so a convergence check needs snapshots far enough apart to outrun that smoothing.
+    Load a held-out real reference cutout (physical Jy/beam) plus its per-image peak flux and LAS, for the given dataset
+    rows.
 
     Parameters
     ----------
-    available : list[int]
-        Sorted available snapshot iterations.
-    n_snapshots : int
-        How many to pick.
+    dataset_path : Path
+        Path to the HDF5 dataset holding `images` (Jy/beam) and a `cat_info` table with an `LAS` column.
+    idx : np.ndarray
+        Dataset row indices to load (a split partition).
+    n : int | None
+        Cap the reference/prompt set to this many images (a fixed seeded subsample, shared across the sweep). `None`
+        uses every row in `idx`.
+    seed : int
+        Seed for the subsample, so every snapshot in a sweep sees the identical reference and prompts.
+    images_key : str, optional
+        The images dataset key, by default "images".
 
     Returns
     -------
-    list[int]
-        The chosen iterations, sorted ascending and de-duplicated.
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        `(images, peak, las, indices)`: images (n, H, W) float32 in Jy/beam, per-image peak flux (n,) Jy/beam, LAS
+        (n,) arcsec, and the dataset row indices drawn (n,).
     """
-    if n_snapshots >= len(available):
-        return available
-    idx = np.linspace(0, len(available) - 1, n_snapshots).round().astype(int)
-    return sorted({available[i] for i in idx})
+    idx = np.sort(idx if n is None or n >= idx.size
+                  else np.random.default_rng(seed).choice(idx, size=n, replace=False))
+
+    with h5py.File(dataset_path, "r") as f:
+        images = np.asarray(f[images_key][idx], dtype=np.float32)
+        las = np.ascontiguousarray(f["cat_info"][idx]["LAS"], dtype=np.float64)
+    peak = images.reshape(images.shape[0], -1).max(axis=1).astype(np.float64)
+    logger.info("Loaded %i held-out real images from %s (peak median %.3g Jy/beam, LAS median %.3g arcsec).",
+                images.shape[0], dataset_path.name, np.median(peak), np.median(las))
+    return images, peak, las, idx
 
 
-def _load_real_images(real_data_path: str, n_real: int | None, seed: int = 0) -> np.ndarray:
+def _build_context(config,
+                   dataset_path: Path,
+                   peak_phys: np.ndarray,
+                   las_phys: np.ndarray,
+                   images_key: str = "images") -> np.ndarray | None:
     """
-    Load a real image stack (physical Jy/beam) from the training/held-out h5 to compare against.
+    Map physical (peak, LAS) prompts into the model's standardised context space, returning the (N, context_dim) matrix
+    in the column order the model's config records, or `None` for an unconditional model (no context columns).
+
+    The peak-flux and LAS standardisation transforms are fit on the full dataset, exactly as training did, so the
+    prompts land in the same ~N(0, 1) space as the model was trained on. Reusing that static method keeps the fit
+    identical without pulling in the bdsf-backed generation pipeline.
 
     Parameters
     ----------
-    real_data_path : str
-        Path to an h5 file with an "images" dataset.
-    n_real : int | None
-        Randomly subsample this many images (without replacement) for speed; None uses all of them.
-    seed : int, optional
-        RNG seed for the subsample, by default 0, so repeated runs compare against the identical real set.
+    config : ModelConfig
+        The trained model's config; `config.context` gives the context column order.
+    dataset_path : Path
+        Path to the HDF5 dataset whose full-dataset peak/LAS the transforms are fit on.
+    peak_phys : np.ndarray
+        Physical peak-flux prompts (Jy/beam), length N.
+    las_phys : np.ndarray
+        Physical LAS prompts (arcsec), length N.
+    images_key : str, optional
+        The images dataset key, by default "images".
 
     Returns
     -------
-    np.ndarray
-        Real image stack, shape (n, H, W).
+    np.ndarray | None
+        The (N, context_dim) float32 context, or `None` if the model has no context columns.
     """
-    with h5py.File(real_data_path, "r") as f:
-        images = f["images"]
-        total = len(images)
-        if n_real is None or n_real >= total:
-            return np.asarray(images[:], dtype=np.float32)
-        # Sorted indices: h5py fancy-indexing requires increasing order.
-        idx = np.sort(np.random.default_rng(seed).choice(total, size=n_real, replace=False))
-        return np.asarray(images[idx], dtype=np.float32)
+    context_cols = list(getattr(config, "context", []) or [])
+    if not context_cols:
+        return None
+
+    columns = []
+    with h5py.File(dataset_path, "r") as f:
+        for col in context_cols:
+            if col == _PEAK_KEY:
+                # Per-image physical max over the full dataset, chunked so the fit never holds the whole ~GB stack.
+                imgs = f[images_key]
+                total = imgs.shape[0]
+                peaks = np.empty(total, dtype=np.float64)
+                step = 4096
+                for s in range(0, total, step):
+                    block = np.asarray(imgs[s:s + step], dtype=np.float32)
+                    peaks[s:s + block.shape[0]] = block.reshape(block.shape[0], -1).max(axis=1)
+                _, transform = ImagePathDataset._power_transform(torch.tensor(peaks))
+                prompt = peak_phys
+            elif col == _LAS_KEY:
+                las_fit = np.ascontiguousarray(f["cat_info"][:]["LAS"], dtype=np.float64)
+                _, transform = ImagePathDataset._power_transform(torch.tensor(las_fit))
+                prompt = las_phys
+            else:
+                raise ValueError(f"Unhandled context column {col!r}; known columns are {_PEAK_KEY!r} and {_LAS_KEY!r}.")
+            columns.append(transform.transform(np.asarray(prompt, np.float64).reshape(-1, 1))[:, 0])
+    return np.stack(columns, axis=1).astype(np.float32)
 
 
 @torch.no_grad()
 def _sample_snapshot(model_dir: Path,
                      snapshot_iter: int,
+                     context: np.ndarray | None,
                      n: int,
-                     key: str,
-                     timesteps: int,
                      device: torch.device,
                      seed: int,
-                     sample_batch: int = 256) -> tuple[np.ndarray, np.ndarray | None]:
+                     sample_batch: int = 256) -> np.ndarray:
     """
-    Sample n images from one snapshot, returned in physical Jy/beam.
+    Sample one snapshot's EMA weights on a fixed set of prompts, returned in physical Jy/beam.
 
-    The same latent seed is used for every snapshot in a sweep, so differences between rows reflect the model's training
-    progress rather than sampling variance.
+    Both the latents (via `seed`) and the prompts (via `context`) are fixed across every snapshot in a sweep, so
+    differences between rows reflect the model's training progress rather than sampling or prompt variance.
 
     Parameters
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_dir = paths.MODEL_PARENT / model_name
+
+    available = _available_snapshots(model_dir)
+    chosen = sorted(set(snapshots))
     ----------
     model_dir : Path
         The model results directory.
     snapshot_iter : int
         Which snapshot iteration to sample from.
+    context : np.ndarray | None
+        The (n, context_dim) standardised context, or `None` for an unconditional model. Prompt `i` pairs with latent `i`.
     n : int
-        Number of images to sample.
-    key : str
-        Which weights to use: "ema_model" or "model".
-    timesteps : int
-        Number of sampling steps.
+        Number of images to sample (must equal `len(context)` when conditioning).
     device : torch.device
         Device to sample on.
     seed : int
@@ -184,15 +231,15 @@ def _sample_snapshot(model_dir: Path,
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray | None]
-        The sampled images in Jy/beam with shape (n, H, W), and the physical prompted peak fluxes if the model has
-        peak-flux conditioning (else None, which disables the calibration report).
+    np.ndarray
+        The sampled images in Jy/beam with shape (n, H, W).
     """
     snapshot_path = _find_snapshot(model_dir, snapshot_iter)
-    model, config = _load_model(model_dir, snapshot_path, key)
+    model, config = _load_model(model_dir, snapshot_path, _WEIGHTS_KEY)
     model = model.to(device)
 
-    context_dim = model.model.context_dim
+    if context is not None:
+        context_t = torch.as_tensor(context, dtype=torch.float32, device=device)
 
     # Draw every latent up front (cheap - this is just noise) so the shared-seed guarantee is identical regardless of
     # chunking; only the U-Net forward pass is memory-bound, so the latents are then sampled in sample_batch-sized
@@ -204,70 +251,61 @@ def _sample_snapshot(model_dir: Path,
     for start in range(0, n, sample_batch):
         lat = latents[start:start + sample_batch]
         bs = lat.shape[0]
-        # Central (standardised-zero) prompt for every image, matching sample_snapshot_grid's convention.
-        context = torch.zeros(bs, context_dim, device=device) if context_dim else None
+        ctx = context_t[start:start + bs] if context is not None else None
         steps = diffusion.edm_sampling(
-            model, context_batch=context, latents=lat, batch_size=bs, image_size=80, timesteps=timesteps)
+            model, context_batch=ctx, latents=lat, batch_size=bs, image_size=80, timesteps=_TIMESTEPS)
         chunks.append(steps[-1][:, 0].cpu().numpy())
     imgs = np.concatenate(chunks, axis=0)
 
     # The evaluation suite requires physical Jy/beam, so always invert a recorded transform here (unlike
     # sample_snapshot_grid, where leaving samples in model space is a valid viewing choice).
     recorded = getattr(config, "flux_transform", None)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_dir = paths.MODEL_PARENT / model_name
+
+    available = _available_snapshots(model_dir)
+    chosen = sorted(set(snapshots))
     if recorded is not None:
         imgs = np.asarray(ft.load(recorded).inverse(imgs))
-
-    # The calibration report needs the *physical* peak flux each image was conditioned on. A standardised-zero
-    # prompt maps back to some fixed physical peak, but recovering it needs the training-set power transform, which
-    # this script deliberately does not refit (see sample_conditioning_sweep.py for that). So calibration is left
-    # disabled here - this sweep is about distribution match over training time, not conditioning fidelity.
-    return imgs, None
+    return imgs
 
 
 def sweep_snapshots(model_name: str,
-                    real_data_path: str,
-                    snapshots: list[int] | None = None,
-                    n_snapshots: int = 5,
-                    n: int = 256,
-                    n_real: int | None = 2000,
-                    key: str = "ema_model",
-                    timesteps: int = 25,
+                    snapshots: list[int],
+                    n: int | None = None,
                     seed: int = 0,
                     check_memorisation: bool = False,
-                    sample_batch: int = 256,
-                    out_dir: Path | None = None) -> dict:
+                    sample_batch: int = 256) -> dict:
     """
-    Sample and evaluate several snapshots of one model, to see whether quality is still improving with training.
+    Sample and evaluate several snapshots of one model against a held-out dataset, to see how sample quality changes
+    with training iteration.
+
+    At training, a number of images and their related conditioning information (peak/LAS) are held-out from the training
+    set and recorded in a split file (split_<model_name>.npz) in the model directory. This function loads that split,
+    draws the held-out reference and its physical prompts, and samples each requested snapshot using those prompts. 
+    This provides a test with fixed latents and fixed prompts, with the latter having never been seen during training,
+    ensuring that differences between snapshots reflect the model's training progress rather than sampling or prompt
+    variance.
 
     Parameters
     ----------
     model_name : str
-        Model directory name under paths.MODEL_PARENT.
-    real_data_path : str
-        Path to an h5 with an "images" dataset of real images (physical Jy/beam) to compare against.
-    snapshots : list[int] | None, optional
-        Explicit snapshot iterations to evaluate. If None (default), n_snapshots evenly-spaced ones are chosen.
-    n_snapshots : int, optional
-        How many evenly-spaced snapshots to auto-pick when `snapshots` is None, by default 5.
-    n : int, optional
-        Images to sample per snapshot, by default 256. FID/KID are biased at small n, so keep this constant across a
-        sweep (it is) and treat absolute values as comparable only within one sweep.
-    n_real : int | None, optional
-        Subsample this many real images for the comparison, by default 2000. None uses all.
-    key : str, optional
-        Which weights to sample from, by default "ema_model".
-    timesteps : int, optional
-        Sampling steps, by default 25.
+        Model directory name under `paths.MODEL_PARENT`.
+    snapshots : list[int]
+        Snapshot iterations to evaluate, chosen explicitly. Under EMA the right snapshots to compare are a deliberate
+        choice (e.g. 50k/70k/85k/100k), not an evenly-spaced formula.
+    n : int | None, optional
+        Cap the reference/prompt set to this many images (a fixed seeded subsample, shared across the sweep), by default
+        None (use the whole val partition).
     seed : int, optional
-        Latent seed, shared across all snapshots so rows differ by training progress only, by default 0.
+        Latent/subsample seed, shared across all snapshots so rows differ by training progress only, by default 0.
     check_memorisation : bool, optional
-        Also run the memorisation report against the real set, by default False. Off by default because it is a
-        nearest-neighbour search over the full real stack and is the slowest part of the report.
+        Also run the memorisation report (nearest-neighbour of each generated image against the train partition, with
+        the held-out reference as baseline), by default False. Off by default because it is a nearest-neighbour search
+        over the full train stack and is the slowest part of the report.
     sample_batch : int, optional
         Maximum images pushed through the U-Net at once, by default 256. Only caps peak GPU memory; the result is
-        unchanged. Lower it if sampling OOMs, raise it if there is headroom.
-    out_dir : Path | None, optional
-        Where to write outputs, by default the model directory.
+        unchanged. Lower it if sampling OOMs, raise it if there is headroom for speed.
 
     Returns
     -------
@@ -276,11 +314,9 @@ def sweep_snapshots(model_name: str,
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_dir = paths.MODEL_PARENT / model_name
-    out_dir = out_dir or model_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     available = _available_snapshots(model_dir)
-    chosen = sorted(set(snapshots)) if snapshots else _pick_evenly_spaced(available, n_snapshots)
+    chosen = sorted(set(snapshots))
     missing = [it for it in chosen if it not in available]
     if missing:
         raise FileNotFoundError(f"Requested snapshots not available: {missing}. Available: {available}")
@@ -293,22 +329,35 @@ def sweep_snapshots(model_name: str,
             "Prefer wider spacing for a convergence check."
         )
 
-    logger.info(f"Loading real images from {real_data_path}...")
-    real = _load_real_images(real_data_path, n_real, seed=seed)
+    train_idx, val_idx, recorded_dataset = load_split(model_dir / f"split_{model_name}.npz")
+    dataset_path = Path(recorded_dataset)
+    real, peak, las, _ = _load_reference_cutouts(dataset_path, val_idx, n, seed)
 
+    # The context columns are a property of the model, not the snapshot, so build the shared prompts (fitting the
+    # standardisation transforms on the full dataset) once, then reuse the same prompts and latents for every snapshot.
+    config = ModelConfig.from_preset(model_dir)
+    context = _build_context(config, dataset_path, peak, las)
+    prompted_peak = peak if context is not None else None  # calibration needs the physical peak we conditioned on
+    if context is None:
+        logger.info("Model is unconditional (no context columns) - sampling without prompts; calibration disabled.")
+
+    # Memorisation compares generated images against the images the model actually trained on (the train partition).
+    train_images = _load_reference_cutouts(dataset_path, train_idx, None, seed)[0] if check_memorisation else None
+
+    n_sample = real.shape[0]
     reports, sampled = {}, {}
     for snapshot_iter in chosen:
-        logger.info(f"Sampling {n} images from iteration {snapshot_iter}...")
-        imgs, prompted_peak = _sample_snapshot(
-            model_dir, snapshot_iter, n, key, timesteps, device, seed, sample_batch=sample_batch)
+        logger.info(f"Sampling {n_sample} images from iteration {snapshot_iter}...")
+        imgs = _sample_snapshot(model_dir, snapshot_iter, context, n_sample, device, seed, sample_batch=sample_batch)
         sampled[snapshot_iter] = imgs
 
-        logger.info(f"Running Tier-1 evaluation for iteration {snapshot_iter}...")
+        logger.info(f"Running evaluation for iteration {snapshot_iter}...")
         try:
             reports[snapshot_iter] = full_report(
                 imgs, real,
                 prompted_peak=prompted_peak,
-                train=real if check_memorisation else None,
+                train=train_images,
+                val=real if check_memorisation else None,
             )
         except Exception as exc:  # noqa: BLE001 - a bad early snapshot must not abort the whole sweep
             # The usual cause is an early/undertrained snapshot whose images contain no sources the finder can detect,
@@ -321,9 +370,9 @@ def sweep_snapshots(model_name: str,
             )
             reports[snapshot_iter] = {"evaluation_error": f"{type(exc).__name__}: {exc}"}
 
-    _write_table(reports, out_dir / f"convergence_{model_name}_{key}.csv")
-    _write_report_json(reports, out_dir / f"convergence_{model_name}_{key}.json")
-    _plot_contact_sheet(sampled, reports, model_name, key, out_dir / f"convergence_{model_name}_{key}.png")
+    _write_table(reports, model_dir / f"convergence_{model_name}.csv")
+    _write_report_json(reports, model_dir / f"convergence_{model_name}.json")
+    _plot_contact_sheet(sampled, reports, model_name, model_dir / f"convergence_{model_name}.png")
     return reports
 
 
@@ -371,7 +420,7 @@ def _write_table(reports: dict, path: Path) -> None:
         writer.writerows(rows)
 
     widths = [max(len(h), 14) for h in headers]
-    logger.info("Metric vs iteration (lower physical_fid / physical_kid = closer to the real distribution):")
+    logger.info("Metric vs iteration (lower physical_kid = closer to the real distribution):")
     logger.info(" | ".join(h.rjust(w) for h, w in zip(headers, widths)))
     for row in rows:
         logger.info(" | ".join(
@@ -406,21 +455,18 @@ def _write_report_json(reports: dict, path: Path) -> None:
     logger.info(f"Wrote full reports to {path}")
 
 
-def _plot_contact_sheet(sampled: dict, reports: dict, model_name: str, key: str, path: Path,
-                        n_show: int = 6) -> None:
+def _plot_contact_sheet(sampled: dict, reports: dict, model_name: str, path: Path, n_show: int = 6) -> None:
     """
-    Plot one row of example images per snapshot, annotated with that snapshot's physical FID.
+    Plot one row of example images per snapshot, annotated with that snapshot's physical KID.
 
     Parameters
     ----------
     sampled : dict
         Mapping of iteration -> sampled image stack.
     reports : dict
-        Mapping of iteration -> full_report dict, for the FID annotation.
+        Mapping of iteration -> full_report dict, for the KID annotation.
     model_name : str
         Model name, for the figure title.
-    key : str
-        Which weights were sampled, for the figure title.
     path : Path
         PNG destination.
     n_show : int, optional
@@ -432,7 +478,7 @@ def _plot_contact_sheet(sampled: dict, reports: dict, model_name: str, key: str,
 
     for row, snapshot_iter in enumerate(iterations):
         imgs = sampled[snapshot_iter]
-        fid = reports[snapshot_iter].get("physical_distribution", {}).get("physical_fid", float("nan"))
+        kid = reports[snapshot_iter].get("physical_distribution", {}).get("physical_kid", float("nan"))
         for col in range(ncols):
             ax = axes[row][col]
             img = imgs[col]
@@ -443,9 +489,9 @@ def _plot_contact_sheet(sampled: dict, reports: dict, model_name: str, key: str,
         axes[row][0].axis("on")
         axes[row][0].set_xticks([])
         axes[row][0].set_yticks([])
-        axes[row][0].set_title(f"iter {snapshot_iter}  (FID {fid:.3g})", fontsize=9, loc="left")
+        axes[row][0].set_title(f"iter {snapshot_iter}  (KID {kid:.3g})", fontsize=9, loc="left")
 
-    fig.suptitle(f"{model_name}  |  {key}  |  convergence sweep  |  Jy/beam", fontsize=11)
+    fig.suptitle(f"{model_name}  |  EMA weights  |  convergence sweep  |  Jy/beam", fontsize=11)
     fig.tight_layout()
     fig.savefig(path, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -455,30 +501,20 @@ def _plot_contact_sheet(sampled: dict, reports: dict, model_name: str, key: str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model-name", required=True, help="Model directory name under model_results/.")
-    parser.add_argument("--real-data-path", required=True,
-                        help="Path to an h5 with an 'images' dataset of real images (physical Jy/beam).")
-    parser.add_argument("--snapshots", type=int, nargs="+", default=None,
-                        help="Explicit snapshot iterations to evaluate (default: auto-pick evenly spaced).")
-    parser.add_argument("--n-snapshots", type=int, default=5,
-                        help="How many evenly-spaced snapshots to auto-pick when --snapshots is not given.")
-    parser.add_argument("--n", type=int, default=256, help="Images to sample per snapshot (default 256).")
-    parser.add_argument("--n-real", type=int, default=2000,
-                        help="Real images to compare against (default 2000; use 0 for all).")
-    parser.add_argument("--key", choices=["ema_model", "model"], default="ema_model",
-                        help="Which weights to sample from (default: ema_model).")
-    parser.add_argument("--timesteps", type=int, default=25, help="Sampling steps (default 25).")
-    parser.add_argument("--seed", type=int, default=0, help="Latent seed, shared across snapshots (default 0).")
+    parser.add_argument("--snapshots", type=int, nargs="+", required=True,
+                        help="Snapshot iterations to evaluate, chosen explicitly (e.g. 50000 70000 85000 100000).")
+    parser.add_argument("--n", type=int, default=0,
+                        help="Cap the reference/prompt set to this many images (default 0 = the whole val partition).")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Latent/subsample seed, shared across snapshots (default 0).")
     parser.add_argument("--check-memorisation", action="store_true",
-                        help="Also run the memorisation report (slow: nearest-neighbour over the real stack).")
+                        help="Also run the memorisation report (slow: nearest-neighbour over the train partition).")
     parser.add_argument("--sample-batch", type=int, default=256,
                         help="Max images sampled through the U-Net at once (default 256); lower this if sampling OOMs. "
                              "Only affects peak GPU memory, not the result.")
-    parser.add_argument("--out-dir", type=Path, default=None, help="Output directory (default: the model dir).")
     args = parser.parse_args()
 
     sweep_snapshots(
-        args.model_name, args.real_data_path, snapshots=args.snapshots, n_snapshots=args.n_snapshots,
-        n=args.n, n_real=(None if args.n_real == 0 else args.n_real), key=args.key, timesteps=args.timesteps,
+        args.model_name, args.snapshots, n=(None if args.n == 0 else args.n),
         seed=args.seed, check_memorisation=args.check_memorisation, sample_batch=args.sample_batch,
-        out_dir=args.out_dir,
     )

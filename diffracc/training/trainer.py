@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import wandb
 from torch import Tensor, optim
 from torch.cuda.amp import GradScaler, autocast
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler, random_split
 
-import wandb
-
 from ..data.datasets import TrainDatasetNoScale, TrainDatasetScaled
+from ..data.splits import save_split
 from ..model import unet
 from ..model.config import ModelConfig
 from ..model.model_utils import load_parameters
@@ -357,6 +357,11 @@ class DiffusionTrainer:
             # Manual seed for reproducibility of results
             generator = torch.Generator().manual_seed(42)
             self.train_set, self.val_set = random_split(self.dataset, lengths, generator=generator)
+
+            # Record the partition so evaluation can reuse the exact held-out set (see diffracc.data.splits).
+            if self.is_primary():
+                save_split(self.OM.results_folder / f"split_{self.config.model_name}.npz",
+                           self.train_set.indices, self.val_set.indices, self.dataset.path)
 
             assert len(self.val_set) >= self.config.batch_size, (
                 f"Batch size {self.config.batch_size} larger than validation set.")
